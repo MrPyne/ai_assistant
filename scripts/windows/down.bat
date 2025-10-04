@@ -1,4 +1,5 @@
 @echo off
-REM Stop and remove containers and volumes
-docker-compose down --volumes --remove-orphans
-exit /b %ERRORLEVEL%
+REM Stop and remove containers, volumes, and orphans
+SETLOCAL
+docker-compose down --volumes --remove-orphans
+ENDLOCAL

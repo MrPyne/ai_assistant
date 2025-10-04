@@ -1,4 +1,5 @@
 @echo off
-REM Build docker images
-docker-compose build
-exit /b %ERRORLEVEL%
+REM Build images via docker-compose
+SETLOCAL
+docker-compose build
+ENDLOCAL
