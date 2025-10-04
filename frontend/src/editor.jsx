@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react'
-import ReactFlow, { addEdge, Background, Controls } from 'react-flow-renderer'
+import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider } from 'react-flow-renderer'
 import NodeRenderer from './NodeRenderer'
 
 const initialElements = [
@@ -14,6 +14,9 @@ const initialElements = [
 export default function Editor(){
   const [elements, setElements] = useState(initialElements)
   const [token, setToken] = useState(localStorage.getItem('authToken') || '')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMode, setAuthMode] = useState('login')
   const [workflowId, setWorkflowId] = useState(null)
   const [workflows, setWorkflows] = useState([])
   const [runs, setRuns] = useState([])
@@ -32,6 +35,16 @@ export default function Editor(){
     localStorage.setItem('authToken', token)
   }, [token])
 
+  // When token becomes available, load user-scoped resources
+  useEffect(() => {
+    if (token) {
+      loadProviders()
+      loadSecrets()
+      loadWorkflows()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
   const authHeaders = () => {
     const headers = { 'Content-Type': 'application/json' }
     if (token) headers['Authorization'] = `Bearer ${token}`
@@ -43,6 +56,51 @@ export default function Editor(){
     if (resp.ok) {
       const data = await resp.json()
       setSecrets(data || [])
+    }
+  }
+
+  const registerUser = async () => {
+    if (!authEmail || !authPassword) return alert('email and password required')
+    const resp = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: authEmail, password: authPassword }),
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      if (data && data.access_token) {
+        setToken(data.access_token)
+        alert('Registered and logged in')
+        // load user-scoped resources
+        await loadProviders()
+        await loadSecrets()
+        await loadWorkflows()
+      }
+    } else {
+      const txt = await resp.text()
+      alert('Register failed: ' + txt)
+    }
+  }
+
+  const loginUser = async () => {
+    if (!authEmail || !authPassword) return alert('email and password required')
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: authEmail, password: authPassword }),
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      if (data && data.access_token) {
+        setToken(data.access_token)
+        alert('Logged in')
+        await loadProviders()
+        await loadSecrets()
+        await loadWorkflows()
+      }
+    } else {
+      const txt = await resp.text()
+      alert('Login failed: ' + txt)
     }
   }
 
@@ -207,7 +265,8 @@ export default function Editor(){
     const resp = await fetch(`/api/runs/${runId}/logs`, { headers: authHeaders() })
     if (resp.ok) {
       const data = await resp.json()
-      setSelectedRunLogs(data || [])
+      // backend returns { logs: [...] }
+      setSelectedRunLogs((data && data.logs) || [])
     } else {
       alert('Failed to load logs')
       return
@@ -255,9 +314,12 @@ export default function Editor(){
   }
 
   useEffect(() => {
-    // initial load of providers and secrets
-    loadProviders()
-    loadSecrets()
+    // initial load of providers and secrets only when token present
+    if (token) {
+      loadProviders()
+      loadSecrets()
+      loadWorkflows()
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -293,6 +355,18 @@ export default function Editor(){
         <div>
           <strong>Auth Token (dev):</strong>
           <input style={{ width: '100%' }} value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <strong>Login / Register</strong>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <input placeholder='email' value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} style={{ flex: 1 }} />
+            <input placeholder='password' value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type='password' style={{ flex: 1 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button onClick={loginUser}>Login</button>
+            <button onClick={registerUser}>Register</button>
+          </div>
         </div>
         <hr />
         <div style={{ display: 'flex', gap: 6 }}>
@@ -358,15 +432,18 @@ export default function Editor(){
       </div>
 
       <div style={{ flex: 1 }}>
-        <ReactFlow
-          elements={elements}
-          onConnect={onConnect}
-          onElementClick={onElementClick}
-          onPaneClick={onPaneClick}
-          nodeTypes={{ default: NodeRenderer }}
-        />
-        <Background />
-        <Controls />
+        <ReactFlowProvider>
+          <ReactFlow
+            elements={elements}
+            onConnect={onConnect}
+            onElementClick={onElementClick}
+            onPaneClick={onPaneClick}
+            nodeTypes={{ default: NodeRenderer }}
+          >
+            <Background />
+            <Controls />
+          </ReactFlow>
+        </ReactFlowProvider>
       </div>
 
       <div style={{ width: 380, padding: 10, borderLeft: '1px solid #eee' }}>

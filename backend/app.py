@@ -5,7 +5,9 @@ from passlib.context import CryptContext
 import os
 import smtplib
 from typing import List, Optional
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+import asyncio
+import json
 from backend.database import get_db
 from backend.models import RunLog, User, Workspace, Secret, Provider, Workflow, Run
 from backend.crypto import encrypt_value
@@ -18,6 +20,46 @@ app = FastAPI()
 # Auth helpers
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    """Resolve the current user from Authorization header or query param.
+
+    Dev-friendly behaviour:
+    - If Authorization: Bearer token-{id} is provided, resolve that user by id.
+    - If ?access_token=token-{id} is provided (used by EventSource in the UI), resolve that user.
+    - If no token provided, fall back to the first user in the DB (convenience for local dev).
+
+    In production this should be replaced with a real token-validation flow.
+    """
+    auth = None
+    # Prefer header
+    auth = request.headers.get('Authorization')
+    if not auth:
+        # allow access_token query param (EventSource can't set headers)
+        auth = request.query_params.get('access_token')
+
+    if auth:
+        if auth.startswith('Bearer '):
+            token = auth.split(' ', 1)[1]
+        else:
+            token = auth
+        # token format is token-{user_id} in this dev stub
+        if isinstance(token, str) and token.startswith('token-'):
+            try:
+                uid = int(token.split('-', 1)[1])
+                user = db.query(User).filter(User.id == uid).first()
+                if user:
+                    return user
+            except Exception:
+                # fall through to fallback behaviour
+                pass
+
+    # Fallback: return first user (convenient for local development)
+    user = db.query(User).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid authentication")
+    return user
 
 
 @app.get('/api/runs/{run_id}/logs')
@@ -44,17 +86,65 @@ def get_run_logs(run_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail='Failed to fetch run logs')
 
 
+@app.get('/api/runs/{run_id}/stream')
+async def stream_run_logs(run_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Stream RunLog entries as Server-Sent Events (SSE).
+
+    This endpoint polls the database for new RunLog rows and pushes them to
+    connected clients. It is intentionally simple and suitable for local
+    development. In production we would use a push-based system.
+    """
+
+    def format_sse(data: dict):
+        return f"data: {json.dumps(data)}\n\n"
+
+    # initialize last seen id to the max id currently present (or 0)
+    try:
+        rows = db.query(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.id.asc()).all()
+        last_id = rows[-1].id if rows else 0
+    except Exception:
+        last_id = 0
+
+    async def event_generator():
+        nonlocal last_id
+        # send any existing logs first
+        try:
+            existing = db.query(RunLog).filter(RunLog.run_id == run_id, RunLog.id > 0).order_by(RunLog.id.asc()).all()
+            for r in existing:
+                payload = { 'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message }
+                yield format_sse(payload)
+                last_id = max(last_id, r.id)
+        except Exception:
+            # ignore errors while trying to read initial logs
+            pass
+
+        # Poll for new logs until client disconnects or run finishes
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                new = db.query(RunLog).filter(RunLog.run_id == run_id, RunLog.id > last_id).order_by(RunLog.id.asc()).all()
+                if new:
+                    for r in new:
+                        payload = { 'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message }
+                        yield format_sse(payload)
+                        last_id = max(last_id, r.id)
+                else:
+                    # check if run is finished; if so and no new logs, close stream
+                    run = db.query(Run).filter(Run.id == run_id).first()
+                    if run and run.finished_at is not None:
+                        break
+            except Exception:
+                # ignore DB errors transiently
+                pass
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
+
+
 @app.get("/ping")
 def ping():
     return {"status": "ok"}
-
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    # Minimal placeholder: in real app validate token and load user
-    user = db.query(User).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid authentication")
-    return user
 
 
 def send_email(to_email: str, subject: str, body: str):
