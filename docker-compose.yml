@@ -34,6 +34,7 @@ services:
       target: frontend_runtime
       args:
         VITE_API_URL: "/api"
+        NODE_ENV: development
     networks:
       - appnet
     depends_on:
