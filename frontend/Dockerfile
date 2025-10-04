@@ -1,0 +1,12 @@
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --silent || npm i --no-audit --no-fund
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+RUN apk add --no-cache curl
+COPY --from=builder /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,70 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, ForeignKey, JSON, DateTime
+from sqlalchemy.orm import relationship
+from .database import Base
+
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    role = Column(String, default='user')
+    workspaces = relationship('Workspace', back_populates='owner')
+
+class Workspace(Base):
+    __tablename__ = 'workspaces'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id'))
+    owner = relationship('User', back_populates='workspaces')
+
+class Secret(Base):
+    __tablename__ = 'secrets'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'))
+    name = Column(String, nullable=False)
+    encrypted_value = Column(String, nullable=False)
+    created_by = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Provider(Base):
+    __tablename__ = 'providers'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'))
+    # reference to Secret.id for provider credentials (preferred)
+    secret_id = Column(Integer, ForeignKey('secrets.id'), nullable=True)
+    type = Column(String, nullable=False)
+    config = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Workflow(Base):
+    __tablename__ = 'workflows'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'))
+    name = Column(String, nullable=False)
+    description = Column(String)
+    graph = Column(JSON)
+    version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+class Run(Base):
+    __tablename__ = 'runs'
+    id = Column(Integer, primary_key=True)
+    workflow_id = Column(Integer, ForeignKey('workflows.id'))
+    status = Column(String, default='pending')
+    input_payload = Column(JSON)
+    output_payload = Column(JSON)
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    # number of attempts made executing this run
+    attempts = Column(Integer, default=0)
+
+class RunLog(Base):
+    __tablename__ = 'run_logs'
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey('runs.id'))
+    node_id = Column(String, nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    level = Column(String, default='info')
+    message = Column(String)
