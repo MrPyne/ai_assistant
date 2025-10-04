@@ -1,10 +1,12 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function Login(){
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const navigate = useNavigate()
+  const { setToken } = useAuth()
 
   const submit = async (e) => {
     e.preventDefault()
@@ -18,9 +20,9 @@ export default function Login(){
       if (resp.ok) {
         const data = await resp.json()
         if (data && data.access_token) {
-          localStorage.setItem('authToken', data.access_token)
+          setToken(data.access_token)
           alert('Logged in')
-          navigate('/')
+          navigate('/editor')
         }
       } else {
         const txt = await resp.text()

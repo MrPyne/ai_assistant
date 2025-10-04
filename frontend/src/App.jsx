@@ -1,23 +1,34 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
-import Editor from './editor'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
+import NavBar from './components/NavBar'
+import Home from './pages/Home'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Profile from './pages/Profile'
+import Editor from './editor'
+
+function RequireAuth({ children }) {
+  const { token } = useAuth()
+  if (!token) return <Navigate to="/login" replace />
+  return children
+}
 
 export default function App(){
   return (
-    <BrowserRouter>
-      <div style={{ padding: 12, borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>No-code AI Assistant</h2>
-        <nav>
-          <Link to="/">Editor</Link> {' | '} <Link to="/login">Login</Link> {' | '} <Link to="/register">Register</Link>
-        </nav>
-      </div>
-      <Routes>
-        <Route path="/" element={<Editor />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <div style={{ padding: 12, borderBottom: '1px solid #eee' }}>
+          <NavBar />
+        </div>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
+          <Route path="/editor" element={<RequireAuth><Editor /></RequireAuth>} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
