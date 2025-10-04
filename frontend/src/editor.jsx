@@ -343,204 +343,208 @@ export default function Editor(){
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex' }}>
-      <div style={{ width: 320, padding: 10, borderRight: '1px solid #eee' }}>
-        <h3>Palette</h3>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={addHttpNode}>Add HTTP Node</button>
-          <button onClick={addLlmNode}>Add LLM Node</button>
-          <button onClick={addWebhookTrigger}>Add Webhook</button>
-        </div>
-        <hr />
-        <div>
-          <strong>Auth Token (dev):</strong>
-          <input style={{ width: '100%' }} value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
-        </div>
-
-        <div style={{ marginTop: 8 }}>
-          <strong>Login / Register</strong>
-          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <input placeholder='email' value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} style={{ flex: 1 }} />
-            <input placeholder='password' value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type='password' style={{ flex: 1 }} />
+    <div style={{ height: '100vh' }}>
+      <div className="main">
+        <div className="sidebar">
+          <h3>Palette</h3>
+          <div className="palette-buttons">
+            <button onClick={addHttpNode}>Add HTTP Node</button>
+            <button onClick={addLlmNode}>Add LLM Node</button>
+            <button onClick={addWebhookTrigger}>Add Webhook</button>
           </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <button onClick={loginUser}>Login</button>
-            <button onClick={registerUser}>Register</button>
-          </div>
-        </div>
-        <hr />
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input style={{ flex: 1 }} value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
-          <button onClick={saveWorkflow}>Save</button>
-        </div>
-        <div style={{ marginTop: 8 }}>Selected workflow id: {workflowId || 'none'}</div>
-        <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-          <button onClick={loadWorkflows}>Load</button>
-          <button onClick={runWorkflow}>Run</button>
-          <button onClick={loadRuns}>Refresh Runs</button>
-        </div>
-
-        <hr />
-        <h4>Providers</h4>
-        <div style={{ marginBottom: 6 }}>
-          <input placeholder='Type (e.g. openai)' value={newProviderType} onChange={(e) => setNewProviderType(e.target.value)} style={{ width: '60%', marginRight: 6 }} />
-          <select value={newProviderSecretId} onChange={(e) => setNewProviderSecretId(e.target.value)} style={{ width: '30%', marginRight: 6 }}>
-            <option value=''>No secret</option>
-            {secrets.map(s => <option key={s.id} value={s.id}>{s.name} (id:{s.id})</option>)}
-          </select>
-          <button onClick={createProvider}>Create Provider</button>
-        </div>
-
-        <div style={{ maxHeight: 120, overflow: 'auto', border: '1px solid #ddd', padding: 6 }}>
-          {providers.length === 0 ? <div style={{ color: '#666' }}>No providers</div> : providers.map(p => (
-            <div key={p.id} style={{ padding: 6, borderBottom: '1px solid #f6f6f6' }}>
-              <div><strong>{p.type}</strong> <span style={{ fontSize: 12, color: '#666' }}>(id: {p.id})</span></div>
-            </div>
-          ))}
-        </div>
-
-        <hr />
-        <h4>Secrets</h4>
-        <div style={{ marginBottom: 8 }}>
-          <button onClick={loadSecrets}>Refresh Secrets</button>
-        </div>
-        <div style={{ maxHeight: 120, overflow: 'auto', border: '1px solid #ddd', padding: 6 }}>
-          {secrets.length === 0 ? <div style={{ color: '#666' }}>No secrets</div> : secrets.map(s => (
-            <div key={s.id} style={{ padding: 6, borderBottom: '1px solid #f6f6f6' }}>
-              <div><strong>{s.name}</strong></div>
-              <div style={{ fontSize: 12, color: '#666' }}>id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }}>Copy id</button></div>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <input placeholder='Secret name' value={newSecretName} onChange={(e) => setNewSecretName(e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
-          <input placeholder='Secret value' value={newSecretValue} onChange={(e) => setNewSecretValue(e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
-          <button onClick={createSecret}>Create Secret</button>
-        </div>
-
-        <h4 style={{ marginTop: 12 }}>Runs</h4>
-        <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #ddd', padding: 4 }}>
-          {runs.length === 0 ? <div style={{ color: '#666' }}>No runs</div> : runs.map(r => (
-            <div key={r.id} style={{ padding: 6, borderBottom: '1px solid #f0f0f0' }}>
-              <div style={{ fontSize: 13 }}>Run {r.id} — {r.status}</div>
-              <div style={{ marginTop: 6 }}>
-                <button onClick={() => viewRunLogs(r.id)}>View Logs</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ flex: 1 }}>
-        <ReactFlowProvider>
-          <ReactFlow
-            elements={elements}
-            onConnect={onConnect}
-            onElementClick={onElementClick}
-            onPaneClick={onPaneClick}
-            nodeTypes={{ default: NodeRenderer }}
-          >
-            <Background />
-            <Controls />
-          </ReactFlow>
-        </ReactFlowProvider>
-      </div>
-
-      <div style={{ width: 380, padding: 10, borderLeft: '1px solid #eee' }}>
-        <h3>Selected Node</h3>
-        {selectedNode ? (
+          <hr />
           <div>
-            <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
+            <strong>Auth Token (dev):</strong>
+            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
+          </div>
 
-            {/* Webhook info */}
-            {selectedNode.data && selectedNode.data.label === 'Webhook Trigger' && (
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ marginBottom: 6 }}>Webhook trigger node.</div>
-                <div style={{ fontSize: 13, marginBottom: 6 }}>After saving the workflow, copy the webhook URL and POST to it to trigger a run.</div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={copyWebhookUrl}>Copy webhook URL</button>
-                  <button onClick={() => { if (workflowId && selectedNodeId) { const url = `${window.location.origin}/api/webhook/${workflowId}/${selectedNodeId}`; window.open(url, '_blank') } else { alert('Save the workflow first') } }}>Open (GET)</button>
+          <div style={{ marginTop: 8 }}>
+            <strong>Login / Register</strong>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <input placeholder='email' value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} style={{ flex: 1 }} />
+              <input placeholder='password' value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type='password' style={{ flex: 1 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button onClick={loginUser}>Login</button>
+              <button onClick={registerUser}>Register</button>
+            </div>
+          </div>
+          <hr />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input style={{ flex: 1 }} value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
+            <button onClick={saveWorkflow}>Save</button>
+          </div>
+          <div style={{ marginTop: 8 }}>Selected workflow id: {workflowId || 'none'}</div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+            <button onClick={loadWorkflows}>Load</button>
+            <button onClick={runWorkflow}>Run</button>
+            <button onClick={loadRuns}>Refresh Runs</button>
+          </div>
+
+          <hr />
+          <h4>Providers</h4>
+          <div style={{ marginBottom: 6 }}>
+            <input placeholder='Type (e.g. openai)' value={newProviderType} onChange={(e) => setNewProviderType(e.target.value)} style={{ width: '60%', marginRight: 6 }} />
+            <select value={newProviderSecretId} onChange={(e) => setNewProviderSecretId(e.target.value)} style={{ width: '30%', marginRight: 6 }}>
+              <option value=''>No secret</option>
+              {secrets.map(s => <option key={s.id} value={s.id}>{s.name} (id:{s.id})</option>)}
+            </select>
+            <button onClick={createProvider}>Create Provider</button>
+          </div>
+
+          <div className="list-scroll">
+            {providers.length === 0 ? <div className="muted">No providers</div> : providers.map(p => (
+              <div key={p.id} style={{ padding: 6, borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                <div><strong>{p.type}</strong> <span style={{ fontSize: 12, color: 'var(--muted)' }}>(id: {p.id})</span></div>
+              </div>
+            ))}
+          </div>
+
+          <hr />
+          <h4>Secrets</h4>
+          <div style={{ marginBottom: 8 }}>
+            <button onClick={loadSecrets}>Refresh Secrets</button>
+          </div>
+          <div className="list-scroll">
+            {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
+              <div key={s.id} style={{ padding: 6, borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                <div><strong>{s.name}</strong></div>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }} className="secondary">Copy id</button></div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <input placeholder='Secret name' value={newSecretName} onChange={(e) => setNewSecretName(e.target.value)} style={{ marginBottom: 6 }} />
+            <input placeholder='Secret value' value={newSecretValue} onChange={(e) => setNewSecretValue(e.target.value)} style={{ marginBottom: 6 }} />
+            <button onClick={createSecret}>Create Secret</button>
+          </div>
+
+          <h4 style={{ marginTop: 12 }}>Runs</h4>
+          <div className="list-scroll runs-list">
+            {runs.length === 0 ? <div className="muted">No runs</div> : runs.map(r => (
+              <div key={r.id} className="run-item">
+                <div style={{ fontSize: 13 }}>Run {r.id} — {r.status}</div>
+                <div style={{ marginTop: 6 }}>
+                  <button onClick={() => viewRunLogs(r.id)} className="secondary">View Logs</button>
                 </div>
               </div>
-            )}
-
-            {/* HTTP Node Config */}
-            {selectedNode.data && selectedNode.data.label === 'HTTP Request' && (
-              <div>
-                <label>Method</label>
-                <select value={(selectedNode.data.config && selectedNode.data.config.method) || 'GET'} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), method: e.target.value })} style={{ width: '100%', marginBottom: 8 }}>
-                  <option>GET</option>
-                  <option>POST</option>
-                  <option>PUT</option>
-                  <option>DELETE</option>
-                  <option>PATCH</option>
-                </select>
-
-                <label>URL</label>
-                <input style={{ width: '100%', marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.url) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), url: e.target.value })} />
-
-                <label>Headers (JSON)</label>
-                <textarea style={{ width: '100%', height: 80, marginBottom: 8 }} value={JSON.stringify((selectedNode.data.config && selectedNode.data.config.headers) || {}, null, 2)} onChange={(e) => {
-                  try {
-                    const parsed = JSON.parse(e.target.value || '{}')
-                    updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), headers: parsed })
-                  } catch (err) {
-                    // ignore parse errors while typing
-                  }
-                }} />
-
-                <label>Body</label>
-                <textarea style={{ width: '100%', height: 80 }} value={(selectedNode.data.config && selectedNode.data.config.body) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), body: e.target.value })} />
-
-              </div>
-            )}
-
-            {/* LLM Node Config */}
-            {selectedNode.data && selectedNode.data.label === 'LLM' && (
-              <div>
-                <label>Prompt</label>
-                <textarea style={{ width: '100%', height: 140, marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.prompt) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt: e.target.value })} />
-
-                <label>Provider</label>
-                <select value={(selectedNode.data.config && selectedNode.data.config.provider_id) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), provider_id: e.target.value ? Number(e.target.value) : null })} style={{ width: '100%', marginBottom: 8 }}>
-                  <option value=''>-- Select provider --</option>
-                  {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
-                </select>
-
-                <div style={{ fontSize: 12, color: '#666' }}>Note: live LLM calls are disabled by default in the backend. Enable via environment flag to make real API calls.</div>
-              </div>
-            )}
-
-            {/* Fallback raw JSON editor for other node types */}
-            {(!selectedNode.data || (selectedNode.data && !['HTTP Request', 'LLM', 'Webhook Trigger'].includes(selectedNode.data.label))) && (
-              <div>
-                <label>Raw node config (JSON)</label>
-                <textarea style={{ width: '100%', height: 240 }} value={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={(e) => {
-                  try {
-                    const parsed = JSON.parse(e.target.value)
-                    // replace entire data
-                    setElements((els) => els.map(el => el.id === selectedNodeId ? { ...el, data: parsed } : el))
-                  } catch (err) {
-                    // ignore
-                  }
-                }} />
-              </div>
-            )}
-
+            ))}
           </div>
-        ) : (
-          <div style={{ color: '#666' }}>No node selected. Click a node to view/edit its config.</div>
-        )}
+        </div>
 
-        <hr />
-        <h3>Selected Run Logs</h3>
-        <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
-          {selectedRunLogs.length === 0 ? <div style={{ color: '#666' }}>No logs selected</div> : selectedRunLogs.map(l => (
-            <div key={l.id} style={{ marginBottom: 8, padding: 6, border: '1px solid #eee' }}>
-              <div style={{ fontSize: 12, color: '#666' }}>{l.timestamp} — {l.node_id} — {l.level}</div>
-              <pre style={{ whiteSpace: 'pre-wrap' }}>{typeof l.message === 'string' ? l.message : JSON.stringify(l.message, null, 2)}</pre>
+        <div className="canvas">
+          <div style={{ flex: 1 }} className="reactflow-wrapper">
+            <ReactFlowProvider>
+              <ReactFlow
+                elements={elements}
+                onConnect={onConnect}
+                onElementClick={onElementClick}
+                onPaneClick={onPaneClick}
+                nodeTypes={{ default: NodeRenderer }}
+              >
+                <Background />
+                <Controls />
+              </ReactFlow>
+            </ReactFlowProvider>
+          </div>
+        </div>
+
+        <div className="rightpanel">
+          <h3>Selected Node</h3>
+          {selectedNode ? (
+            <div>
+              <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
+
+              {/* Webhook info */}
+              {selectedNode.data && selectedNode.data.label === 'Webhook Trigger' && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ marginBottom: 6 }}>Webhook trigger node.</div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>After saving the workflow, copy the webhook URL and POST to it to trigger a run.</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={copyWebhookUrl}>Copy webhook URL</button>
+                    <button onClick={() => { if (workflowId && selectedNodeId) { const url = `${window.location.origin}/api/webhook/${workflowId}/${selectedNodeId}`; window.open(url, '_blank') } else { alert('Save the workflow first') } }} className="secondary">Open (GET)</button>
+                  </div>
+                </div>
+              )}
+
+              {/* HTTP Node Config */}
+              {selectedNode.data && selectedNode.data.label === 'HTTP Request' && (
+                <div>
+                  <label>Method</label>
+                  <select value={(selectedNode.data.config && selectedNode.data.config.method) || 'GET'} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), method: e.target.value })} style={{ width: '100%', marginBottom: 8 }}>
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>DELETE</option>
+                    <option>PATCH</option>
+                  </select>
+
+                  <label>URL</label>
+                  <input style={{ width: '100%', marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.url) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), url: e.target.value })} />
+
+                  <label>Headers (JSON)</label>
+                  <textarea style={{ width: '100%', height: 80, marginBottom: 8 }} value={JSON.stringify((selectedNode.data.config && selectedNode.data.config.headers) || {}, null, 2)} onChange={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value || '{}')
+                      updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), headers: parsed })
+                    } catch (err) {
+                      // ignore parse errors while typing
+                    }
+                  }} />
+
+                  <label>Body</label>
+                  <textarea style={{ width: '100%', height: 80 }} value={(selectedNode.data.config && selectedNode.data.config.body) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), body: e.target.value })} />
+
+                </div>
+              )}
+
+              {/* LLM Node Config */}
+              {selectedNode.data && selectedNode.data.label === 'LLM' && (
+                <div>
+                  <label>Prompt</label>
+                  <textarea style={{ width: '100%', height: 140, marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.prompt) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt: e.target.value })} />
+
+                  <label>Provider</label>
+                  <select value={(selectedNode.data.config && selectedNode.data.config.provider_id) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), provider_id: e.target.value ? Number(e.target.value) : null })} style={{ width: '100%', marginBottom: 8 }}>
+                    <option value=''>-- Select provider --</option>
+                    {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+                  </select>
+
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>Note: live LLM calls are disabled by default in the backend. Enable via environment flag to make real API calls.</div>
+                </div>
+              )}
+
+              {/* Fallback raw JSON editor for other node types */}
+              {(!selectedNode.data || (selectedNode.data && !['HTTP Request', 'LLM', 'Webhook Trigger'].includes(selectedNode.data.label))) && (
+                <div>
+                  <label>Raw node config (JSON)</label>
+                  <textarea style={{ width: '100%', height: 240 }} value={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value)
+                      // replace entire data
+                      setElements((els) => els.map(el => el.id === selectedNodeId ? { ...el, data: parsed } : el))
+                    } catch (err) {
+                      // ignore
+                    }
+                  }} />
+                </div>
+              )}
+
             </div>
-          ))}
+          ) : (
+            <div className="muted">No node selected. Click a node to view/edit its config.</div>
+          )}
+
+          <hr />
+          <h3>Selected Run Logs</h3>
+          <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+            {selectedRunLogs.length === 0 ? <div className="muted">No logs selected</div> : selectedRunLogs.map(l => (
+              <div key={l.id} className="log-entry">
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{l.timestamp} — {l.node_id} — {l.level}</div>
+                <pre>{typeof l.message === 'string' ? l.message : JSON.stringify(l.message, null, 2)}</pre>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
