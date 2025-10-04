@@ -56,7 +56,32 @@ Makefile commands
 - make release VERSION=0.1.0 REGISTRY=your.registry.com/yourrepo: run a simple release flow (build & tag)
 
 Windows development
-- If you don't want to install make on Windows, use the provided scripts in scripts/windows/ (batch files) which mirror the Makefile targets.
+- If you don't want to install make on Windows, use the provided PowerShell scripts in scripts/windows/ which mirror the Makefile targets.
+
+Using the included scripts (recommended)
+- The repository now includes cross-platform PowerShell helper scripts in scripts/windows/:
+  - build.ps1          — build docker images (optionally: -NoCache)
+  - up.ps1             — docker-compose up (use -Detach to run in background)
+  - down.ps1           — docker-compose down --volumes --remove-orphans
+  - test.ps1           — create venv, install deps, run pytest (backend)
+  - frontend-build.ps1 — install frontend deps and build
+  - backend-build.ps1  — build backend Docker image
+  - release.ps1        — build & optionally tag/push images (requires -Version and optional -Registry)
+
+Examples (PowerShell)
+- Start dev stack (foreground):
+  ./scripts/windows/up.ps1
+
+- Start dev stack (detached):
+  ./scripts/windows/up.ps1 -Detach
+
+- Run backend tests:
+  ./scripts/windows/test.ps1
+
+Why PowerShell?
+- PowerShell is installed by default on modern Windows and cross-platform (works on macOS/Linux too). These scripts avoid requiring make and provide a consistent developer experience.
+
+If you prefer batch (.bat) shims or npm-based cross-platform scripts instead, tell me and I will add them.
 
 Quick PowerShell examples (useful if you prefer PowerShell over the batch files)
 1) Build
