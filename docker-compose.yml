@@ -17,6 +17,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: backend_runtime
     networks:
       - appnet
     environment:
@@ -27,8 +28,10 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      # Build the frontend using the multi-stage Dockerfile at repo root.
+      context: .
       dockerfile: Dockerfile
+      target: frontend_runtime
       args:
         VITE_API_URL: "/api"
     networks:

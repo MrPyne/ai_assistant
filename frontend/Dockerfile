@@ -1,11 +1,12 @@
 FROM node:20-slim AS builder
 WORKDIR /app
 
-# Allow callers to set NODE_ENV and VITE_API_URL at build time
-ARG NODE_ENV=production
-ENV NODE_ENV=${NODE_ENV}
+# Allow callers to set VITE_API_URL at build time
 ARG VITE_API_URL
 ENV VITE_API_URL=${VITE_API_URL}
+
+# Ensure devDependencies (vite) are installed for the build stage
+ENV NODE_ENV=development
 
 # Install dependencies
 COPY package*.json ./
