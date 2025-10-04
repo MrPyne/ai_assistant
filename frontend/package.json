@@ -12,5 +12,9 @@
     "start": "vite",
     "build": "vite build",
     "test": "vitest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^7.1.9"
   }
 }
