@@ -25,6 +25,9 @@ export default function Editor(){
   const [runs, setRuns] = useState([])
   const [selectedRunLogs, setSelectedRunLogs] = useState([])
   const [logEventSource, setLogEventSource] = useState(null)
+  // keep a ref to the EventSource so we can always close it without
+  // relying on state being immediately updated during the same render
+  const logEventSourceRef = useRef(null)
   const [secrets, setSecrets] = useState([])
   const [providers, setProviders] = useState([])
   const [newSecretName, setNewSecretName] = useState('')
@@ -136,38 +139,46 @@ export default function Editor(){
   // Also marks the newly created node as selected and clears selection on other nodes so the UI reflects
   // the selection immediately.
   const addNode = ({ label = 'Node', config = {}, preferY = 120 }) => {
-    // generate a compact, mostly-unique id suitable for the canvas
-    const id = `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-
-    let position = { x: (nodes.length * 120) % 800, y: preferY }
-    try {
-      if (reactFlowInstance.current && typeof reactFlowInstance.current.project === 'function') {
-        const screenX = window.innerWidth / 2
-        const screenY = window.innerHeight / 2
-        const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
-        position = { x: p.x + (nodes.length * 20), y: p.y + preferY }
+    // Use functional update to avoid closure issues and ensure id uniqueness
+    setNodes((prevNodes) => {
+      // generate a compact, mostly-unique id suitable for the canvas
+      const now = Date.now()
+      let id = `node-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      while (prevNodes.some((n) => String(n.id) === String(id))) {
+        id = `node-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
       }
-    } catch (err) {
-      // ignore and fall back to grid
-    }
 
-    const node = {
-      id,
-      type: label === 'Webhook Trigger' ? 'input' : 'default',
-      data: { label, config },
-      position,
-      selected: true,
-    }
+      let position = { x: (prevNodes.length * 120) % 800, y: preferY }
+      try {
+        if (reactFlowInstance.current && typeof reactFlowInstance.current.project === 'function') {
+          const screenX = window.innerWidth / 2
+          const screenY = window.innerHeight / 2
+          const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
+          position = { x: p.x + (prevNodes.length * 20), y: p.y + preferY }
+        }
+      } catch (err) {
+        // ignore and fall back to grid
+      }
 
-    console.debug('editor:add_node', { type: label.toLowerCase(), id })
+      const node = {
+        id,
+        type: label === 'Webhook Trigger' ? 'input' : 'default',
+        // ensure a well-formed data object — other parts of the editor assume
+        // data and data.config exist
+        data: { label, config: config || {} },
+        position,
+        selected: true,
+      }
 
-    // Update nodes: clear selection on existing nodes and append the new selected node.
-    setNodes((nds) => {
-      const cleared = nds.map((n) => (n.selected ? { ...n, selected: false } : n))
+      console.debug('editor:add_node', { type: label.toLowerCase(), id })
+
+      // Update nodes: clear selection on existing nodes and append the new selected node.
+      const cleared = prevNodes.map((n) => (n.selected ? { ...n, selected: false } : n))
+      // schedule selectedNodeId update after state change
+      // (we still return the new array here)
+      setTimeout(() => setSelectedNodeId(id), 0)
       return cleared.concat(node)
     })
-    // update selectedNodeId so the right-hand panel and other logic reflect selection
-    setSelectedNodeId(id)
   }
 
   const addHttpNode = () => {
@@ -184,9 +195,16 @@ export default function Editor(){
   }
 
   const updateNodeConfig = (nodeId, newConfig) => {
-    setNodes((nds) => nds.map(n => (
-      n.id === nodeId ? { ...n, data: { ...n.data, config: newConfig } } : n
-    )))
+    // be defensive: node data may be missing or malformed; find node and
+    // merge/replace its config safely
+    setNodes((nds) => nds.map((n) => {
+      if (String(n.id) !== String(nodeId)) return n
+      const prevData = n.data && typeof n.data === 'object' ? n.data : {}
+      // ensure prevData.config is an object
+      const prevConfig = prevData.config && typeof prevData.config === 'object' ? prevData.config : {}
+      const merged = { ...prevData, config: { ...prevConfig, ...(newConfig || {}) } }
+      return { ...n, data: merged }
+    }))
   }
 
   const saveWorkflow = async () => {
@@ -228,17 +246,34 @@ export default function Editor(){
               // legacy: array of elements
               const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
               const edgesLoaded = wf.graph.filter(e => e.source && e.target)
-              setNodes(nodesLoaded)
-              setEdges(edgesLoaded)
+              // sanitize loaded nodes/edges
+              const sanitize = (n) => ({
+                id: String(n.id),
+                type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
+                position: n.position || { x: 0, y: 0 },
+                selected: !!n.selected,
+                data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
+              })
+              setNodes(nodesLoaded.map(sanitize))
+              setEdges((edgesLoaded || []).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
               // clear selection for legacy flows (no persisted selection)
               setSelectedNodeId(null)
             } else if (wf.graph.nodes) {
-              setNodes(wf.graph.nodes)
-              setEdges(wf.graph.edges || [])
+              // sanitize nodes/edges coming from the server so the editor
+              // does not break if fields are missing or ids are numbers
+              const sanitize = (n) => ({
+                id: String(n.id),
+                type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
+                position: n.position || { x: 0, y: 0 },
+                selected: !!n.selected,
+                data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
+              })
+              setNodes((wf.graph.nodes || []).map(sanitize))
+              setEdges(((wf.graph.edges || [])).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
               // restore selected node if saved
               if (wf.graph.selected_node_id) {
                 // ensure the selected id exists in the loaded nodes
-                const exists = (wf.graph.nodes || []).some(n => String(n.id) === String(wf.graph.selected_node_id))
+                const exists = ((wf.graph.nodes || []).map(n => String(n.id))).includes(String(wf.graph.selected_node_id))
                 setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
               } else {
                 setSelectedNodeId(null)
@@ -312,13 +347,15 @@ export default function Editor(){
       return
     }
 
-    // Close any existing EventSource
-    if (logEventSource) {
-      try {
-        logEventSource.close()
-      } catch (e) {}
-      setLogEventSource(null)
-    }
+    // Close any existing EventSource and clear refs/state so multiple
+    // viewRunLogs calls don't leak event sources.
+    try {
+      if (logEventSourceRef.current) {
+        try { logEventSourceRef.current.close() } catch (e) {}
+      }
+    } catch (e) {}
+    logEventSourceRef.current = null
+    setLogEventSource(null)
 
     // Start SSE to stream new logs. If a token is available include it as a
     // query param, otherwise open the stream without the token so tests and
@@ -338,12 +375,24 @@ export default function Editor(){
       es.onerror = (err) => {
         // If the connection closes or errors, close and clear the source
         try { es.close() } catch (e) {}
+        logEventSourceRef.current = null
         setLogEventSource(null)
       }
+      logEventSourceRef.current = es
       setLogEventSource(es)
     } catch (err) {
       // EventSource may not be available in some environments; ignore
     }
+  }
+
+  const stopViewingLogs = () => {
+    try {
+      if (logEventSourceRef.current) {
+        logEventSourceRef.current.close()
+      }
+    } catch (e) {}
+    logEventSourceRef.current = null
+    setLogEventSource(null)
   }
 
   const onNodeClick = (event, node) => {
@@ -368,9 +417,13 @@ export default function Editor(){
   // cleanup EventSource on unmount
   useEffect(() => {
     return () => {
-      if (logEventSource) {
-        try { logEventSource.close() } catch (e) {}
-      }
+      try {
+        if (logEventSourceRef.current) {
+          logEventSourceRef.current.close()
+        }
+      } catch (e) {}
+      logEventSourceRef.current = null
+      setLogEventSource(null)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logEventSource])

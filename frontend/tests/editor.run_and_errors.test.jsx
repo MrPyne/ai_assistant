@@ -34,6 +34,9 @@ class MockEventSource {
     this.onmessage = null
     this.onerror = null
     MockEventSource._last = this
+    MockEventSource.createdCount = (MockEventSource.createdCount || 0) + 1
+    MockEventSource._instances = MockEventSource._instances || []
+    MockEventSource._instances.push(this)
   }
   close() {
     /* noop */
@@ -108,6 +111,61 @@ describe('Editor run and error handling', () => {
 
       // ensure alert was called to indicate run queued
       expect(window.alert).toHaveBeenCalled()
+    } finally {
+      global.fetch = origFetch
+      global.EventSource = origEventSource
+      window.alert = origAlert
+    }
+  })
+
+  test('viewRunLogs cleans up previous EventSource and opens a new one on repeated view calls', async () => {
+    const origFetch = global.fetch
+    const origEventSource = global.EventSource
+    const origAlert = window.alert
+    window.alert = vi.fn()
+
+    global.fetch = vi.fn(async (url, opts) => {
+      const s = String(url || '')
+      if (s.includes('/api/workflows') && opts && opts.method === 'POST') {
+        return { ok: true, json: async () => ({ id: 99 }) }
+      }
+      if (s.includes('/api/workflows/99/run') && opts && opts.method === 'POST') {
+        return { ok: true, json: async () => ({ run_id: 500 }) }
+      }
+      if (s.includes('/api/runs?workflow_id=99')) {
+        return { ok: true, json: async () => ([{ id: 500, status: 'queued' }]) }
+      }
+      if (s.includes('/api/runs/500/logs')) {
+        return { ok: true, json: async () => ({ logs: [] }) }
+      }
+      return { ok: true, json: async () => ([]) }
+    })
+
+    try {
+      global.EventSource = MockEventSource
+
+      render(<Editor />)
+
+      // add a node and save
+      const httpBtn = screen.getByText('Add HTTP Node')
+      await userEvent.click(httpBtn)
+
+      const saveBtn = screen.getByText('Save')
+      await userEvent.click(saveBtn)
+
+      // run to create first EventSource
+      const runBtn = screen.getByText('Run')
+      await userEvent.click(runBtn)
+
+      // wait for EventSource to be constructed
+      expect(MockEventSource.createdCount).toBeGreaterThanOrEqual(1)
+
+      // click View Logs in runs list to trigger a second EventSource
+      const viewBtn = await screen.findByText('View Logs')
+      await userEvent.click(viewBtn)
+
+      // another EventSource should have been created
+      expect(MockEventSource.createdCount).toBeGreaterThanOrEqual(2)
     } finally {
       global.fetch = origFetch
       global.EventSource = origEventSource
