@@ -116,32 +116,41 @@ export default function Editor(){
   const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [])
 
   // Generic addNode helper tries to compute a sensible position using the reactflow instance when available.
+  // Also marks the newly created node as selected and clears selection on other nodes so the UI reflects
+  // the selection immediately.
   const addNode = ({ label = 'Node', config = {}, preferY = 120 }) => {
-    setNodes((nds) => {
-      const id = String(Date.now())
-      let position = { x: (nds.length * 120) % 800, y: preferY }
-      try {
-        if (reactFlowInstance.current && typeof reactFlowInstance.current.project === 'function') {
-          const screenX = window.innerWidth / 2
-          const screenY = window.innerHeight / 2
-          const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
-          position = { x: p.x + (nds.length * 20), y: p.y + preferY }
-        }
-      } catch (err) {
-        // ignore and fall back to grid
-      }
+    // generate a compact, mostly-unique id suitable for the canvas
+    const id = `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
-      const node = {
-        id,
-        type: label === 'Webhook Trigger' ? 'input' : 'default',
-        data: { label, config },
-        position,
+    let position = { x: (nodes.length * 120) % 800, y: preferY }
+    try {
+      if (reactFlowInstance.current && typeof reactFlowInstance.current.project === 'function') {
+        const screenX = window.innerWidth / 2
+        const screenY = window.innerHeight / 2
+        const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
+        position = { x: p.x + (nodes.length * 20), y: p.y + preferY }
       }
-      console.debug('editor:add_node', { type: label.toLowerCase(), id })
-      // select the new node
-      setSelectedNodeId(id)
-      return nds.concat(node)
+    } catch (err) {
+      // ignore and fall back to grid
+    }
+
+    const node = {
+      id,
+      type: label === 'Webhook Trigger' ? 'input' : 'default',
+      data: { label, config },
+      position,
+      selected: true,
+    }
+
+    console.debug('editor:add_node', { type: label.toLowerCase(), id })
+
+    // Update nodes: clear selection on existing nodes and append the new selected node.
+    setNodes((nds) => {
+      const cleared = nds.map((n) => (n.selected ? { ...n, selected: false } : n))
+      return cleared.concat(node)
     })
+    // update selectedNodeId so the right-hand panel and other logic reflect selection
+    setSelectedNodeId(id)
   }
 
   const addHttpNode = () => {
@@ -166,7 +175,8 @@ export default function Editor(){
   const saveWorkflow = async () => {
     const payload = {
       name: workflowName || 'Untitled',
-      graph: { nodes, edges },
+      // persist selection so editor state (selected node) can be restored
+      graph: { nodes, edges, selected_node_id: selectedNodeId },
     }
     const resp = await fetch('/api/workflows', {
       method: 'POST',
@@ -185,25 +195,35 @@ export default function Editor(){
 
   const loadWorkflows = async () => {
     const resp = await fetch('/api/workflows', { headers: authHeaders() })
-    if (resp.ok) {
-      const data = await resp.json()
-      setWorkflows(data || [])
-      if (data && data.length > 0) {
-        const wf = data[0]
-        setWorkflowId(wf.id)
-        if (wf.graph) {
-          if (Array.isArray(wf.graph)) {
-            // legacy: array of elements
-            const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
-            const edgesLoaded = wf.graph.filter(e => e.source && e.target)
-            setNodes(nodesLoaded)
-            setEdges(edgesLoaded)
-          } else if (wf.graph.nodes) {
-            setNodes(wf.graph.nodes)
-            setEdges(wf.graph.edges || [])
+      if (resp.ok) {
+        const data = await resp.json()
+        setWorkflows(data || [])
+        if (data && data.length > 0) {
+          const wf = data[0]
+          setWorkflowId(wf.id)
+          if (wf.graph) {
+            if (Array.isArray(wf.graph)) {
+              // legacy: array of elements
+              const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
+              const edgesLoaded = wf.graph.filter(e => e.source && e.target)
+              setNodes(nodesLoaded)
+              setEdges(edgesLoaded)
+              // clear selection for legacy flows (no persisted selection)
+              setSelectedNodeId(null)
+            } else if (wf.graph.nodes) {
+              setNodes(wf.graph.nodes)
+              setEdges(wf.graph.edges || [])
+              // restore selected node if saved
+              if (wf.graph.selected_node_id) {
+                // ensure the selected id exists in the loaded nodes
+                const exists = (wf.graph.nodes || []).some(n => String(n.id) === String(wf.graph.selected_node_id))
+                setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
+              } else {
+                setSelectedNodeId(null)
+              }
+            }
           }
         }
-      }
     } else {
       alert('Failed to load workflows')
     }
