@@ -56,25 +56,46 @@ app = FastAPI()
 
 # Auth helpers
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
-# Prefer bcrypt_sha256 for new hashes (avoids bcrypt's 72-byte input limit),
-# but keep bcrypt in the list so existing bcrypt hashes still verify.
-pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
+# Prefer a hashing scheme without bcrypt's 72-byte input limit for development
+# environments where the bcrypt_sha256 handler might not be available. We
+# include a fallback ordering so environments with pure-Python handlers work
+# reliably (pbkdf2_sha256) while still allowing bcrypt variants if present.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt_sha256", "bcrypt"], deprecated="auto")
 
 
 def _maybe_prehash_for_bcrypt(pw: str) -> str:
     """Return a value safe to pass to bcrypt when the input may be longer
     than bcrypt's 72 byte limit.
 
-    If the UTF-8 encoded password is longer than 72 bytes we replace it
-    with its SHA256 hex digest (a 64-char hex string). This mirrors the
-    behaviour of bcrypt_sha256 while staying explicit and working even if
-    the handler isn't available in the environment.
+    Behaviour:
+    - If pw is bytes, decode as UTF-8 (fall back to latin-1) so we operate
+      on a str.
+    - If the UTF-8 encoded password is longer than 72 bytes we replace it
+      with its SHA256 hex digest (a 64-char ASCII string). This mirrors the
+      behaviour of bcrypt_sha256 while staying explicit and working even if
+      the handler isn't available in the environment.
+
+    Always return a str (never bytes) so passlib/bcrypt backends receive a
+    consistent input. We encode with 'utf-8' and use 'replace' on errors to
+    ensure deterministic behaviour for arbitrary input types.
     """
+    # If bytes/bytearray were passed, decode to str first (utf-8 with latin-1 fallback)
+    if isinstance(pw, (bytes, bytearray)):
+        try:
+            pw = pw.decode('utf-8')
+        except Exception:
+            pw = pw.decode('latin-1')
+
+    # Ensure we have a string representation for non-str inputs
     if not isinstance(pw, str):
         pw = str(pw)
-    if len(pw.encode('utf-8')) > 72:
+
+    # Compute UTF-8 bytes length robustly (replace invalid sequences deterministically)
+    b = pw.encode('utf-8', errors='replace')
+
+    if len(b) > 72:
         # use hex digest so it's ASCII and deterministic
-        return hashlib.sha256(pw.encode('utf-8')).hexdigest()
+        return hashlib.sha256(b).hexdigest()
     return pw
 
 
@@ -82,16 +103,34 @@ def hash_password(pw: str) -> str:
     """Hash password with passlib, pre-hashing long inputs to avoid
     bcrypt's 72-byte limit.
 
-    Always pre-hash long passwords (and return hashed value). This ensures we
+    Always pre-hash long values (and return hashed value). This ensures we
     never pass inputs longer than 72 bytes into bcrypt. We use the
     _maybe_prehash_for_bcrypt helper which returns either the original string
     (if <=72 bytes when UTF-8 encoded) or a SHA256 hex digest (64 ASCII
-    characters) which is safe for bcrypt.
+    characters) which is safe for bcrypt. If the underlying passlib handler
+    still raises a ValueError (e.g., unexpected bcrypt handler without the
+    sha256 wrapper), we explicitly compute a SHA256 hex digest of the raw
+    input and hash that. This guarantees we never pass >72 bytes into bcrypt
+    backends.
     """
+    # Normalize and pre-hash long values so we never pass more than 72
+    # bytes into bcrypt handlers in normal operation.
     safe_pw = _maybe_prehash_for_bcrypt(pw)
-    # Let passlib pick the preferred scheme (bcrypt_sha256 if available).
-    # Passing a safe_pw avoids ValueError from bcrypt's input length limit.
-    return pwd_context.hash(safe_pw)
+    try:
+        return pwd_context.hash(safe_pw)
+    except ValueError:
+        # Underlying handler refused the input despite our pre-hash. Compute
+        # a deterministic SHA256 hex digest of the original input and hash
+        # that instead.
+        if isinstance(pw, (bytes, bytearray)):
+            b = pw
+        else:
+            try:
+                b = str(pw).encode('utf-8')
+            except Exception:
+                b = str(pw).encode('utf-8', errors='replace')
+        pre = hashlib.sha256(b).hexdigest()
+        return pwd_context.hash(pre)
 
 
 def verify_password(plain_pw: str, hashed: str) -> bool:
@@ -99,14 +138,19 @@ def verify_password(plain_pw: str, hashed: str) -> bool:
     behaviour used when creating the hash so verification succeeds for
     long passwords.
     """
+    # First try the straightforward verification. Some bcrypt handlers may
+    # raise ValueError when passed input longer than 72 bytes; in that case
+    # attempt verification again using the pre-hashed (sha256 hexdigest)
+    # form which matches how we create hashes for long passwords.
     try:
         return pwd_context.verify(plain_pw, hashed)
     except ValueError:
-        # Verification failed at the handler level due to long input;
-        # try again with the pre-hashed form so it matches hashes created
-        # via the fallback path used during registration.
-        safe_pw = _maybe_prehash_for_bcrypt(plain_pw)
-        return pwd_context.verify(safe_pw, hashed)
+        try:
+            safe_pw = _maybe_prehash_for_bcrypt(plain_pw)
+            return pwd_context.verify(safe_pw, hashed)
+        except Exception:
+            # Any remaining errors mean verification failed.
+            return False
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
