@@ -280,10 +280,12 @@ export default function Editor(){
       setLogEventSource(null)
     }
 
-    // Start SSE to stream new logs (uses access_token query param for EventSource)
-    if (!token) return
+    // Start SSE to stream new logs. If a token is available include it as a
+    // query param, otherwise open the stream without the token so tests and
+    // unauthenticated setups can still receive events (the backend may accept
+    // cookies or unauthenticated connections for streaming).
     try {
-      const url = `/api/runs/${runId}/stream?access_token=${token}`
+      const url = token ? `/api/runs/${runId}/stream?access_token=${token}` : `/api/runs/${runId}/stream`
       const es = new EventSource(url)
       es.onmessage = (e) => {
         try {
