@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
+import hashlib
 import os
 import smtplib
 from typing import List, Optional
@@ -55,7 +56,57 @@ app = FastAPI()
 
 # Auth helpers
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Prefer bcrypt_sha256 for new hashes (avoids bcrypt's 72-byte input limit),
+# but keep bcrypt in the list so existing bcrypt hashes still verify.
+pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
+
+
+def _maybe_prehash_for_bcrypt(pw: str) -> str:
+    """Return a value safe to pass to bcrypt when the input may be longer
+    than bcrypt's 72 byte limit.
+
+    If the UTF-8 encoded password is longer than 72 bytes we replace it
+    with its SHA256 hex digest (a 64-char hex string). This mirrors the
+    behaviour of bcrypt_sha256 while staying explicit and working even if
+    the handler isn't available in the environment.
+    """
+    if not isinstance(pw, str):
+        pw = str(pw)
+    if len(pw.encode('utf-8')) > 72:
+        # use hex digest so it's ASCII and deterministic
+        return hashlib.sha256(pw.encode('utf-8')).hexdigest()
+    return pw
+
+
+def hash_password(pw: str) -> str:
+    """Hash password with passlib, pre-hashing long inputs to avoid
+    bcrypt's 72-byte limit.
+
+    Always pre-hash long passwords (and return hashed value). This ensures we
+    never pass inputs longer than 72 bytes into bcrypt. We use the
+    _maybe_prehash_for_bcrypt helper which returns either the original string
+    (if <=72 bytes when UTF-8 encoded) or a SHA256 hex digest (64 ASCII
+    characters) which is safe for bcrypt.
+    """
+    safe_pw = _maybe_prehash_for_bcrypt(pw)
+    # Let passlib pick the preferred scheme (bcrypt_sha256 if available).
+    # Passing a safe_pw avoids ValueError from bcrypt's input length limit.
+    return pwd_context.hash(safe_pw)
+
+
+def verify_password(plain_pw: str, hashed: str) -> bool:
+    """Verify password against stored hash. Mirrors the same pre-hash
+    behaviour used when creating the hash so verification succeeds for
+    long passwords.
+    """
+    try:
+        return pwd_context.verify(plain_pw, hashed)
+    except ValueError:
+        # Verification failed at the handler level due to long input;
+        # try again with the pre-hashed form so it matches hashes created
+        # via the fallback path used during registration.
+        safe_pw = _maybe_prehash_for_bcrypt(plain_pw)
+        return pwd_context.verify(safe_pw, hashed)
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
@@ -241,7 +292,7 @@ async def register(data: dict, db: AsyncSession = Depends(get_db)):
     existing = res.scalars().first()
     if existing:
         raise HTTPException(status_code=400, detail='user already exists')
-    hashed = pwd_context.hash(password)
+    hashed = hash_password(password)
     user = User(email=email, hashed_password=hashed)
     db.add(user)
     await db.commit()
@@ -265,7 +316,7 @@ async def login(data: dict, db: AsyncSession = Depends(get_db)):
     user = res.scalars().first()
     if not user:
         raise HTTPException(status_code=400, detail='invalid credentials')
-    if not pwd_context.verify(password, user.hashed_password):
+    if not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail='invalid credentials')
     token = f"token-{user.id}"
     return {"access_token": token}
@@ -327,7 +378,6 @@ async def create_provider(data: dict, db: AsyncSession = Depends(get_db), user: 
     await db.refresh(prov)
     # Do not return provider.config to avoid leaking secrets; tests expect minimal response
     return {"id": prov.id, "workspace_id": prov.workspace_id, "type": prov.type, "secret_id": prov.secret_id}
-
 
 @app.get('/api/providers')
 async def list_providers(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):

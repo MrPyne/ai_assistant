@@ -130,7 +130,19 @@ def _run_alembic_migrations(database_url: str):
         pass
 
     if database_url:
-        cfg.set_main_option('sqlalchemy.url', database_url)
+        # If the application uses an async DB driver (eg. postgresql+asyncpg://)
+        # Alembic / the migration env expects a synchronous DBAPI URL. Strip
+        # async driver markers so migrations run with the sync driver.
+        db_url_for_alembic = database_url
+        try:
+            # common async marker used with SQLAlchemy async engines
+            if "+asyncpg" in db_url_for_alembic:
+                db_url_for_alembic = db_url_for_alembic.replace("+asyncpg", "")
+        except Exception:
+            # If anything strange happens, fall back to original URL and let
+            # Alembic raise a clear error rather than crashing here.
+            db_url_for_alembic = database_url
+        cfg.set_main_option('sqlalchemy.url', db_url_for_alembic)
     print(f"Running alembic upgrade head using {alembic_ini_path}...")
     alembic_command.upgrade(cfg, 'head')
 
