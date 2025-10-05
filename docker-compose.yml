@@ -74,9 +74,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - appnet
 
   redis:
     image: redis:6
+    # Bind the container Redis port (6379) to the host. Change REDIS_PORT in your
+    # environment to override the host port if you need to.
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - appnet
+    # Optional: restart policy for local/dev convenience
+    restart: unless-stopped
 
 networks:
   appnet:

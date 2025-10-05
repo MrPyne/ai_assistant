@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 import os
 import smtplib
@@ -8,10 +7,47 @@ from typing import List, Optional
 from fastapi.responses import JSONResponse, StreamingResponse
 import asyncio
 import json
-from backend.database import get_db
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+import asyncio
+
+
+async def _maybe_await(v):
+    if asyncio.iscoroutine(v):
+        return await v
+    return v
+
+
+async def db_execute(db, stmt):
+    """Execute a statement against either a sync Session or AsyncSession.
+
+    Returns the Result object. Works with both sync and async SQLAlchemy
+    sessions by awaiting coroutine results when needed.
+    """
+    res = db.execute(stmt)
+    return await _maybe_await(res)
+
+
+async def db_add(db, obj):
+    r = db.add(obj)
+    return await _maybe_await(r)
+
+
+async def db_commit(db):
+    r = db.commit()
+    return await _maybe_await(r)
+
+
+async def db_refresh(db, obj):
+    r = db.refresh(obj)
+    return await _maybe_await(r)
+
+
+from backend.database import get_db, AsyncSessionLocal
 from backend.models import RunLog, User, Workspace, Secret, Provider, Workflow, Run
 from backend.crypto import encrypt_value
-from datetime import datetime
 
 from backend.tasks import execute_workflow
 
@@ -22,7 +58,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)):
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
     """Resolve the current user from Authorization header or query param.
 
     Dev-friendly behaviour:
@@ -48,7 +84,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         if isinstance(token, str) and token.startswith('token-'):
             try:
                 uid = int(token.split('-', 1)[1])
-                user = db.query(User).filter(User.id == uid).first()
+                res = await db_execute(db, select(User).filter(User.id == uid))
+                user = res.scalars().first()
                 if user:
                     return user
             except Exception:
@@ -56,14 +93,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
                 pass
 
     # Fallback: return first user (convenient for local development)
-    user = db.query(User).first()
+    res = await db_execute(db, select(User))
+    user = res.scalars().first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid authentication")
     return user
 
 
 @app.get('/api/runs/{run_id}/logs')
-def get_run_logs(run_id: int, db: Session = Depends(get_db)):
+async def get_run_logs(run_id: int, db: AsyncSession = Depends(get_db)):
     """Return run logs (redacted) for a given run id.
 
     This queries the DB for RunLog entries and returns them as a list of
@@ -71,7 +109,8 @@ def get_run_logs(run_id: int, db: Session = Depends(get_db)):
     dependency which ensures proper closing.
     """
     try:
-        rows = db.query(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.timestamp.asc()).all()
+        res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.timestamp.asc()))
+        rows = res.scalars().all()
         out = []
         for r in rows:
             out.append({
@@ -87,7 +126,7 @@ def get_run_logs(run_id: int, db: Session = Depends(get_db)):
 
 
 @app.get('/api/runs/{run_id}/stream')
-async def stream_run_logs(run_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def stream_run_logs(run_id: int, request: Request, user: User = Depends(get_current_user)):
     """Stream RunLog entries as Server-Sent Events (SSE).
 
     This endpoint polls the database for new RunLog rows and pushes them to
@@ -98,52 +137,59 @@ async def stream_run_logs(run_id: int, request: Request, db: Session = Depends(g
     def format_sse(data: dict):
         return f"data: {json.dumps(data)}\n\n"
 
-    # initialize last seen id to the max id currently present (or 0)
-    try:
-        rows = db.query(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.id.asc()).all()
-        last_id = rows[-1].id if rows else 0
-    except Exception:
-        last_id = 0
-
+    # We open a dedicated AsyncSession here and keep it open for the duration
+    # of the streaming response. Using the dependency would close the session
+    # too early because dependency cleanup happens when the endpoint returns.
     async def event_generator():
-        nonlocal last_id
-        # send any existing logs first
-        try:
-            existing = db.query(RunLog).filter(RunLog.run_id == run_id, RunLog.id > 0).order_by(RunLog.id.asc()).all()
-            for r in existing:
-                payload = { 'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message }
-                yield format_sse(payload)
-                last_id = max(last_id, r.id)
-        except Exception:
-            # ignore errors while trying to read initial logs
-            pass
-
-        # Poll for new logs until client disconnects or run finishes
-        while True:
-            if await request.is_disconnected():
-                break
+        last_id = 0
+        async with AsyncSessionLocal() as db:
             try:
-                new = db.query(RunLog).filter(RunLog.run_id == run_id, RunLog.id > last_id).order_by(RunLog.id.asc()).all()
-                if new:
-                    for r in new:
-                        payload = { 'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message }
-                        yield format_sse(payload)
-                        last_id = max(last_id, r.id)
-                else:
-                    # check if run is finished; if so and no new logs, close stream
-                    run = db.query(Run).filter(Run.id == run_id).first()
-                    if run and run.finished_at is not None:
-                        break
+                res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.id.asc()))
+                rows = res.scalars().all()
+                last_id = rows[-1].id if rows else 0
             except Exception:
-                # ignore DB errors transiently
+                last_id = 0
+
+            # send any existing logs first
+            try:
+                res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id, RunLog.id > 0).order_by(RunLog.id.asc()))
+                existing = res.scalars().all()
+                for r in existing:
+                    payload = {'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message}
+                    yield format_sse(payload)
+                    last_id = max(last_id, r.id)
+            except Exception:
+                # ignore errors while trying to read initial logs
                 pass
-            await asyncio.sleep(1)
+
+            # Poll for new logs until client disconnects or run finishes
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id, RunLog.id > last_id).order_by(RunLog.id.asc()))
+                    new = res.scalars().all()
+                    if new:
+                        for r in new:
+                            payload = {'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message}
+                            yield format_sse(payload)
+                            last_id = max(last_id, r.id)
+                    else:
+                        # check if run is finished; if so and no new logs, close stream
+                        res2 = await db_execute(db, select(Run).filter(Run.id == run_id))
+                        run = res2.scalars().first()
+                        if run and run.finished_at is not None:
+                            break
+                except Exception:
+                    # ignore DB errors transiently
+                    pass
+                await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type='text/event-stream')
 
 
 @app.get("/ping")
-def ping():
+async def ping():
     return {"status": "ok"}
 
 
@@ -162,7 +208,7 @@ def send_email(to_email: str, subject: str, body: str):
 
 
 @app.post('/api/auth/resend')
-def resend_email(data: dict, db: Session = Depends(get_db)):
+async def resend_email_endpoint(data: dict, db: AsyncSession = Depends(get_db)):
     """Resend a user-facing email (e.g., verification or magic link).
 
     For security, this endpoint returns 200 even if the user/email does not
@@ -172,7 +218,8 @@ def resend_email(data: dict, db: Session = Depends(get_db)):
     email = data.get('email')
     if not email:
         raise HTTPException(status_code=400, detail='email required')
-    user = db.query(User).filter(User.email == email).first()
+    res = await db_execute(db, select(User).filter(User.email == email))
+    user = res.scalars().first()
     # Do not reveal whether the user exists
     if not user:
         return {"status": "ok"}
@@ -185,35 +232,37 @@ def resend_email(data: dict, db: Session = Depends(get_db)):
 
 
 @app.post('/api/auth/register')
-def register(data: dict, db: Session = Depends(get_db)):
+async def register(data: dict, db: AsyncSession = Depends(get_db)):
     email = data.get('email')
     password = data.get('password')
     if not email or not password:
         raise HTTPException(status_code=400, detail='email and password required')
-    existing = db.query(User).filter(User.email == email).first()
+    res = await db_execute(db, select(User).filter(User.email == email))
+    existing = res.scalars().first()
     if existing:
         raise HTTPException(status_code=400, detail='user already exists')
     hashed = pwd_context.hash(password)
     user = User(email=email, hashed_password=hashed)
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     # create a default workspace for the user
     ws = Workspace(name=f"{email}-workspace", owner_id=user.id)
     db.add(ws)
-    db.commit()
+    await db.commit()
     # simple token for dev use
     token = f"token-{user.id}"
     return {"access_token": token}
 
 
 @app.post('/api/auth/login')
-def login(data: dict, db: Session = Depends(get_db)):
+async def login(data: dict, db: AsyncSession = Depends(get_db)):
     email = data.get('email')
     password = data.get('password')
     if not email or not password:
         raise HTTPException(status_code=400, detail='email and password required')
-    user = db.query(User).filter(User.email == email).first()
+    res = await db_execute(db, select(User).filter(User.email == email))
+    user = res.scalars().first()
     if not user:
         raise HTTPException(status_code=400, detail='invalid credentials')
     if not pwd_context.verify(password, user.hashed_password):
@@ -223,29 +272,32 @@ def login(data: dict, db: Session = Depends(get_db)):
 
 
 @app.post('/api/secrets')
-def create_secret(data: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_secret(data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     name = data.get('name')
     value = data.get('value')
     if not name or value is None:
         raise HTTPException(status_code=400, detail='name and value required')
     # find user's workspace
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         raise HTTPException(status_code=400, detail='workspace not found')
     enc = encrypt_value(value)
     s = Secret(workspace_id=ws.id, name=name, encrypted_value=enc, created_by=user.id)
     db.add(s)
-    db.commit()
-    db.refresh(s)
+    await db.commit()
+    await db.refresh(s)
     return {"id": s.id}
 
 
 @app.get('/api/secrets')
-def list_secrets(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+async def list_secrets(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         return []
-    rows = db.query(Secret).filter(Secret.workspace_id == ws.id).all()
+    res2 = await db_execute(db, select(Secret).filter(Secret.workspace_id == ws.id))
+    rows = res2.scalars().all()
     out = []
     for r in rows:
         out.append({"id": r.id, "workspace_id": r.workspace_id, "name": r.name, "created_by": r.created_by, "created_at": r.created_at.isoformat() if r.created_at else None})
@@ -253,34 +305,38 @@ def list_secrets(db: Session = Depends(get_db), user: User = Depends(get_current
 
 
 @app.post('/api/providers')
-def create_provider(data: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_provider(data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     ptype = data.get('type')
     config = data.get('config') or {}
     secret_id = data.get('secret_id')
     if not ptype:
         raise HTTPException(status_code=400, detail='type required')
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         raise HTTPException(status_code=400, detail='workspace not found')
     # validate secret belongs to workspace if provided
     if secret_id:
-        s = db.query(Secret).filter(Secret.id == secret_id, Secret.workspace_id == ws.id).first()
+        res3 = await db_execute(db, select(Secret).filter(Secret.id == secret_id, Secret.workspace_id == ws.id))
+        s = res3.scalars().first()
         if not s:
             raise HTTPException(status_code=400, detail='secret_id not found in workspace')
     prov = Provider(workspace_id=ws.id, type=ptype, secret_id=secret_id, config=config)
     db.add(prov)
-    db.commit()
-    db.refresh(prov)
+    await db.commit()
+    await db.refresh(prov)
     # Do not return provider.config to avoid leaking secrets; tests expect minimal response
     return {"id": prov.id, "workspace_id": prov.workspace_id, "type": prov.type, "secret_id": prov.secret_id}
 
 
 @app.get('/api/providers')
-def list_providers(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+async def list_providers(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         return []
-    rows = db.query(Provider).filter(Provider.workspace_id == ws.id).all()
+    res2 = await db_execute(db, select(Provider).filter(Provider.workspace_id == ws.id))
+    rows = res2.scalars().all()
     out = []
     for r in rows:
         out.append({"id": r.id, "workspace_id": r.workspace_id, "type": r.type, "secret_id": r.secret_id, "created_at": r.created_at.isoformat() if r.created_at else None})
@@ -288,26 +344,29 @@ def list_providers(db: Session = Depends(get_db), user: User = Depends(get_curre
 
 
 @app.post('/api/workflows')
-def create_workflow(data: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_workflow(data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     name = data.get('name') or 'Untitled'
     description = data.get('description')
     graph = data.get('graph')
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         raise HTTPException(status_code=400, detail='workspace not found')
     wf = Workflow(workspace_id=ws.id, name=name, description=description, graph=graph)
     db.add(wf)
-    db.commit()
-    db.refresh(wf)
+    await db.commit()
+    await db.refresh(wf)
     return {"id": wf.id, "workspace_id": wf.workspace_id, "name": wf.name}
 
 
 @app.get('/api/workflows')
-def list_workflows(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    ws = db.query(Workspace).filter(Workspace.owner_id == user.id).first()
+async def list_workflows(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+    ws = res.scalars().first()
     if not ws:
         return []
-    rows = db.query(Workflow).filter(Workflow.workspace_id == ws.id).all()
+    res2 = await db_execute(db, select(Workflow).filter(Workflow.workspace_id == ws.id))
+    rows = res2.scalars().all()
     out = []
     for r in rows:
         out.append({"id": r.id, "workspace_id": r.workspace_id, "name": r.name, "description": r.description, "graph": r.graph, "version": r.version})
@@ -315,7 +374,7 @@ def list_workflows(db: Session = Depends(get_db), user: User = Depends(get_curre
 
 
 @app.post('/api/webhook/{workflow_id}/{trigger_id}')
-async def webhook_trigger(workflow_id: int, trigger_id: str, request: Request, db: Session = Depends(get_db)):
+async def webhook_trigger(workflow_id: int, trigger_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Webhook trigger that creates a Run and enqueues processing.
 
     Returns run_id and queued status. The actual processing is performed by
@@ -331,13 +390,14 @@ async def webhook_trigger(workflow_id: int, trigger_id: str, request: Request, d
         except Exception:
             payload = None
     # ensure workflow exists
-    wf = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+    res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+    wf = res.scalars().first()
     if not wf:
         raise HTTPException(status_code=404, detail='workflow not found')
     run = Run(workflow_id=workflow_id, status='queued', input_payload=payload, started_at=datetime.utcnow())
     db.add(run)
-    db.commit()
-    db.refresh(run)
+    await db.commit()
+    await db.refresh(run)
     # enqueue Celery task (best-effort)
     try:
         execute_workflow.delay(run.id)
@@ -348,15 +408,16 @@ async def webhook_trigger(workflow_id: int, trigger_id: str, request: Request, d
 
 
 @app.post('/api/workflows/{workflow_id}/run')
-def run_workflow(workflow_id: int, data: dict = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    wf = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+async def run_workflow(workflow_id: int, data: dict = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+    wf = res.scalars().first()
     if not wf:
         raise HTTPException(status_code=404, detail='workflow not found')
     payload = data or {}
     run = Run(workflow_id=workflow_id, status='queued', input_payload=payload, started_at=datetime.utcnow())
     db.add(run)
-    db.commit()
-    db.refresh(run)
+    await db.commit()
+    await db.refresh(run)
     try:
         execute_workflow.delay(run.id)
     except Exception:
@@ -365,11 +426,12 @@ def run_workflow(workflow_id: int, data: dict = None, db: Session = Depends(get_
 
 
 @app.get('/api/runs')
-def list_runs(workflow_id: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    q = db.query(Run)
+async def list_runs(workflow_id: Optional[int] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     if workflow_id:
-        q = q.filter(Run.workflow_id == workflow_id)
-    rows = q.order_by(Run.id.desc()).all()
+        res = await db_execute(db, select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()))
+    else:
+        res = await db_execute(db, select(Run).order_by(Run.id.desc()))
+    rows = res.scalars().all()
     out = []
     for r in rows:
         out.append({"id": r.id, "workflow_id": r.workflow_id, "status": r.status, "started_at": r.started_at.isoformat() if r.started_at else None, "finished_at": r.finished_at.isoformat() if r.finished_at else None})
