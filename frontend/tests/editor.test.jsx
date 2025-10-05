@@ -41,6 +41,97 @@ describe('Editor basic add node behavior', () => {
     expect(screen.getByText('HTTP Request')).toBeInTheDocument()
   })
 
+  test('loadWorkflows restores selected node from saved graph', async () => {
+    // stub fetch to return workflows including a graph with selected_node_id
+    const origFetch = global.fetch
+    global.fetch = vi.fn(async (url, opts) => {
+      if (String(url).includes('/api/workflows')) {
+        return {
+          ok: true,
+          json: async () => ([{
+            id: 123,
+            graph: {
+              nodes: [
+                { id: 'n-1', type: 'default', data: { label: 'LLM', config: {} }, position: { x: 0, y: 0 } }
+              ],
+              edges: [],
+              selected_node_id: 'n-1'
+            }
+          }]),
+        }
+      }
+      // default: return empty list for other endpoints
+      return { ok: true, json: async () => [] }
+    })
+
+    try {
+      render(<Editor />)
+
+      // set a token so loadWorkflows can be invoked via the UI
+      const tokenInput = screen.getByPlaceholderText('Paste bearer token here')
+      await userEvent.type(tokenInput, 'dev-token')
+
+      const loadBtn = screen.getByText('Load')
+      await userEvent.click(loadBtn)
+
+      // The loaded node label and selected node id should appear
+      expect(await screen.findByText('LLM')).toBeInTheDocument()
+      expect(screen.getByText(/Node id:/)).toBeInTheDocument()
+      expect(screen.getByText('n-1')).toBeInTheDocument()
+    } finally {
+      global.fetch = origFetch
+    }
+  })
+
+  test('loadWorkflows handles legacy graph array and clears selection', async () => {
+    const origFetch = global.fetch
+    global.fetch = vi.fn(async (url, opts) => {
+      if (String(url).includes('/api/workflows')) {
+        return {
+          ok: true,
+          json: async () => ([{
+            id: 77,
+            // legacy: graph is an array of elements
+            graph: [
+              { id: 'legacy-1', data: { label: 'Legacy Node' }, position: { x: 10, y: 10 } }
+            ]
+          }]),
+        }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    try {
+      render(<Editor />)
+      const tokenInput = screen.getByPlaceholderText('Paste bearer token here')
+      await userEvent.type(tokenInput, 't')
+
+      const loadBtn = screen.getByText('Load')
+      await userEvent.click(loadBtn)
+
+      // legacy node label should render
+      expect(await screen.findByText('Legacy Node')).toBeInTheDocument()
+      // selection should be cleared for legacy graphs
+      expect(screen.getByText(/No node selected/)).toBeInTheDocument()
+    } finally {
+      global.fetch = origFetch
+    }
+  })
+
+  test('editing HTTP headers updates node meta', async () => {
+    render(<Editor />)
+    const httpBtn = screen.getByText('Add HTTP Node')
+    await userEvent.click(httpBtn)
+
+    // headers textarea initially has JSON string '{}'
+    const headersTextarea = screen.getByDisplayValue('{}')
+    await userEvent.clear(headersTextarea)
+    await userEvent.type(headersTextarea, '{"Authorization":"Bearer secret"}')
+
+    // NodeRenderer shows node meta including the headers key
+    expect(await screen.findByText(/Authorization/)).toBeInTheDocument()
+  })
+
   test('adds LLM node when Add LLM Node clicked', async () => {
     render(<Editor />)
     const llmBtn = screen.getByText('Add LLM Node')
