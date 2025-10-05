@@ -166,6 +166,8 @@ describe('Editor run and error handling', () => {
 
       // another EventSource should have been created
       expect(MockEventSource.createdCount).toBeGreaterThanOrEqual(2)
+      // the last instance should be non-null
+      expect(MockEventSource._last).toBeTruthy()
     } finally {
       global.fetch = origFetch
       global.EventSource = origEventSource
