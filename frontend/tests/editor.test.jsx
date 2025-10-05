@@ -54,4 +54,64 @@ describe('Editor basic add node behavior', () => {
     await userEvent.click(webhookBtn)
     expect(screen.getByText('Webhook Trigger')).toBeInTheDocument()
   })
+
+  test('selects newly added node (right panel shows Node id)', async () => {
+    render(<Editor />)
+    const llmBtn = screen.getByText('Add LLM Node')
+    await userEvent.click(llmBtn)
+    // The right-hand panel should show the selected node id when a node is selected
+    expect(screen.getByText(/Node id:/)).toBeInTheDocument()
+  })
+
+  test('updates HTTP node config when edited', async () => {
+    render(<Editor />)
+    const httpBtn = screen.getByText('Add HTTP Node')
+    await userEvent.click(httpBtn)
+
+    // The HTTP method select should initially show GET; change it to POST
+    const methodSelect = screen.getByDisplayValue('GET')
+    await userEvent.selectOptions(methodSelect, 'POST')
+    expect(screen.getByDisplayValue('POST')).toBeInTheDocument()
+  })
+
+  test('saveWorkflow posts current graph including selected node', async () => {
+    render(<Editor />)
+
+    // stub fetch and alert
+    const origFetch = global.fetch
+    const origAlert = window.alert
+    window.alert = vi.fn()
+    global.fetch = vi.fn(async (url, opts) => {
+      return {
+        ok: true,
+        json: async () => ({ id: 42 }),
+      }
+    })
+
+    try {
+      // add a node so there is a selection to persist
+      const httpBtn = screen.getByText('Add HTTP Node')
+      await userEvent.click(httpBtn)
+
+      const saveBtn = screen.getByText('Save')
+      await userEvent.click(saveBtn)
+
+      // wait for fetch to be called
+      await screen.findByText('Selected workflow id:', {}, { timeout: 1000 })
+
+      expect(global.fetch).toHaveBeenCalled()
+      const call = global.fetch.mock.calls[0]
+      expect(call[0]).toBe('/api/workflows')
+      const opts = call[1]
+      expect(opts.method).toBe('POST')
+      const payload = JSON.parse(opts.body)
+      expect(payload).toHaveProperty('graph')
+      expect(Array.isArray(payload.graph.nodes)).toBe(true)
+      // selected_node_id should be present (the editor persists selection)
+      expect(payload.graph).toHaveProperty('selected_node_id')
+    } finally {
+      global.fetch = origFetch
+      window.alert = origAlert
+    }
+  })
 })

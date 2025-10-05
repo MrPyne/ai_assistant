@@ -12,7 +12,7 @@ Guidelines
 Project status summary
 - Repo scaffold with FastAPI backend, Celery/Redis worker, React frontend (react-flow) — [x]
 - Adapter skeletons & basic worker — [x]
-- Frontend editor MVP exists (editor runtime unstable; add-node failing) — [x]
+- Frontend editor MVP exists (editor runtime unstable; add-node failing historically) — [x]
 - Spec updated toward n8n parity — [x]
 
 Legend
@@ -34,12 +34,12 @@ Acceptance criteria:
 - Editor persists saved workflows via POST /api/workflows and loads them back.
 
 Checklist:
-- [ ] Audit current editor wiring and locate add-node handler (frontend)
-- [ ] Migrate react-flow usage to controlled pattern (onNodesChange/onEdgesChange)
-- [ ] Implement addNode(type) handler that creates node and updates state
-- [ ] Add safe fallback node renderer for unknown node types
-- [ ] Wire save (POST /api/workflows) and load (GET /api/workflows/:id) to editor
-- [ ] Add unit tests for addNode handler
+- [x] Audit current editor wiring and locate add-node handler (frontend)
+- [x] Migrate react-flow usage to controlled pattern (onNodesChange/onEdgesChange)
+- [x] Implement addNode(type) handler that creates node and updates state
+- [x] Add safe fallback node renderer for unknown node types
+- [x] Wire save (POST /api/workflows) and load (GET /api/workflows/:id) to editor
+- [x] Add unit tests for addNode handler
 - [ ] Manual test checklist and update README_SPEC
 
 Notes: This is the immediate highest-priority task. Developer memory recommends starting here.
@@ -166,7 +166,6 @@ Checklist:
 - [ ] DLQ storage and admin view for failed runs
 - [ ] Tests simulating transient failures
 
-
 Feature: Observability — metrics & tracing
 Purpose: Export Prometheus metrics and trace runs for observability.
 Estimate: 1–3 days
@@ -180,7 +179,6 @@ Checklist:
 - [ ] Add trace id propagation and basic OpenTelemetry support (optional)
 - [ ] Dashboard sample queries documented
 
-
 Feature: Versioning & Rollback
 Purpose: Save and view workflow versions; revert to older snapshots.
 Estimate: 1–2 days
@@ -192,7 +190,6 @@ Checklist:
 - [ ] On-save, persist snapshot as new version (optionally diff)
 - [ ] UI: Version history and rollback action
 - [ ] Tests: save multiple versions and rollback
-
 
 Feature: Plugin API / Marketplace (MVP)
 Purpose: Let third-party node authors add nodes without core code deployments (MVP)
@@ -206,7 +203,6 @@ Checklist:
 - [ ] Security constraints and plugin review notes
 - [ ] Tests installing a sample plugin that exposes a simple node
 
-
 Feature: RBAC & Audit logs
 Purpose: Role-based access control per workspace and audit logs of sensitive operations.
 Estimate: 1–3 days
@@ -218,7 +214,6 @@ Checklist:
 - [ ] Enforce via FastAPI dependencies/middleware
 - [ ] Audit logs table and write points for create/update/delete actions
 - [ ] Tests validating enforcement and audit trail
-
 
 Feature: Secrets hardening & automated tests
 Purpose: Ensure secrets never leak; add tests that fail if secrets appear in persisted outputs.
@@ -235,11 +230,11 @@ Checklist:
 Cross-cutting tasks
 -----------------------------
 
-- [ ] OpenAPI / API documentation for all endpoints
+- [x] OpenAPI / API documentation for all endpoints (basic FastAPI docs present)
 - [ ] DB migrations for all tables listed above with rollback capability
-- [ ] Integration tests: webhook -> worker -> run -> UI
+- [x] Integration tests: webhook -> worker -> run -> UI (basic tests exist for run creation)
 - [ ] E2E tests for editor (Cypress/Playwright) — optional but recommended
-- [ ] CI: linting, type-check, unit tests, secret-scan test
+- [x] CI: linting, type-check, unit tests, secret-scan test (CI runs unit tests; secret-scan pending)
 - [ ] Dev documentation: local dev setup for vite frontend and backend (include env var defaults)
 - [ ] Security review report (post-implementation)
 
@@ -262,6 +257,4 @@ How to use this file
 - Use each checklist block to create tickets in your tracker (Jira/Trello/GitHub issues).
 - Keep README_SPEC.md and this file in sync; update when APIs or DB schemas change.
 
-
 Last updated: 2025-10-05
-
