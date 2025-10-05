@@ -58,55 +58,72 @@ export default function Editor(){
   }
 
   const loadSecrets = async () => {
-    const resp = await fetch('/api/secrets', { headers: authHeaders() })
-    if (resp.ok) {
-      const data = await resp.json()
-      setSecrets(data || [])
+    try {
+      const resp = await fetch('/api/secrets', { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        setSecrets(data || [])
+      }
+    } catch (err) {
+      // network error — keep UI responsive
+      console.warn('Failed to load secrets', err)
     }
   }
 
   const loadProviders = async () => {
-    const resp = await fetch('/api/providers', { headers: authHeaders() })
-    if (resp.ok) {
-      const data = await resp.json()
-      setProviders(data || [])
+    try {
+      const resp = await fetch('/api/providers', { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        setProviders(data || [])
+      }
+    } catch (err) {
+      console.warn('Failed to load providers', err)
     }
   }
 
   const createSecret = async () => {
     if (!newSecretName || !newSecretValue) return alert('name and value required')
     const payload = { name: newSecretName, value: newSecretValue }
-    const resp = await fetch('/api/secrets', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
-    })
-    if (resp.ok) {
-      alert('Secret created')
-      setNewSecretName('')
-      setNewSecretValue('')
-      await loadSecrets()
-    } else {
-      const txt = await resp.text()
-      alert('Failed to create secret: ' + txt)
+    try {
+      const resp = await fetch('/api/secrets', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      })
+      if (resp.ok) {
+        alert('Secret created')
+        setNewSecretName('')
+        setNewSecretValue('')
+        await loadSecrets()
+      } else {
+        const txt = await resp.text()
+        alert('Failed to create secret: ' + txt)
+      }
+    } catch (err) {
+      alert('Failed to create secret: ' + String(err))
     }
   }
 
   const createProvider = async () => {
     if (!newProviderType) return alert('provider type required')
     const payload = { type: newProviderType, config: {}, secret_id: newProviderSecretId ? Number(newProviderSecretId) : undefined }
-    const resp = await fetch('/api/providers', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
-    })
-    if (resp.ok) {
-      alert('Provider created')
-      setNewProviderSecretId('')
-      await loadProviders()
-    } else {
-      const txt = await resp.text()
-      alert('Failed to create provider: ' + txt)
+    try {
+      const resp = await fetch('/api/providers', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      })
+      if (resp.ok) {
+        alert('Provider created')
+        setNewProviderSecretId('')
+        await loadProviders()
+      } else {
+        const txt = await resp.text()
+        alert('Failed to create provider: ' + txt)
+      }
+    } catch (err) {
+      alert('Failed to create provider: ' + String(err))
     }
   }
 
@@ -178,23 +195,28 @@ export default function Editor(){
       // persist selection so editor state (selected node) can be restored
       graph: { nodes, edges, selected_node_id: selectedNodeId },
     }
-    const resp = await fetch('/api/workflows', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
-    })
-    if (resp.ok) {
-      const data = await resp.json()
-      alert('Saved')
-      if (data && data.id) setWorkflowId(data.id)
-    } else {
-      const txt = await resp.text()
-      alert('Save failed: ' + txt)
+    try {
+      const resp = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        alert('Saved')
+        if (data && data.id) setWorkflowId(data.id)
+      } else {
+        const txt = await resp.text()
+        alert('Save failed: ' + txt)
+      }
+    } catch (err) {
+      alert('Save failed: ' + String(err))
     }
   }
 
   const loadWorkflows = async () => {
-    const resp = await fetch('/api/workflows', { headers: authHeaders() })
+    try {
+      const resp = await fetch('/api/workflows', { headers: authHeaders() })
       if (resp.ok) {
         const data = await resp.json()
         setWorkflows(data || [])
@@ -224,51 +246,69 @@ export default function Editor(){
             }
           }
         }
-    } else {
-      alert('Failed to load workflows')
+      } else {
+        const txt = await resp.text()
+        alert('Failed to load workflows: ' + txt)
+      }
+    } catch (err) {
+      alert('Failed to load workflows: ' + String(err))
     }
   }
 
   const runWorkflow = async () => {
     if (!workflowId) return alert('No workflow selected/saved')
-    const resp = await fetch(`/api/workflows/${workflowId}/run`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({}),
-    })
-    if (resp.ok) {
-      const data = await resp.json()
-      alert('Run queued: ' + data.run_id)
-      await loadRuns()
-      // Automatically open streaming logs for the new run
-      if (data && data.run_id) {
-        viewRunLogs(data.run_id)
+    try {
+      const resp = await fetch(`/api/workflows/${workflowId}/run`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({}),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        alert('Run queued: ' + data.run_id)
+        await loadRuns()
+        // Automatically open streaming logs for the new run
+        if (data && data.run_id) {
+          viewRunLogs(data.run_id)
+        }
+      } else {
+        const txt = await resp.text()
+        alert('Run failed: ' + txt)
       }
-    } else {
-      const txt = await resp.text()
-      alert('Run failed: ' + txt)
+    } catch (err) {
+      alert('Run failed: ' + String(err))
     }
   }
 
   const loadRuns = async () => {
     if (!workflowId) return
     const url = `/api/runs?workflow_id=${workflowId}`
-    const resp = await fetch(url, { headers: authHeaders() })
-    if (resp.ok) {
-      const data = await resp.json()
-      setRuns(data || [])
+    try {
+      const resp = await fetch(url, { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        setRuns(data || [])
+      }
+    } catch (err) {
+      console.warn('Failed to load runs', err)
     }
   }
 
   const viewRunLogs = async (runId) => {
     // Fetch existing logs first
-    const resp = await fetch(`/api/runs/${runId}/logs`, { headers: authHeaders() })
-    if (resp.ok) {
-      const data = await resp.json()
-      // backend returns { logs: [...] }
-      setSelectedRunLogs((data && data.logs) || [])
-    } else {
-      alert('Failed to load logs')
+    try {
+      const resp = await fetch(`/api/runs/${runId}/logs`, { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        // backend returns { logs: [...] }
+        setSelectedRunLogs((data && data.logs) || [])
+      } else {
+        const txt = await resp.text()
+        alert('Failed to load logs: ' + txt)
+        return
+      }
+    } catch (err) {
+      alert('Failed to load logs: ' + String(err))
       return
     }
 
