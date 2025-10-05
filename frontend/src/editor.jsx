@@ -343,7 +343,7 @@ export default function Editor(){
   }
 
   return (
-    <div style={{ height: '100vh' }}>
+    <div className="editor-root">
       <div className="main">
         <div className="sidebar">
           <h3>Palette</h3>
@@ -358,24 +358,24 @@ export default function Editor(){
             <input value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
           </div>
 
-          <div style={{ marginTop: 8 }}>
+          <div className="section-spacing">
             <strong>Login / Register</strong>
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <input placeholder='email' value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} style={{ flex: 1 }} />
-              <input placeholder='password' value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type='password' style={{ flex: 1 }} />
+            <div className="row mt-6">
+              <input placeholder="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="col" />
+              <input placeholder="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type="password" className="col" />
             </div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <div className="row mt-6">
               <button onClick={loginUser}>Login</button>
               <button onClick={registerUser}>Register</button>
             </div>
           </div>
           <hr />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input style={{ flex: 1 }} value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
+          <div className="row">
+            <input className="col" value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
             <button onClick={saveWorkflow}>Save</button>
           </div>
-          <div style={{ marginTop: 8 }}>Selected workflow id: {workflowId || 'none'}</div>
-          <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+          <div className="mt-8">Selected workflow id: {workflowId || 'none'}</div>
+          <div className="row mt-8">
             <button onClick={loadWorkflows}>Load</button>
             <button onClick={runWorkflow}>Run</button>
             <button onClick={loadRuns}>Refresh Runs</button>
@@ -383,7 +383,7 @@ export default function Editor(){
 
           <hr />
           <h4>Providers</h4>
-          <div style={{ marginBottom: 6 }}>
+          <div className="row" style={{ marginBottom: 6 }}>
             <input placeholder='Type (e.g. openai)' value={newProviderType} onChange={(e) => setNewProviderType(e.target.value)} style={{ width: '60%', marginRight: 6 }} />
             <select value={newProviderSecretId} onChange={(e) => setNewProviderSecretId(e.target.value)} style={{ width: '30%', marginRight: 6 }}>
               <option value=''>No secret</option>
@@ -394,8 +394,8 @@ export default function Editor(){
 
           <div className="list-scroll">
             {providers.length === 0 ? <div className="muted">No providers</div> : providers.map(p => (
-              <div key={p.id} style={{ padding: 6, borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                <div><strong>{p.type}</strong> <span style={{ fontSize: 12, color: 'var(--muted)' }}>(id: {p.id})</span></div>
+              <div key={p.id} className="list-item">
+                <div><strong>{p.type}</strong> <span className="muted">(id: {p.id})</span></div>
               </div>
             ))}
           </div>
@@ -407,9 +407,9 @@ export default function Editor(){
           </div>
           <div className="list-scroll">
             {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
-              <div key={s.id} style={{ padding: 6, borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+              <div key={s.id} className="list-item">
                 <div><strong>{s.name}</strong></div>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }} className="secondary">Copy id</button></div>
+                <div className="muted">id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }} className="secondary">Copy id</button></div>
               </div>
             ))}
           </div>
@@ -423,8 +423,8 @@ export default function Editor(){
           <div className="list-scroll runs-list">
             {runs.length === 0 ? <div className="muted">No runs</div> : runs.map(r => (
               <div key={r.id} className="run-item">
-                <div style={{ fontSize: 13 }}>Run {r.id} — {r.status}</div>
-                <div style={{ marginTop: 6 }}>
+                <div className="run-meta">Run {r.id} — {r.status}</div>
+                <div>
                   <button onClick={() => viewRunLogs(r.id)} className="secondary">View Logs</button>
                 </div>
               </div>

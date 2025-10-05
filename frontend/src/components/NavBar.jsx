@@ -12,14 +12,16 @@ export default function NavBar(){
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-      <nav style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div className="header">
+      <nav className="nav-inline">
         <Link to="/" className="nav-link">Home</Link>
         <Link to="/editor" className="nav-link">Editor</Link>
-        {token ? (<>
-          <Link to="/profile" className="nav-link">Profile</Link>
-          <button onClick={logout} className="secondary">Logout</button>
-        </>) : (
+        {token ? (
+          <>
+            <Link to="/profile" className="nav-link">Profile</Link>
+            <button onClick={logout} className="btn btn-ghost">Logout</button>
+          </>
+        ) : (
           <>
             <Link to="/login" className="nav-link">Login</Link>
             <Link to="/register" className="nav-link">Register</Link>

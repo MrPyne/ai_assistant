@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   proxy:
     image: nginx:alpine
@@ -21,10 +19,35 @@ services:
     networks:
       - appnet
     environment:
-      - DEBUG=0
+      DEBUG: "${DEBUG:-0}"
+      PORT: "${PORT:-8000}"
+      DATABASE_URL: "${DATABASE_URL}"
+      CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
+      CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
+      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
+    ports:
+      - "8000:8000"
     depends_on:
       - db
       - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend_runtime
+    networks:
+      - appnet
+    environment:
+      DEBUG: "${DEBUG:-0}"
+      DATABASE_URL: "${DATABASE_URL}"
+      CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
+      CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
+      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
+    depends_on:
+      - db
+      - redis
+    command: ["celery", "-A", "backend.tasks", "worker", "--loglevel=info", "--concurrency=1"]
 
   frontend:
     build:
@@ -45,6 +68,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: "${POSTGRES_DB:-postgres}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 10s

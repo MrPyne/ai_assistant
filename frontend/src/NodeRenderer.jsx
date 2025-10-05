@@ -50,7 +50,7 @@ export default function NodeRenderer({ data }) {
         </span>
         <div className="label">{label}</div>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>{Object.keys(config).length ? JSON.stringify(config) : ''}</div>
+      <div className="node-meta">{Object.keys(config).length ? JSON.stringify(config) : ''}</div>
     </div>
   )
 }

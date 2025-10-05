@@ -20,11 +20,19 @@ export default function App(){
     <AuthProvider>
       <BrowserRouter>
         <div className="app-shell">
-          <div className="topbar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <h2 className="brand" style={{ margin: 0 }}><Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>No-code AI</Link></h2>
+        <div className="topbar">
+            <div className="topbar-left">
+              <div className="brand">
+                <Link to="/" className="brand-link">
+                  <span className="logo" />
+                  <div>
+                    <div className="brand-title">No-code AI</div>
+                    <div className="brand-sub">Workflows & automations</div>
+                  </div>
+                </Link>
+              </div>
             </div>
-            <div style={{ flex: 1 }} />
+            <div className="spacer" />
             <div className="nav">
               <NavBar />
             </div>

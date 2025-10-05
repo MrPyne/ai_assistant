@@ -14,8 +14,12 @@ from .adapters.ollama_adapter import OllamaAdapter
 
 logger = logging.getLogger(__name__)
 
-CELERY_BROKER = os.getenv('CELERY_BROKER', 'redis://localhost:6379/0')
-CELERY_BACKEND = os.getenv('CELERY_BACKEND', 'redis://localhost:6379/0')
+# Support both older env var names (CELERY_BROKER / CELERY_BACKEND) and the
+# more explicit names used in .env/.env.example (CELERY_BROKER_URL,
+# CELERY_RESULT_BACKEND). This makes Docker Compose and local env files
+# interoperable.
+CELERY_BROKER = os.getenv('CELERY_BROKER_URL') or os.getenv('CELERY_BROKER') or 'redis://localhost:6379/0'
+CELERY_BACKEND = os.getenv('CELERY_RESULT_BACKEND') or os.getenv('CELERY_BACKEND') or 'redis://localhost:6379/1'
 
 celery_app = Celery('backend.tasks', broker=CELERY_BROKER, backend=CELERY_BACKEND)
 

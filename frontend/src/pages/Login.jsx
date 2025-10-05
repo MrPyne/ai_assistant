@@ -34,15 +34,17 @@ export default function Login(){
   }
 
   return (
-    <div style={{ padding: 20 }}>
-      <h3>Login</h3>
-      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 360 }}>
-        <input placeholder='email' value={email} onChange={(e) => setEmail(e.target.value)} />
-        <input placeholder='password' type='password' value={password} onChange={(e) => setPassword(e.target.value)} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type='submit'>Login</button>
-        </div>
-      </form>
+    <div className="page">
+      <div className="page-inner">
+        <h3>Login</h3>
+        <form onSubmit={submit} className="form-vertical">
+          <input placeholder='email' value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input placeholder='password' type='password' value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div className="form-actions">
+            <button type='submit'>Login</button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

@@ -1,10 +1,10 @@
-# Start development stack via docker-compose
-Param(
-    [switch]$Detach
-)
-
-if ($Detach) {
-    docker-compose up -d --remove-orphans
+# Start the stack (detached). Uses docker-compose if available, otherwise docker compose
+$composeCmd = ""
+if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
+    $composeCmd = "docker-compose"
 } else {
-    docker-compose up --remove-orphans
+    $composeCmd = "docker compose"
 }
+
+Write-Host "Running: $composeCmd up --build -d"
+& $composeCmd up --build -d

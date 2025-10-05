@@ -20,16 +20,18 @@ export default function Profile(){
   }, [token])
 
   return (
-    <div style={{ padding: 20 }}>
-      <h3>Profile</h3>
-      {profile ? (
-        <div>
-          <div><strong>Email:</strong> {profile.email}</div>
-          <div style={{ marginTop: 8 }}><strong>Workspace:</strong> {profile.workspace || 'default'}</div>
-        </div>
-      ) : (
-        <div style={{ color: '#666' }}>No profile loaded</div>
-      )}
+    <div className="page">
+      <div className="page-inner">
+        <h3>Profile</h3>
+        {profile ? (
+          <div>
+            <div><strong>Email:</strong> {profile.email}</div>
+            <div className="muted mt-8"><strong>Workspace:</strong> {profile.workspace || "default"}</div>
+          </div>
+        ) : (
+          <div className="muted">No profile loaded</div>
+        )}
+      </div>
     </div>
   )
 }

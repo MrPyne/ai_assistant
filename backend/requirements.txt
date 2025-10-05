@@ -11,3 +11,4 @@ celery[redis]
 redis
 requests
 cryptography
+asyncpg
