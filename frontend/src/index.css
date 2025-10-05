@@ -80,7 +80,18 @@ textarea{resize:vertical}
 .form-vertical{display:flex;flex-direction:column;gap:8px;width:360px}
 .form-actions{display:flex;gap:8px}
 
+/* Editor layout */
 .editor-root{height:100vh}
+.editor-main{display:flex;height:100%;align-items:stretch}
+.sidebar{width:320px;padding:16px;border-right:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);overflow:auto;z-index:3}
+.canvas{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:2}
+.rightpanel{width:360px;padding:16px;border-left:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);overflow:auto;z-index:3}
+
+.reactflow-wrapper{height:100%;background:transparent;position:relative}
+/* Ensure the React Flow viewport fills the wrapper and sits above background but below side panels where appropriate */
+.reactflow-wrapper .react-flow{height:100%}
+.reactflow-wrapper .react-flow__viewport{height:100%}
+
 .section-spacing{margin-top:8px}
 .list-item{padding:6px;border-bottom:1px solid rgba(255,255,255,0.02)}
 .row{display:flex;gap:12px;align-items:center}

@@ -1,8 +1,12 @@
-import React, { useCallback, useState, useEffect } from 'react'
-import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider } from 'react-flow-renderer'
+import React, { useCallback, useState, useEffect, useRef } from 'react'
+// reactflow v10 exports from 'reactflow' — use the modern package entrypoint.
+// This also avoids some runtime issues when the library API surface
+// differs between versions. Keep the existing helper names for
+// compatibility with the rest of the component.
+import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider, applyNodeChanges, applyEdgeChanges } from 'reactflow'
 import NodeRenderer from './NodeRenderer'
 
-const initialElements = [
+const initialNodes = [
   {
     id: '1',
     type: 'input',
@@ -10,13 +14,12 @@ const initialElements = [
     position: { x: 250, y: 5 },
   },
 ]
+const initialEdges = []
 
 export default function Editor(){
-  const [elements, setElements] = useState(initialElements)
+  const [nodes, setNodes] = useState(initialNodes)
+  const [edges, setEdges] = useState(initialEdges)
   const [token, setToken] = useState(localStorage.getItem('authToken') || '')
-  const [authEmail, setAuthEmail] = useState('')
-  const [authPassword, setAuthPassword] = useState('')
-  const [authMode, setAuthMode] = useState('login')
   const [workflowId, setWorkflowId] = useState(null)
   const [workflows, setWorkflows] = useState([])
   const [runs, setRuns] = useState([])
@@ -30,6 +33,9 @@ export default function Editor(){
   const [workflowName, setWorkflowName] = useState('New Workflow')
   const [newProviderType, setNewProviderType] = useState('openai')
   const [newProviderSecretId, setNewProviderSecretId] = useState('')
+
+  // react-flow instance ref to compute projected coords and other helpers
+  const reactFlowInstance = useRef(null)
 
   useEffect(() => {
     localStorage.setItem('authToken', token)
@@ -56,51 +62,6 @@ export default function Editor(){
     if (resp.ok) {
       const data = await resp.json()
       setSecrets(data || [])
-    }
-  }
-
-  const registerUser = async () => {
-    if (!authEmail || !authPassword) return alert('email and password required')
-    const resp = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: authEmail, password: authPassword }),
-    })
-    if (resp.ok) {
-      const data = await resp.json()
-      if (data && data.access_token) {
-        setToken(data.access_token)
-        alert('Registered and logged in')
-        // load user-scoped resources
-        await loadProviders()
-        await loadSecrets()
-        await loadWorkflows()
-      }
-    } else {
-      const txt = await resp.text()
-      alert('Register failed: ' + txt)
-    }
-  }
-
-  const loginUser = async () => {
-    if (!authEmail || !authPassword) return alert('email and password required')
-    const resp = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: authEmail, password: authPassword }),
-    })
-    if (resp.ok) {
-      const data = await resp.json()
-      if (data && data.access_token) {
-        setToken(data.access_token)
-        alert('Logged in')
-        await loadProviders()
-        await loadSecrets()
-        await loadWorkflows()
-      }
-    } else {
-      const txt = await resp.text()
-      alert('Login failed: ' + txt)
     }
   }
 
@@ -149,52 +110,63 @@ export default function Editor(){
     }
   }
 
-  const onConnect = useCallback((params) => setElements((els) => addEdge(params, els)), [])
+  const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
+  const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
+
+  const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [])
+
+  // Generic addNode helper tries to compute a sensible position using the reactflow instance when available.
+  const addNode = ({ label = 'Node', config = {}, preferY = 120 }) => {
+    setNodes((nds) => {
+      const id = String(Date.now())
+      let position = { x: (nds.length * 120) % 800, y: preferY }
+      try {
+        if (reactFlowInstance.current && typeof reactFlowInstance.current.project === 'function') {
+          const screenX = window.innerWidth / 2
+          const screenY = window.innerHeight / 2
+          const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
+          position = { x: p.x + (nds.length * 20), y: p.y + preferY }
+        }
+      } catch (err) {
+        // ignore and fall back to grid
+      }
+
+      const node = {
+        id,
+        type: label === 'Webhook Trigger' ? 'input' : 'default',
+        data: { label, config },
+        position,
+      }
+      console.debug('editor:add_node', { type: label.toLowerCase(), id })
+      // select the new node
+      setSelectedNodeId(id)
+      return nds.concat(node)
+    })
+  }
 
   const addHttpNode = () => {
-    const id = String(Date.now())
-    const newNode = {
-      id,
-      type: 'default',
-      data: { label: 'HTTP Request', config: { method: 'GET', url: '', headers: {}, body: '' } },
-      position: { x: (elements.length * 120) % 800, y: 100 },
-    }
-    setElements((els) => els.concat(newNode))
+    addNode({ label: 'HTTP Request', config: { method: 'GET', url: '', headers: {}, body: '' }, preferY: 100 })
   }
 
   const addLlmNode = () => {
-    const id = String(Date.now())
     const defaultProvider = providers.length > 0 ? providers[0].id : null
-    const newNode = {
-      id,
-      type: 'default',
-      data: { label: 'LLM', config: { prompt: '', provider_id: defaultProvider } },
-      position: { x: (elements.length * 120) % 800, y: 200 },
-    }
-    setElements((els) => els.concat(newNode))
+    addNode({ label: 'LLM', config: { prompt: '', provider_id: defaultProvider }, preferY: 200 })
   }
 
   const addWebhookTrigger = () => {
-    const id = String(Date.now())
-    const newNode = {
-      id,
-      type: 'input',
-      data: { label: 'Webhook Trigger', config: {} },
-      position: { x: (elements.length * 120) % 800, y: 20 },
-    }
-    setElements((els) => els.concat(newNode))
+    addNode({ label: 'Webhook Trigger', config: {}, preferY: 20 })
   }
 
   const updateNodeConfig = (nodeId, newConfig) => {
-    setElements((els) => els.map(e => (
-      e.id === nodeId ? { ...e, data: { ...e.data, config: newConfig } } : e
+    setNodes((nds) => nds.map(n => (
+      n.id === nodeId ? { ...n, data: { ...n.data, config: newConfig } } : n
     )))
   }
 
   const saveWorkflow = async () => {
     const payload = {
       name: workflowName || 'Untitled',
-      graph: { nodes: elements },
+      graph: { nodes, edges },
     }
     const resp = await fetch('/api/workflows', {
       method: 'POST',
@@ -220,8 +192,16 @@ export default function Editor(){
         const wf = data[0]
         setWorkflowId(wf.id)
         if (wf.graph) {
-          if (Array.isArray(wf.graph)) setElements(wf.graph)
-          else if (wf.graph.nodes) setElements(wf.graph.nodes)
+          if (Array.isArray(wf.graph)) {
+            // legacy: array of elements
+            const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
+            const edgesLoaded = wf.graph.filter(e => e.source && e.target)
+            setNodes(nodesLoaded)
+            setEdges(edgesLoaded)
+          } else if (wf.graph.nodes) {
+            setNodes(wf.graph.nodes)
+            setEdges(wf.graph.edges || [])
+          }
         }
       }
     } else {
@@ -304,9 +284,9 @@ export default function Editor(){
     }
   }
 
-  const onElementClick = (event, element) => {
-    if (!element || !element.id) return
-    setSelectedNodeId(element.id)
+  const onNodeClick = (event, node) => {
+    if (!node || !node.id) return
+    setSelectedNodeId(node.id)
   }
 
   const onPaneClick = () => {
@@ -333,7 +313,7 @@ export default function Editor(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logEventSource])
 
-  const selectedNode = selectedNodeId ? elements.find(e => e.id === selectedNodeId) : null
+  const selectedNode = selectedNodeId ? nodes.find(n => n.id === selectedNodeId) : null
 
   const copyWebhookUrl = () => {
     if (!workflowId || !selectedNodeId) return alert('Save the workflow and select the webhook node to get a URL')
@@ -344,7 +324,7 @@ export default function Editor(){
 
   return (
     <div className="editor-root">
-      <div className="main">
+      <div className="editor-main">
         <div className="sidebar">
           <h3>Palette</h3>
           <div className="palette-buttons">
@@ -358,17 +338,6 @@ export default function Editor(){
             <input value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
           </div>
 
-          <div className="section-spacing">
-            <strong>Login / Register</strong>
-            <div className="row mt-6">
-              <input placeholder="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="col" />
-              <input placeholder="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type="password" className="col" />
-            </div>
-            <div className="row mt-6">
-              <button onClick={loginUser}>Login</button>
-              <button onClick={registerUser}>Register</button>
-            </div>
-          </div>
           <hr />
           <div className="row">
             <input className="col" value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
@@ -436,11 +405,15 @@ export default function Editor(){
           <div style={{ flex: 1 }} className="reactflow-wrapper">
             <ReactFlowProvider>
               <ReactFlow
-                elements={elements}
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onElementClick={onElementClick}
+                onNodeClick={onNodeClick}
                 onPaneClick={onPaneClick}
                 nodeTypes={{ default: NodeRenderer }}
+                onInit={(instance) => { reactFlowInstance.current = instance }}
               >
                 <Background />
                 <Controls />
@@ -522,7 +495,7 @@ export default function Editor(){
                     try {
                       const parsed = JSON.parse(e.target.value)
                       // replace entire data
-                      setElements((els) => els.map(el => el.id === selectedNodeId ? { ...el, data: parsed } : el))
+                      setNodes((nds) => nds.map(n => n.id === selectedNodeId ? { ...n, data: parsed } : n))
                     } catch (err) {
                       // ignore
                     }
