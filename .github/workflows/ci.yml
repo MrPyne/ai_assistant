@@ -65,4 +65,6 @@ jobs:
         run: |
           cd frontend
           npm ci || npm i --no-audit --no-fund
+          # Run frontend unit tests (vitest) to catch regressions in editor behavior
+          npm test --silent
           npm run build
