@@ -90,8 +90,20 @@ def _run_alembic_migrations(database_url: str):
     This reads backend/alembic.ini and overrides sqlalchemy.url with the
     provided DATABASE_URL. It's best-effort for local/dev usage.
     """
+    # If alembic isn't importable, provide a clear, actionable message.
     if not AlembicConfig or not alembic_command:
-        print("alembic not available; skipping migrations")
+        msg = (
+            "Alembic is not available in this environment; automatic migrations cannot be applied.\n"
+            "Possible remediation steps:\n"
+            "  - Install alembic in the runtime environment (e.g. `pip install alembic`) and restart the service.\n"
+            "  - Run the helper script `scripts/apply_migrations.py` from a machine/container that has alembic available.\n"
+            "  - Apply migrations manually using the alembic CLI.\n\n"
+            "If you understand the risks and want the process to continue without running migrations, set the environment variable `FAIL_ON_MIGRATION_MISSING=0`.\n"
+            "To make startup fail loudly when alembic is missing, set `FAIL_ON_MIGRATION_MISSING=1` and the process will abort."
+        )
+        print(msg)
+        if os.environ.get("FAIL_ON_MIGRATION_MISSING") in ("1", "true", "True"):
+            raise RuntimeError("Alembic not available and FAIL_ON_MIGRATION_MISSING set; aborting startup.")
         return
     # locate alembic.ini; prefer a backend/alembic.ini if present in the repo layout
     here = os.path.dirname(__file__)
@@ -194,7 +206,12 @@ if __name__ == "__main__":
     try:
         _run_alembic_migrations(database_url)
     except Exception:
-        print("Failed to run alembic migrations (continuing):")
+        print("Failed to run alembic migrations:")
         traceback.print_exc()
+        # Allow opting into aborting startup when migrations fail/errors occur
+        if os.environ.get("FAIL_ON_MIGRATION_ERROR") in ("1", "true", "True"):
+            print("FAIL_ON_MIGRATION_ERROR set; aborting startup.")
+            sys.exit(1)
+        print("Continuing without applying migrations (this may lead to runtime errors).")
 
     os.execvp(cmd[0], cmd)

@@ -662,12 +662,35 @@ if HAS_SQLALCHEMY:
 
 
     @app.get('/api/workflows/{workflow_id}/runs')
-    async def list_runs_for_workflow(workflow_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    async def list_runs_for_workflow(
+        workflow_id: int,
+        limit: int = 50,
+        offset: int = 0,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user),
+    ):
         """Return runs for a specific workflow (owned by current user).
 
         This ensures the workflow belongs to the requesting user's workspace
-        and returns a list of runs ordered by newest first.
+        and returns a paginated list of runs ordered by newest first.
         """
+        # sanitize pagination params
+        try:
+            limit = int(limit)
+        except Exception:
+            limit = 50
+        try:
+            offset = int(offset)
+        except Exception:
+            offset = 0
+        # enforce reasonable limits
+        if limit <= 0:
+            limit = 1
+        if limit > 100:
+            limit = 100
+        if offset < 0:
+            offset = 0
+
         # ensure workflow exists and belongs to user's workspace
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
         wf = res.scalars().first()
@@ -681,11 +704,18 @@ if HAS_SQLALCHEMY:
             # hide existence of workflow if not accessible
             raise HTTPException(status_code=404, detail='workflow not found')
 
-        res3 = await db_execute(db, select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()))
+        stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()).limit(limit).offset(offset)
+        res3 = await db_execute(db, stmt)
         rows = res3.scalars().all()
         out = []
         for r in rows:
-            out.append({"id": r.id, "workflow_id": r.workflow_id, "status": r.status, "started_at": r.started_at.isoformat() if r.started_at else None, "finished_at": r.finished_at.isoformat() if r.finished_at else None})
+            out.append({
+                "id": r.id,
+                "workflow_id": r.workflow_id,
+                "status": r.status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            })
         return out
 
     @app.post('/api/workflows/{workflow_id}/run')
@@ -706,15 +736,63 @@ if HAS_SQLALCHEMY:
         return {"run_id": run.id, "status": "queued"}
 
     @app.get('/api/runs')
-    async def list_runs(workflow_id: Optional[int] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    async def list_runs(
+        workflow_id: Optional[int] = None,
+        limit: int = 50,
+        offset: int = 0,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user),
+    ):
+        """List runs across workflows or filter by workflow_id. Supports pagination via limit/offset.
+        """
+        # sanitize pagination params
+        try:
+            limit = int(limit)
+        except Exception:
+            limit = 50
+        try:
+            offset = int(offset)
+        except Exception:
+            offset = 0
+        if limit <= 0:
+            limit = 1
+        if limit > 100:
+            limit = 100
+        if offset < 0:
+            offset = 0
+
+        # Ensure we only return runs the user is permitted to see. When a
+        # workflow_id is provided, verify the workflow belongs to the user's
+        # workspace. When no workflow_id is provided, restrict results to runs
+        # that belong to workflows in the user's workspace.
+        # fetch user's workspace
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws:
+            return []
+
         if workflow_id:
-            res = await db_execute(db, select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()))
+            # ensure workflow exists and belongs to user's workspace
+            res_wf = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+            wf = res_wf.scalars().first()
+            if not wf or wf.workspace_id != ws.id:
+                # hide existence of workflow if not accessible
+                raise HTTPException(status_code=404, detail='workflow not found')
+            stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()).limit(limit).offset(offset)
         else:
-            res = await db_execute(db, select(Run).order_by(Run.id.desc()))
+            # restrict to workflows in this workspace to avoid cross-workspace leakage
+            stmt = select(Run).join(Workflow).filter(Workflow.workspace_id == ws.id).order_by(Run.id.desc()).limit(limit).offset(offset)
+        res = await db_execute(db, stmt)
         rows = res.scalars().all()
         out = []
         for r in rows:
-            out.append({"id": r.id, "workflow_id": r.workflow_id, "status": r.status, "started_at": r.started_at.isoformat() if r.started_at else None, "finished_at": r.finished_at.isoformat() if r.finished_at else None})
+            out.append({
+                "id": r.id,
+                "workflow_id": r.workflow_id,
+                "status": r.status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            })
         return out
 
 

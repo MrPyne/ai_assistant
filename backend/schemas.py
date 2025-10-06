@@ -22,11 +22,22 @@ class WorkflowOut(BaseModel):
         orm_mode = True
 
 
+class RunDetail(RunOut):
+    logs: Optional[List[RunLogOut]] = []
+
+    class Config:
+        orm_mode = True
+
+
 class RunOut(BaseModel):
     id: int
     workflow_id: int
     status: str
     input_payload: Optional[Any] = None
+    output_payload: Optional[Any] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    attempts: Optional[int] = 0
 
     class Config:
         orm_mode = True
