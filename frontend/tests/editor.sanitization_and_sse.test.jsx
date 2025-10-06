@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event'
 import React from 'react'
 import { vi } from 'vitest'
 
-// Reuse reactflow mock to avoid DOM issues
-vi.mock('reactflow', () => {
+// Reuse react-flow-renderer mock to avoid DOM issues
+vi.mock('react-flow-renderer', () => {
   const React = require('react')
   const MockReactFlow = ({ children }) => React.createElement(React.Fragment, null, children)
   const MockProvider = ({ children }) => React.createElement(React.Fragment, null, children)

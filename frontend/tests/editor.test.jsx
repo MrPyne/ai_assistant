@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import React from 'react'
 import { vi } from 'vitest'
 
-// Mock reactflow to avoid DOM measurement/runtime issues in jsdom.
+// Mock react-flow-renderer to avoid DOM measurement/runtime issues in jsdom.
 // Provide minimal implementations for the pieces Editor imports.
-vi.mock('reactflow', () => {
+vi.mock('react-flow-renderer', () => {
   const React = require('react')
   const MockReactFlow = ({ children }) => React.createElement(React.Fragment, null, children)
   const MockProvider = ({ children }) => React.createElement(React.Fragment, null, children)

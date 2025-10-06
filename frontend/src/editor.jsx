@@ -1,9 +1,9 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react'
-// reactflow v10 exports from 'reactflow' — use the modern package entrypoint.
-// This also avoids some runtime issues when the library API surface
-// differs between versions. Keep the existing helper names for
-// compatibility with the rest of the component.
-import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider, applyNodeChanges, applyEdgeChanges } from 'reactflow'
+// react-flow-renderer v10 exports from 'react-flow-renderer'. The project
+// depends on the v10 package (react-flow-renderer) rather than the newer
+// renamed package (reactflow). Import from the installed package so Vite/Rollup
+// can resolve the module during the build.
+import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider, applyNodeChanges, applyEdgeChanges } from 'react-flow-renderer'
 import NodeRenderer from './NodeRenderer'
 
 const initialNodes = [
