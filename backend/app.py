@@ -357,7 +357,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 if HAS_SQLALCHEMY:
     @app.get('/api/runs/{run_id}/logs')
-    async def get_run_logs(run_id: int, db: AsyncSession = Depends(get_db)):
+    async def get_run_logs(run_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         """Return run logs (redacted) for a given run id.
 
         This queries the DB for RunLog entries and returns them as a list of
@@ -365,12 +365,31 @@ if HAS_SQLALCHEMY:
         dependency which ensures proper closing.
         """
         try:
+            # Verify the requesting user has permission to view this run by
+            # ensuring the run belongs to a workflow in their workspace.
+            res_run = await db_execute(db, select(Run).filter(Run.id == run_id))
+            run = res_run.scalars().first()
+            if not run:
+                raise HTTPException(status_code=404, detail='run not found')
+
+            res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+            ws = res_ws.scalars().first()
+            if not ws:
+                raise HTTPException(status_code=404, detail='run not found')
+
+            res_wf = await db_execute(db, select(Workflow).filter(Workflow.id == run.workflow_id))
+            wf = res_wf.scalars().first()
+            if not wf or wf.workspace_id != ws.id:
+                # hide existence if user shouldn't access
+                raise HTTPException(status_code=404, detail='run not found')
+
             res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.timestamp.asc()))
             rows = res.scalars().all()
             out = []
             for r in rows:
                 out.append({
                     'id': r.id,
+                    'run_id': r.run_id if hasattr(r, 'run_id') else run_id,
                     'node_id': r.node_id,
                     'timestamp': r.timestamp.isoformat() if r.timestamp else None,
                     'level': r.level,
