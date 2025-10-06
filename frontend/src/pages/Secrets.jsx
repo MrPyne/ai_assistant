@@ -44,7 +44,10 @@ export default function Secrets(){
       <h2>Secrets</h2>
       <div style={{ marginBottom: 8 }}>
         <input placeholder='Name' value={name} onChange={(e) => setName(e.target.value)} style={{ marginRight: 6 }} />
-        <input placeholder='Value' value={value} onChange={(e) => setValue(e.target.value)} style={{ marginRight: 6 }} />
+        {/* Use a password input so secret values are masked in the UI. This avoids shoulder-surfing
+            and is appropriate because the frontend should never be able to read back the stored
+            secret value once saved. */}
+        <input type='password' autoComplete='new-password' placeholder='Value' value={value} onChange={(e) => setValue(e.target.value)} style={{ marginRight: 6 }} />
         <button onClick={create}>Create</button>
       </div>
       <div>

@@ -301,6 +301,54 @@ def verify_password(plain_pw: str, hashed: str) -> bool:
         # Any remaining errors or mismatches mean verification failed.
         return False
 
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    """Return the currently authenticated user based on the provided OAuth2
+    token. Accepts a simple development token format of 'token-<user_id>'.
+
+    Behaviour:
+    - If SQLAlchemy/db is available, attempt to load the User from the DB.
+    - If DB is not available (tests/dev fallback), return a lightweight
+      User-like object with an 'id' attribute so endpoints that expect user.id
+      continue to work.
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+
+    # Expect the simplistic dev token format used by the app (token-<id>)
+    if token.startswith('token-'):
+        try:
+            uid = int(token.split('-', 1)[1])
+        except Exception:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        if HAS_SQLALCHEMY:
+            try:
+                res = await db_execute(db, select(User).filter(User.id == uid))
+                user = res.scalars().first()
+                if not user:
+                    raise HTTPException(status_code=401, detail='User not found')
+                return user
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=401, detail='Invalid token')
+        else:
+            # Return a minimal User-like object for environments without DB.
+            u = User()
+            try:
+                setattr(u, 'id', uid)
+            except Exception:
+                # Fallback to attribute assignment via __dict__ if needed
+                try:
+                    u.__dict__['id'] = uid
+                except Exception:
+                    pass
+            return u
+
+    raise HTTPException(status_code=401, detail='Invalid token')
+
+
 # The rest of the module provides HTTP endpoints. These functions use the
 # SQLAlchemy 'select' helper and DB session; if SQLAlchemy isn't available
 # tests that need DB will not run in this environment. We keep function
@@ -640,3 +688,47 @@ if HAS_SQLALCHEMY:
         for r in rows:
             out.append({"id": r.id, "workflow_id": r.workflow_id, "status": r.status, "started_at": r.started_at.isoformat() if r.started_at else None, "finished_at": r.finished_at.isoformat() if r.finished_at else None})
         return out
+
+
+    @app.get('/api/runs/{run_id}')
+    async def get_run(run_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        """Return a single run's metadata and (optionally) its logs.
+
+        This endpoint is useful for run history views where the frontend
+        needs details about a specific run. Logs are returned as an array of
+        simple objects (id, node_id, timestamp, level, message).
+        """
+        try:
+            res = await db_execute(db, select(Run).filter(Run.id == run_id))
+            run = res.scalars().first()
+            if not run:
+                raise HTTPException(status_code=404, detail='run not found')
+
+            # fetch associated logs (may be empty)
+            res2 = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.id.asc()))
+            rows = res2.scalars().all()
+            logs_out = []
+            for r in rows:
+                logs_out.append({
+                    'id': r.id,
+                    'node_id': r.node_id,
+                    'timestamp': r.timestamp.isoformat() if r.timestamp else None,
+                    'level': r.level,
+                    'message': r.message,
+                })
+
+            return {
+                'id': run.id,
+                'workflow_id': run.workflow_id,
+                'status': run.status,
+                'input_payload': run.input_payload,
+                'output_payload': run.output_payload,
+                'started_at': run.started_at.isoformat() if run.started_at else None,
+                'finished_at': run.finished_at.isoformat() if run.finished_at else None,
+                'attempts': getattr(run, 'attempts', 0),
+                'logs': logs_out,
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail='Failed to fetch run')
