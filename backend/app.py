@@ -660,6 +660,34 @@ if HAS_SQLALCHEMY:
             pass
         return {"run_id": run.id, "status": "queued"}
 
+
+    @app.get('/api/workflows/{workflow_id}/runs')
+    async def list_runs_for_workflow(workflow_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        """Return runs for a specific workflow (owned by current user).
+
+        This ensures the workflow belongs to the requesting user's workspace
+        and returns a list of runs ordered by newest first.
+        """
+        # ensure workflow exists and belongs to user's workspace
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            raise HTTPException(status_code=404, detail='workflow not found')
+
+        # fetch user's workspace
+        res2 = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res2.scalars().first()
+        if not ws or wf.workspace_id != ws.id:
+            # hide existence of workflow if not accessible
+            raise HTTPException(status_code=404, detail='workflow not found')
+
+        res3 = await db_execute(db, select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()))
+        rows = res3.scalars().all()
+        out = []
+        for r in rows:
+            out.append({"id": r.id, "workflow_id": r.workflow_id, "status": r.status, "started_at": r.started_at.isoformat() if r.started_at else None, "finished_at": r.finished_at.isoformat() if r.finished_at else None})
+        return out
+
     @app.post('/api/workflows/{workflow_id}/run')
     async def run_workflow(workflow_id: int, data: dict = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
