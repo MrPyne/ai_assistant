@@ -82,6 +82,19 @@ except Exception:
             return self._tokens.get(token)
 
         def get(self, path, *args, **kwargs):
+            # handle listing runs for a workflow in the dummy client
+            if path.startswith('/api/workflows/') and path.endswith('/runs'):
+                parts = path.split('/')
+                try:
+                    wf_id = int(parts[3])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid workflow id'})})()
+                runs = []
+                for rid, r in getattr(self, '_runs', {}).items():
+                    if r.get('workflow_id') == wf_id:
+                        runs.append({'id': rid, 'workflow_id': r.get('workflow_id'), 'status': r.get('status')})
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: runs)})()
+
             # minimal support for run logs or other GETs if needed
             return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {})})()
 
@@ -193,7 +206,10 @@ except Exception:
                 # create a run id (simple incremental)
                 run_id = getattr(self, '_next_run', 1)
                 self._next_run = run_id + 1
-                # store no detailed run state for dummy client
+                # store minimal run state so listing works
+                if not hasattr(self, '_runs'):
+                    self._runs = {}
+                self._runs[run_id] = {'workflow_id': wf_id, 'status': 'queued'}
                 return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'run_id': run_id, 'status': 'queued'})})()
 
             # default
