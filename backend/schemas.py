@@ -22,6 +22,13 @@ class WorkflowOut(BaseModel):
         orm_mode = True
 
 
+class LogsResponse(BaseModel):
+    logs: List[RunLogOut]
+
+    class Config:
+        orm_mode = True
+
+
 class RunDetail(RunOut):
     logs: Optional[List[RunLogOut]] = []
 
