@@ -400,6 +400,23 @@ if HAS_SQLALCHEMY:
             last_id = 0
             async with AsyncSessionLocal() as db:
                 try:
+                    # Verify the requesting user has access to this run by
+                    # ensuring the run belongs to a workflow in their workspace.
+                    res_run = await db_execute(db, select(Run).filter(Run.id == run_id))
+                    run = res_run.scalars().first()
+                    if not run:
+                        return
+                    # fetch user's workspace
+                    res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+                    ws = res_ws.scalars().first()
+                    if not ws:
+                        return
+                    res_wf = await db_execute(db, select(Workflow).filter(Workflow.id == run.workflow_id))
+                    wf = res_wf.scalars().first()
+                    if not wf or wf.workspace_id != ws.id:
+                        # user not authorized to view this run
+                        return
+
                     res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.id.asc()))
                     rows = res.scalars().all()
                     last_id = rows[-1].id if rows else 0
@@ -422,23 +439,23 @@ if HAS_SQLALCHEMY:
                 while True:
                     if await request.is_disconnected():
                         break
-                    try:
-                        res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id, RunLog.id > last_id).order_by(RunLog.id.asc()))
-                        new = res.scalars().all()
-                        if new:
-                            for r in new:
-                                payload = {'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message}
-                                yield format_sse(payload)
-                                last_id = max(last_id, r.id)
-                        else:
-                            # check if run is finished; if so and no new logs, close stream
-                            res2 = await db_execute(db, select(Run).filter(Run.id == run_id))
-                            run = res2.scalars().first()
-                            if run and run.finished_at is not None:
-                                break
-                    except Exception:
-                        # ignore DB errors transiently
-                        pass
+                        try:
+                            res = await db_execute(db, select(RunLog).filter(RunLog.run_id == run_id, RunLog.id > last_id).order_by(RunLog.id.asc()))
+                            new = res.scalars().all()
+                            if new:
+                                for r in new:
+                                    payload = {'id': r.id, 'node_id': r.node_id, 'timestamp': r.timestamp.isoformat() if r.timestamp else None, 'level': r.level, 'message': r.message}
+                                    yield format_sse(payload)
+                                    last_id = max(last_id, r.id)
+                            else:
+                                # check if run is finished; if so and no new logs, close stream
+                                res2 = await db_execute(db, select(Run).filter(Run.id == run_id))
+                                run = res2.scalars().first()
+                                if run and run.finished_at is not None:
+                                    break
+                        except Exception:
+                            # ignore DB errors transiently
+                            pass
                     await asyncio.sleep(1)
 
         return StreamingResponse(event_generator(), media_type='text/event-stream')
