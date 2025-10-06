@@ -36,6 +36,7 @@ export default function Editor(){
   const [workflowName, setWorkflowName] = useState('New Workflow')
   const [newProviderType, setNewProviderType] = useState('openai')
   const [newProviderSecretId, setNewProviderSecretId] = useState('')
+  const [webhookTestPayload, setWebhookTestPayload] = useState('{}')
 
   // react-flow instance ref to compute projected coords and other helpers
   const reactFlowInstance = useRef(null)
@@ -437,6 +438,34 @@ export default function Editor(){
     alert('Webhook URL copied to clipboard: ' + url)
   }
 
+  const testWebhook = async () => {
+    if (!workflowId || !selectedNodeId) return alert('Save the workflow and select the webhook node to test')
+    let payload = {}
+    try {
+      payload = JSON.parse(webhookTestPayload || '{}')
+    } catch (e) {
+      return alert('Invalid JSON payload')
+    }
+    try {
+      const resp = await fetch(`/api/webhook/${workflowId}/${selectedNodeId}`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        alert('Webhook test queued run_id: ' + data.run_id)
+        await loadRuns()
+        if (data && data.run_id) viewRunLogs(data.run_id)
+      } else {
+        const txt = await resp.text()
+        alert('Webhook test failed: ' + txt)
+      }
+    } catch (err) {
+      alert('Webhook test failed: ' + String(err))
+    }
+  }
+
   return (
     <div className="editor-root">
       <div className="editor-main">
@@ -551,6 +580,15 @@ export default function Editor(){
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button onClick={copyWebhookUrl}>Copy webhook URL</button>
                     <button onClick={() => { if (workflowId && selectedNodeId) { const url = `${window.location.origin}/api/webhook/${workflowId}/${selectedNodeId}`; window.open(url, '_blank') } else { alert('Save the workflow first') } }} className="secondary">Open (GET)</button>
+                  </div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <label style={{ display: 'block', marginBottom: 4 }}>Test payload (JSON)</label>
+                    <textarea value={webhookTestPayload} onChange={(e) => setWebhookTestPayload(e.target.value)} style={{ width: '100%', height: 120 }} />
+                    <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                      <button onClick={testWebhook}>Send Test (POST)</button>
+                      <button onClick={() => { setWebhookTestPayload('{}') }} className="secondary">Reset</button>
+                    </div>
                   </div>
                 </div>
               )}

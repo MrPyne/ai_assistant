@@ -16,6 +16,7 @@ export default function NavBar(){
       <nav className="nav-inline">
         <Link to="/" className="nav-link">Home</Link>
         <Link to="/editor" className="nav-link">Editor</Link>
+        <Link to="/secrets" className="nav-link">Secrets</Link>
         {token ? (
           <>
             <Link to="/profile" className="nav-link">Profile</Link>

@@ -1,0 +1,60 @@
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext'
+
+export default function Secrets(){
+  const { token } = useAuth()
+  const [secrets, setSecrets] = useState([])
+  const [name, setName] = useState('')
+  const [value, setValue] = useState('')
+
+  useEffect(() => { if (token) load() }, [token])
+
+  const authHeaders = () => ({ 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) })
+
+  const load = async () => {
+    try {
+      const resp = await fetch('/api/secrets', { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        setSecrets(data || [])
+      }
+    } catch (err) {
+      console.warn('Failed to load secrets', err)
+    }
+  }
+
+  const create = async () => {
+    if (!name || !value) return alert('name and value required')
+    try {
+      const resp = await fetch('/api/secrets', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name, value }) })
+      if (resp.ok) {
+        alert('Created')
+        setName('')
+        setValue('')
+        await load()
+      } else {
+        const txt = await resp.text()
+        alert('Failed: ' + txt)
+      }
+    } catch (err) { alert('Failed: ' + String(err)) }
+  }
+
+  return (
+    <div style={{ padding: 12 }}>
+      <h2>Secrets</h2>
+      <div style={{ marginBottom: 8 }}>
+        <input placeholder='Name' value={name} onChange={(e) => setName(e.target.value)} style={{ marginRight: 6 }} />
+        <input placeholder='Value' value={value} onChange={(e) => setValue(e.target.value)} style={{ marginRight: 6 }} />
+        <button onClick={create}>Create</button>
+      </div>
+      <div>
+        {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
+          <div key={s.id} style={{ padding: 6, borderBottom: '1px solid #eee' }}>
+            <div><strong>{s.name}</strong></div>
+            <div className="muted">id: {s.id} created_by: {s.created_by}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}

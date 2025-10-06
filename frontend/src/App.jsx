@@ -7,6 +7,7 @@ import Home from './pages/Home'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Profile from './pages/Profile'
+import Secrets from './pages/Secrets'
 import Editor from './editor'
 
 function RequireAuth({ children }) {
@@ -39,12 +40,13 @@ export default function App(){
           </div>
 
           <div className="main">
-            <Routes>
+              <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
               <Route path="/editor" element={<RequireAuth><Editor /></RequireAuth>} />
+              <Route path="/secrets" element={<RequireAuth><Secrets /></RequireAuth>} />
             </Routes>
           </div>
         </div>
