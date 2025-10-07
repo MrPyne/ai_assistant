@@ -25,3 +25,7 @@ Changelog
 1.7 (2025-10-07)
 - Added GET /api/runs/{run_id}/logs implementation and response envelope tests
 - Hardened worker redaction and added unit tests ensuring secrets are not persisted in RunLog entries
+
+1.8 (2025-10-07)
+- Frontend editor save/load wiring finalized; editor unit tests added
+- Updated README_SPEC.md and IMPLEMENTATION_CHECKLIST.md to reflect completed editor persistence work

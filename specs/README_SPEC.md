@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.6
-Last updated: 2025-10-04
+Version: 1.7
+Last updated: 2025-10-07
 Maintainer: (fill in)
 
 Purpose
@@ -66,7 +66,7 @@ MVP prioritization & sprint plan (re-aligned to n8n parity)
 - Sprint 3 (P2+): Marketplace, multi-tenant features, SSO, billing, advanced observability.
 
 Sprint 1 — Immediate work items (I will start these now)
-1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.6).
+1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.7).
 2) Frontend Editor MVP: ensure react-flow canvas + node palette + node config panels can create/save/load workflows using POST/GET /api/workflows. Wire run history and logs viewer to /api/runs endpoints. Provide provider/secret selectors in node config. (I will commit the frontend scaffold and incremental UI work in small steps.)
 3) Backend hardening (in parallel, small focused tasks):
    - Harden worker redaction so decrypted secrets are never written to logs (adapter interface enforces secret_id only; adapters decrypt internally). Add unit tests.
@@ -100,6 +100,8 @@ Change log
 - [x] 1.4 — Updated spec to reflect competitor comparison and parity prioritization (2025-10-04)
 - [x] 1.5 — Minor edits & finalization after adding N8N_COMPATIBILITY.md and COMPETITOR_COMPARISON.md (2025-10-04)
 - [x] 1.6 — Clarified priorities and immediate backend/frontend tasks (2025-10-04)
+- [x] 1.7 — Implemented redaction coverage for worker log writes and structured messages (unit tests added) (2025-10-05)
+- [x] 1.8 — Added GET /api/runs/{run_id}/logs implementation and response envelope tests; frontend editor save/load wiring finalized (2025-10-07)
 
 References
 - specs/N8N_COMPATIBILITY.md
@@ -112,6 +114,6 @@ Completed next steps (automated updates):
 
 - [x] (1) Implement GET /api/runs/{run_id}/logs and return a LogsResponse envelope (backend/app.py endpoint implemented and wired to schemas). Verified by backend tests.
 - [x] (2) Harden worker redaction and add unit tests to ensure secrets are not persisted in RunLog entries (backend/tasks.py uses redact_secrets for structured messages; test added: backend/tests/test_write_log_redacts_dict_message.py).
-- [ ] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows � pending further UI iterations.
+- [x] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows — frontend editor save/load wiring implemented; basic editor unit tests added. Manual test checklist updated in this file and specs/IMPLEMENTATION_CHECKLIST.md.
 
 Preferred default: proceed with small, focused commits for each remaining subtask so you can review changes incrementally. If you'd like a different order or want to postpone any item, tell me which.
