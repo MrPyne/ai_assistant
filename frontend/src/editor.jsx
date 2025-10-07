@@ -214,6 +214,52 @@ export default function Editor(){
     }))
   }
 
+  // Helper to sanitize and load a workflow object's graph into the editor
+  const loadWorkflowGraph = (wf) => {
+    if (!wf) return
+    setWorkflowId(wf.id)
+    if (wf.graph) {
+      if (Array.isArray(wf.graph)) {
+        // legacy: array of elements
+        const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
+        const edgesLoaded = wf.graph.filter(e => e.source && e.target)
+        // sanitize loaded nodes/edges
+        const sanitize = (n) => ({
+          id: String(n.id),
+          type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
+          position: n.position || { x: 0, y: 0 },
+          selected: !!n.selected,
+          data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
+        })
+        setNodes(nodesLoaded.map(sanitize))
+        setEdges((edgesLoaded || []).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
+        // clear selection for legacy flows (no persisted selection)
+        setSelectedNodeId(null)
+      } else if (wf.graph.nodes) {
+        // sanitize nodes/edges coming from the server so the editor
+        // does not break if fields are missing or ids are numbers
+        const sanitize = (n) => ({
+          id: String(n.id),
+          type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
+          position: n.position || { x: 0, y: 0 },
+          selected: !!n.selected,
+          data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
+        })
+        setNodes((wf.graph.nodes || []).map(sanitize))
+        setEdges(((wf.graph.edges || [])).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
+        // restore selected node if saved
+        if (wf.graph.selected_node_id) {
+          // ensure the selected id exists in the loaded nodes
+          const exists = ((wf.graph.nodes || []).map(n => String(n.id))).includes(String(wf.graph.selected_node_id))
+          setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
+        } else {
+          setSelectedNodeId(null)
+        }
+      }
+    }
+    if (wf.name) setWorkflowName(wf.name)
+  }
+
   const saveWorkflow = async () => {
     const payload = {
       name: workflowName || 'Untitled',
@@ -230,6 +276,8 @@ export default function Editor(){
         const data = await resp.json()
         alert('Saved')
         if (data && data.id) setWorkflowId(data.id)
+        // reload workflows so the list reflects the newly saved workflow
+        await loadWorkflows()
       } else {
         const txt = await resp.text()
         alert('Save failed: ' + txt)
@@ -247,46 +295,8 @@ export default function Editor(){
         setWorkflows(data || [])
         if (data && data.length > 0) {
           const wf = data[0]
-          setWorkflowId(wf.id)
-          if (wf.graph) {
-            if (Array.isArray(wf.graph)) {
-              // legacy: array of elements
-              const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
-              const edgesLoaded = wf.graph.filter(e => e.source && e.target)
-              // sanitize loaded nodes/edges
-              const sanitize = (n) => ({
-                id: String(n.id),
-                type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
-                position: n.position || { x: 0, y: 0 },
-                selected: !!n.selected,
-                data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
-              })
-              setNodes(nodesLoaded.map(sanitize))
-              setEdges((edgesLoaded || []).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
-              // clear selection for legacy flows (no persisted selection)
-              setSelectedNodeId(null)
-            } else if (wf.graph.nodes) {
-              // sanitize nodes/edges coming from the server so the editor
-              // does not break if fields are missing or ids are numbers
-              const sanitize = (n) => ({
-                id: String(n.id),
-                type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
-                position: n.position || { x: 0, y: 0 },
-                selected: !!n.selected,
-                data: n.data && typeof n.data === 'object' ? { ...n.data, config: (n.data.config || {}) } : { label: n.data && n.data.label ? n.data.label : 'Node', config: {} },
-              })
-              setNodes((wf.graph.nodes || []).map(sanitize))
-              setEdges(((wf.graph.edges || [])).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
-              // restore selected node if saved
-              if (wf.graph.selected_node_id) {
-                // ensure the selected id exists in the loaded nodes
-                const exists = ((wf.graph.nodes || []).map(n => String(n.id))).includes(String(wf.graph.selected_node_id))
-                setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
-              } else {
-                setSelectedNodeId(null)
-              }
-            }
-          }
+          // preserve legacy behaviour: auto-load the first workflow
+          loadWorkflowGraph(wf)
         }
       } else {
         const txt = await resp.text()
@@ -295,6 +305,20 @@ export default function Editor(){
     } catch (err) {
       alert('Failed to load workflows: ' + String(err))
     }
+  }
+
+  const selectWorkflow = (id) => {
+    if (!id) return
+    const wf = workflows.find(w => String(w.id) === String(id))
+    if (wf) loadWorkflowGraph(wf)
+  }
+
+  const newWorkflow = () => {
+    setWorkflowId(null)
+    setWorkflowName('New Workflow')
+    setNodes(initialNodes)
+    setEdges(initialEdges)
+    setSelectedNodeId(null)
   }
 
   const runWorkflow = async () => {
@@ -532,6 +556,20 @@ export default function Editor(){
             <button onClick={saveWorkflow}>Save</button>
           </div>
           <div className="mt-8">Selected workflow id: {workflowId || 'none'}</div>
+
+          {/* Workflow selector and list */}
+          <div style={{ marginTop: 8 }}>
+            <label style={{ display: 'block', marginBottom: 4 }}>Workflows</label>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <select value={workflowId || ''} onChange={(e) => selectWorkflow(e.target.value)} style={{ flex: 1 }}>
+                <option value=''>-- New workflow --</option>
+                {workflows.map(w => <option key={w.id} value={w.id}>{w.name || `(id:${w.id})`}</option>)}
+              </select>
+              <button onClick={loadWorkflows}>Load</button>
+              <button onClick={newWorkflow} className="secondary">New</button>
+            </div>
+          </div>
+
           <div className="row mt-8">
             <button onClick={loadWorkflows}>Load</button>
             <button onClick={runWorkflow}>Run</button>
