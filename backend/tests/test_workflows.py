@@ -16,3 +16,7 @@ def test_webhook_creates_run(client):
     # fetch logs (should be empty or present)
     r4 = client.get(f'/api/runs/{run_id}/logs')
     assert r4.status_code == 200
+    # verify logs response shape matches the LogsResponse schema
+    body = r4.json()
+    assert isinstance(body, dict)
+    assert 'logs' in body and isinstance(body['logs'], list)

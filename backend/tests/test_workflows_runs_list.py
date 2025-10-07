@@ -20,6 +20,10 @@ def test_list_runs_for_workflow(client):
     # Now list runs for the workflow
     r4 = client.get(f'/api/workflows/{wf_id}/runs', headers={'Authorization': token})
     assert r4.status_code == 200
-    runs = r4.json()
-    assert isinstance(runs, list)
-    assert any(r.get('id') == run_id for r in runs)
+    page = r4.json()
+    # The runs endpoints now return a pagination envelope: {items: [...], total: n, limit: L, offset: O}
+    assert isinstance(page, dict)
+    assert 'items' in page and isinstance(page['items'], list)
+    assert any(r.get('id') == run_id for r in page['items'])
+    assert 'total' in page and isinstance(page['total'], int)
+    assert 'limit' in page and 'offset' in page

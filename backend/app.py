@@ -101,7 +101,7 @@ from datetime import datetime
 
 # SQLAlchemy imports are optional for tests that only use non-DB helpers.
 try:
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from sqlalchemy.ext.asyncio import AsyncSession
     HAS_SQLALCHEMY = True
 except Exception:
@@ -356,7 +356,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 # (e.g., password hashing) won't fail.
 
 if HAS_SQLALCHEMY:
-    @app.get('/api/runs/{run_id}/logs')
+    from backend import schemas as schemas
+
+    @app.get('/api/runs/{run_id}/logs', response_model=schemas.LogsResponse)
     async def get_run_logs(run_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         """Return run logs (redacted) for a given run id.
 
@@ -697,7 +699,7 @@ if HAS_SQLALCHEMY:
         return {"run_id": run.id, "status": "queued"}
 
 
-    @app.get('/api/workflows/{workflow_id}/runs')
+    @app.get('/api/workflows/{workflow_id}/runs', response_model=schemas.RunsPage)
     async def list_runs_for_workflow(
         workflow_id: int,
         limit: int = 50,
@@ -752,7 +754,15 @@ if HAS_SQLALCHEMY:
                 "started_at": r.started_at.isoformat() if r.started_at else None,
                 "finished_at": r.finished_at.isoformat() if r.finished_at else None,
             })
-        return out
+        # compute total count for the workflow using an efficient COUNT(*) query
+        try:
+            stmt_count = select(func.count()).select_from(Run).filter(Run.workflow_id == workflow_id)
+            res_count = await db_execute(db, stmt_count)
+            total = int(res_count.scalar() or 0)
+        except Exception:
+            total = len(out)
+
+        return {"items": out, "total": total, "limit": limit, "offset": offset}
 
     @app.post('/api/workflows/{workflow_id}/run')
     async def run_workflow(workflow_id: int, data: dict = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
@@ -771,7 +781,7 @@ if HAS_SQLALCHEMY:
             pass
         return {"run_id": run.id, "status": "queued"}
 
-    @app.get('/api/runs')
+    @app.get('/api/runs', response_model=schemas.RunsPage)
     async def list_runs(
         workflow_id: Optional[int] = None,
         limit: int = 50,
@@ -829,10 +839,22 @@ if HAS_SQLALCHEMY:
                 "started_at": r.started_at.isoformat() if r.started_at else None,
                 "finished_at": r.finished_at.isoformat() if r.finished_at else None,
             })
-        return out
+        # compute total count matching the filter using COUNT(*) for efficiency
+        try:
+            if workflow_id:
+                stmt_count = select(func.count()).select_from(Run).filter(Run.workflow_id == workflow_id)
+            else:
+                # count runs that belong to workflows in this workspace
+                stmt_count = select(func.count()).select_from(Run).join(Workflow).filter(Workflow.workspace_id == ws.id)
+            res_count = await db_execute(db, stmt_count)
+            total = int(res_count.scalar() or 0)
+        except Exception:
+            total = len(out)
+
+        return {"items": out, "total": total, "limit": limit, "offset": offset}
 
 
-    @app.get('/api/runs/{run_id}')
+    @app.get('/api/runs/{run_id}', response_model=schemas.RunDetail)
     async def get_run(run_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         """Return a single run's metadata and (optionally) its logs.
 
@@ -852,6 +874,7 @@ if HAS_SQLALCHEMY:
             logs_out = []
             for r in rows:
                 logs_out.append({
+                    'run_id': r.run_id if hasattr(r, 'run_id') else run.id,
                     'id': r.id,
                     'node_id': r.node_id,
                     'timestamp': r.timestamp.isoformat() if r.timestamp else None,

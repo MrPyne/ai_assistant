@@ -159,7 +159,7 @@ describe('Editor sanitization and SSE behavior', () => {
         return { ok: true, json: async () => ({ run_id: 500 }) }
       }
       if (s.includes('/api/runs?workflow_id=99')) {
-        return { ok: true, json: async () => ([{ id: 500, status: 'queued' }]) }
+        return { ok: true, json: async () => ({ items: [{ id: 500, status: 'queued' }], total: 1, limit: 50, offset: 0 }) }
       }
       if (s.includes('/api/runs/500/logs')) {
         return { ok: true, json: async () => ({ logs: [] }) }

@@ -22,15 +22,13 @@ class WorkflowOut(BaseModel):
         orm_mode = True
 
 
-class LogsResponse(BaseModel):
-    logs: List[RunLogOut]
-
-    class Config:
-        orm_mode = True
-
-
-class RunDetail(RunOut):
-    logs: Optional[List[RunLogOut]] = []
+class RunLogOut(BaseModel):
+    id: int
+    run_id: int
+    node_id: Optional[str] = None
+    timestamp: Optional[str] = None
+    level: Optional[str] = None
+    message: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -50,13 +48,25 @@ class RunOut(BaseModel):
         orm_mode = True
 
 
-class RunLogOut(BaseModel):
-    id: int
-    run_id: int
-    node_id: Optional[str] = None
-    timestamp: Optional[str] = None
-    level: Optional[str] = None
-    message: Optional[str] = None
+class RunDetail(RunOut):
+    logs: Optional[List[RunLogOut]] = []
+
+    class Config:
+        orm_mode = True
+
+
+class LogsResponse(BaseModel):
+    logs: List[RunLogOut]
+
+    class Config:
+        orm_mode = True
+
+
+class RunsPage(BaseModel):
+    items: List[RunOut]
+    total: int
+    limit: int
+    offset: int
 
     class Config:
         orm_mode = True

@@ -90,10 +90,30 @@ except Exception:
                 except Exception:
                     return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid workflow id'})})()
                 runs = []
-                for rid, r in getattr(self, '_runs', {}).items():
+                for rid, r in getattr(self, '_runs', {}).items() if hasattr(self, '_runs') else []:
                     if r.get('workflow_id') == wf_id:
                         runs.append({'id': rid, 'workflow_id': r.get('workflow_id'), 'status': r.get('status')})
-                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: runs)})()
+                # return pagination envelope to match backend behavior
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'items': runs, 'total': len(runs), 'limit': 50, 'offset': 0})})()
+
+            # support listing runs via /api/runs?workflow_id=... (frontend uses this)
+            if path.startswith('/api/runs') and ('workflow_id=' in path or path.startswith('/api/runs?')):
+                # try to extract workflow_id param
+                try:
+                    q = path.split('?', 1)[1]
+                    params = dict(p.split('=') for p in q.split('&') if '=' in p)
+                    wf_id = int(params.get('workflow_id')) if 'workflow_id' in params else None
+                except Exception:
+                    wf_id = None
+                runs = []
+                for rid, r in getattr(self, '_runs', {}).items() if hasattr(self, '_runs') else []:
+                    if wf_id is None or r.get('workflow_id') == wf_id:
+                        runs.append({'id': rid, 'workflow_id': r.get('workflow_id'), 'status': r.get('status')})
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'items': runs, 'total': len(runs), 'limit': 50, 'offset': 0})})()
+
+            # minimal support for run logs
+            if path.startswith('/api/runs/') and path.endswith('/logs'):
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'logs': []})})()
 
             # minimal support for run logs or other GETs if needed
             return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {})})()

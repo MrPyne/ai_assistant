@@ -30,3 +30,6 @@ def test_create_provider_and_llm_node(client):
     # fetch run logs
     r4 = client.get(f'/api/runs/{run_id}/logs')
     assert r4.status_code == 200
+    body = r4.json()
+    assert isinstance(body, dict)
+    assert 'logs' in body and isinstance(body['logs'], list)
