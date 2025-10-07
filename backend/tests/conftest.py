@@ -98,18 +98,26 @@ except Exception:
 
             # support listing runs via /api/runs?workflow_id=... (frontend uses this)
             if path.startswith('/api/runs') and ('workflow_id=' in path or path.startswith('/api/runs?')):
-                # try to extract workflow_id param
+                # try to extract query params (workflow_id, limit, offset)
                 try:
                     q = path.split('?', 1)[1]
                     params = dict(p.split('=') for p in q.split('&') if '=' in p)
                     wf_id = int(params.get('workflow_id')) if 'workflow_id' in params else None
+                    limit = int(params.get('limit', 50))
+                    offset = int(params.get('offset', 0))
                 except Exception:
                     wf_id = None
+                    limit = 50
+                    offset = 0
                 runs = []
                 for rid, r in getattr(self, '_runs', {}).items() if hasattr(self, '_runs') else []:
                     if wf_id is None or r.get('workflow_id') == wf_id:
                         runs.append({'id': rid, 'workflow_id': r.get('workflow_id'), 'status': r.get('status')})
-                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'items': runs, 'total': len(runs), 'limit': 50, 'offset': 0})})()
+                # mimic backend ordering (newest first)
+                runs = sorted(runs, key=lambda x: x['id'], reverse=True)
+                total = len(runs)
+                paged = runs[offset: offset + limit]
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'items': paged, 'total': total, 'limit': limit, 'offset': offset})})()
 
             # minimal support for run logs
             if path.startswith('/api/runs/') and path.endswith('/logs'):

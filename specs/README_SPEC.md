@@ -108,6 +108,10 @@ References
 Notes
 - The N8N compatibility checklist and competitor comparison files were added to explicitly track parity and differentiation. These files are the authoritative checklist for UI/UX parity and market comparison.
 
-If you prefer I can now push the next code changes in this order: (1) implement GET /api/runs/{run_id}/logs and tests, (2) harden worker/adapters redaction tests, (3) scaffold/update frontend editor files and wire them to POST/GET /api/workflows. Otherwise I can pause for review before coding frontend.
+Completed next steps (automated updates):
 
-Preferred default: proceed with the above steps and push small commits for each subtask so you can review often. If you'd like a different order or want to postpone any item, tell me which.
+- [x] (1) Implement GET /api/runs/{run_id}/logs and return a LogsResponse envelope (backend/app.py endpoint implemented and wired to schemas). Verified by backend tests.
+- [x] (2) Harden worker redaction and add unit tests to ensure secrets are not persisted in RunLog entries (backend/tasks.py uses redact_secrets for structured messages; test added: backend/tests/test_write_log_redacts_dict_message.py).
+- [ ] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows — pending further UI iterations.
+
+Preferred default: proceed with small, focused commits for each remaining subtask so you can review changes incrementally. If you'd like a different order or want to postpone any item, tell me which.

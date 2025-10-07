@@ -18,3 +18,10 @@ Changelog
 
 1.0 (2025-10-03)
 - Initial spec created
+
+1.6 (2025-10-05)
+- Implemented redaction coverage for worker log writes and structured messages (unit tests added)
+
+1.7 (2025-10-07)
+- Added GET /api/runs/{run_id}/logs implementation and response envelope tests
+- Hardened worker redaction and added unit tests ensuring secrets are not persisted in RunLog entries

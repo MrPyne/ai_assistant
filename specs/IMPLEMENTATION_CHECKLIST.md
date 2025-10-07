@@ -257,4 +257,12 @@ How to use this file
 - Use each checklist block to create tickets in your tracker (Jira/Trello/GitHub issues).
 - Keep README_SPEC.md and this file in sync; update when APIs or DB schemas change.
 
-Last updated: 2025-10-05
+Completed next steps (automated updates):
+
+- [x] (1) Implement GET /api/runs/{run_id}/logs and return a LogsResponse envelope (backend/app.py endpoint implemented and wired to schemas). Verified by backend tests.
+- [x] (2) Harden worker redaction and add unit tests to ensure secrets are not persisted in RunLog entries (backend/tasks.py uses redact_secrets for structured messages; test added: backend/tests/test_write_log_redacts_dict_message.py).
+- [ ] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows — pending further UI iterations.
+
+Preferred default: proceed with small, focused commits for each remaining subtask so you can review changes incrementally. If you'd like a different order or want to postpone any item, tell me which.
+
+Last updated: 2025-10-07

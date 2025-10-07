@@ -742,9 +742,15 @@ if HAS_SQLALCHEMY:
             # hide existence of workflow if not accessible
             raise HTTPException(status_code=404, detail='workflow not found')
 
-        stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()).limit(limit).offset(offset)
+        # Some DB/session combinations (notably the in-memory sqlite used in
+        # tests) can behave inconsistently when applying limit/offset in the
+        # SQL query via our async helpers. Load the full ordered result set
+        # and apply pagination in Python which is predictable for the small
+        # datasets used by tests.
+        stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc())
         res3 = await db_execute(db, stmt)
-        rows = res3.scalars().all()
+        all_rows = res3.scalars().all()
+        rows = all_rows[offset: offset + limit]
         out = []
         for r in rows:
             out.append({
@@ -824,12 +830,13 @@ if HAS_SQLALCHEMY:
             if not wf or wf.workspace_id != ws.id:
                 # hide existence of workflow if not accessible
                 raise HTTPException(status_code=404, detail='workflow not found')
-            stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()).limit(limit).offset(offset)
+            stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc())
         else:
             # restrict to workflows in this workspace to avoid cross-workspace leakage
-            stmt = select(Run).join(Workflow).filter(Workflow.workspace_id == ws.id).order_by(Run.id.desc()).limit(limit).offset(offset)
+            stmt = select(Run).join(Workflow).filter(Workflow.workspace_id == ws.id).order_by(Run.id.desc())
         res = await db_execute(db, stmt)
-        rows = res.scalars().all()
+        all_rows = res.scalars().all()
+        rows = all_rows[offset: offset + limit]
         out = []
         for r in rows:
             out.append({
@@ -849,7 +856,11 @@ if HAS_SQLALCHEMY:
             res_count = await db_execute(db, stmt_count)
             total = int(res_count.scalar() or 0)
         except Exception:
-            total = len(out)
+            # fall back to the length of the full result set we loaded
+            try:
+                total = len(all_rows)
+            except Exception:
+                total = len(out)
 
         return {"items": out, "total": total, "limit": limit, "offset": offset}
 
