@@ -714,8 +714,44 @@ if HAS_SQLALCHEMY:
                 # for unknown types we remain permissive
 
             if errors:
-                # return the first error to keep response concise
-                raise HTTPException(status_code=400, detail=errors[0])
+                # return the first error to keep response concise. Return a
+                # structured error object including an optional node_id to
+                # help clients focus the offending node in the editor.
+                first = errors[0]
+                node_id = None
+                try:
+                    import re
+                    m_idx = re.search(r'node at index (\d+)', first, re.I)
+                    if m_idx:
+                        idx = int(m_idx.group(1))
+                        if isinstance(nodes, list) and 0 <= idx < len(nodes):
+                            el = nodes[idx]
+                            if isinstance(el, dict):
+                                node_id = el.get('id')
+                    else:
+                        m_http = re.search(r'http node (\S+)', first, re.I)
+                        m_llm = re.search(r'llm node (\S+)', first, re.I)
+                        m_generic = m_http or m_llm
+                        if m_generic:
+                            gid = m_generic.group(1)
+                            # if the captured group looks like an integer index,
+                            # try to resolve it to the node id in the nodes list.
+                            if gid.isdigit():
+                                idx = int(gid)
+                                if isinstance(nodes, list) and 0 <= idx < len(nodes):
+                                    el = nodes[idx]
+                                    if isinstance(el, dict):
+                                        node_id = el.get('id')
+                            else:
+                                node_id = gid
+                except Exception:
+                    node_id = None
+
+                detail_obj = {'message': first}
+                if node_id is not None:
+                    detail_obj['node_id'] = node_id
+
+                raise HTTPException(status_code=400, detail=detail_obj)
 
         # perform validation (raises HTTPException on invalid graph)
         if graph is not None:
@@ -799,7 +835,44 @@ if HAS_SQLALCHEMY:
                         errors.append(f'llm node {node_id or idx} missing prompt')
 
             if errors:
-                raise HTTPException(status_code=400, detail=errors[0])
+                # return the first error to keep response concise. Return a
+                # structured error object including an optional node_id to
+                # help clients focus the offending node in the editor.
+                first = errors[0]
+                node_id = None
+                try:
+                    import re
+                    m_idx = re.search(r'node at index (\d+)', first, re.I)
+                    if m_idx:
+                        idx = int(m_idx.group(1))
+                        if isinstance(nodes, list) and 0 <= idx < len(nodes):
+                            el = nodes[idx]
+                            if isinstance(el, dict):
+                                node_id = el.get('id')
+                    else:
+                        m_http = re.search(r'http node (\S+)', first, re.I)
+                        m_llm = re.search(r'llm node (\S+)', first, re.I)
+                        m_generic = m_http or m_llm
+                        if m_generic:
+                            gid = m_generic.group(1)
+                            # if the captured group looks like an integer index,
+                            # try to resolve it to the node id in the nodes list.
+                            if gid.isdigit():
+                                idx = int(gid)
+                                if isinstance(nodes, list) and 0 <= idx < len(nodes):
+                                    el = nodes[idx]
+                                    if isinstance(el, dict):
+                                        node_id = el.get('id')
+                            else:
+                                node_id = gid
+                except Exception:
+                    node_id = None
+
+                detail_obj = {'message': first}
+                if node_id is not None:
+                    detail_obj['node_id'] = node_id
+
+                raise HTTPException(status_code=400, detail=detail_obj)
 
         if graph is not None:
             validate_workflow_graph(graph)

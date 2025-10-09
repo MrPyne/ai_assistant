@@ -25,7 +25,13 @@ def test_create_workflow_rejects_http_missing_url(client: TestClient):
     }
     r = client.post('/api/workflows', json=wf)
     assert r.status_code == 400
-    assert 'http node' in r.json().get('detail')
+    detail = r.json().get('detail')
+    # support structured error detail ({message, node_id}) or plain string
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'http node' in msg
 
 
 def test_create_workflow_rejects_llm_missing_prompt(client: TestClient):
@@ -35,14 +41,24 @@ def test_create_workflow_rejects_llm_missing_prompt(client: TestClient):
     }
     r = client.post('/api/workflows', json=wf)
     assert r.status_code == 400
-    assert 'llm node' in r.json().get('detail')
+    detail = r.json().get('detail')
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'llm node' in msg
 
 
 def test_create_workflow_rejects_node_missing_id(client: TestClient):
     wf = {"name": "no-id", "graph": {"nodes": [{"data": {"label": "LLM", "config": {"prompt": "hi"}}}]}}
     r = client.post('/api/workflows', json=wf)
     assert r.status_code == 400
-    assert 'missing id' in r.json().get('detail')
+    detail = r.json().get('detail')
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'missing id' in msg
 
 
 def test_update_workflow_accepts_empty_graph(client: TestClient):
@@ -67,7 +83,12 @@ def test_update_workflow_rejects_http_missing_url(client: TestClient):
     bad = {"graph": {"nodes": [{"id": "n1", "data": {"label": "HTTP Request", "config": {}}}]}}
     r2 = client.put(f'/api/workflows/{wid}', json=bad)
     assert r2.status_code == 400
-    assert 'http node' in r2.json().get('detail')
+    detail = r2.json().get('detail')
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'http node' in msg
 
 
 def test_update_workflow_rejects_llm_missing_prompt(client: TestClient):
@@ -78,7 +99,12 @@ def test_update_workflow_rejects_llm_missing_prompt(client: TestClient):
     bad = {"graph": {"nodes": [{"id": "n1", "data": {"label": "LLM", "config": {}}}]}}
     r2 = client.put(f'/api/workflows/{wid}', json=bad)
     assert r2.status_code == 400
-    assert 'llm node' in r2.json().get('detail')
+    detail = r2.json().get('detail')
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'llm node' in msg
 
 
 def test_update_workflow_rejects_node_missing_id(client: TestClient):
@@ -89,4 +115,9 @@ def test_update_workflow_rejects_node_missing_id(client: TestClient):
     bad = {"graph": {"nodes": [{"data": {"label": "LLM", "config": {"prompt": "hi"}}}]}}
     r2 = client.put(f'/api/workflows/{wid}', json=bad)
     assert r2.status_code == 400
-    assert 'missing id' in r2.json().get('detail')
+    detail = r2.json().get('detail')
+    if isinstance(detail, dict):
+        msg = detail.get('message') or detail.get('detail') or ''
+    else:
+        msg = detail or ''
+    assert 'missing id' in msg

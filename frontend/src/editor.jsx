@@ -297,10 +297,17 @@ export default function Editor(){
           }
         }
 
-        // Basic heuristic parsing to map backend validation messages to a
-        // node id so we can focus the problematic node in the editor.
+        // Backends may return either a plain string detail or a structured
+        // object like { message: '...', node_id: 'n1' }. Support both: prefer
+        // the structured node_id when present, otherwise fall back to
+        // heuristic parsing of the message string (legacy behaviour).
         let nodeToSelect = null
-        if (typeof detail === 'string') {
+        if (detail && typeof detail === 'object') {
+          nodeToSelect = detail.node_id || detail.id || null
+          detail = detail.message || detail.detail || JSON.stringify(detail)
+        }
+
+        if (!nodeToSelect && typeof detail === 'string') {
           // patterns we expect from backend: "http node n1 missing url",
           // "llm node n1 missing prompt", "node at index 0 has invalid shape",
           // "node at index 0 missing id", etc.
