@@ -13,10 +13,12 @@ def test_create_workflow_returns_node_id_in_validation_error(client: TestClient)
     }
     r = client.post('/api/workflows', json=wf)
     assert r.status_code == 400
-    detail = r.json().get('detail')
-    assert isinstance(detail, dict), f"expected dict detail, got {detail!r}"
-    assert 'node_id' in detail, f"node_id missing in detail: {detail!r}"
-    assert str(detail['node_id']) == 'n1'
+    body = r.json()
+    # Spec: response should include a top-level message and (when available) node_id
+    assert 'message' in body
+    assert body.get('message') is not None
+    assert 'node_id' in body
+    assert str(body.get('node_id')) == 'n1'
 
 
 def test_create_workflow_invalid_shape_returns_node_id_from_index(client: TestClient):
@@ -26,10 +28,10 @@ def test_create_workflow_invalid_shape_returns_node_id_from_index(client: TestCl
     wf = {"name": "bad-shape-node-id", "graph": {"nodes": [{"id": "bad1"}]}}
     r = client.post('/api/workflows', json=wf)
     assert r.status_code == 400
-    detail = r.json().get('detail')
-    assert isinstance(detail, dict)
-    assert 'node_id' in detail
-    assert str(detail['node_id']) == 'bad1'
+    body = r.json()
+    assert 'message' in body
+    assert 'node_id' in body
+    assert str(body.get('node_id')) == 'bad1'
 
 
 def test_update_workflow_returns_node_id_in_validation_error(client: TestClient):
@@ -43,7 +45,7 @@ def test_update_workflow_returns_node_id_in_validation_error(client: TestClient)
     bad = {"graph": {"nodes": [{"id": "n2", "data": {"label": "HTTP Request", "config": {}}}]}}
     r2 = client.put(f'/api/workflows/{wid}', json=bad)
     assert r2.status_code == 400
-    detail = r2.json().get('detail')
-    assert isinstance(detail, dict)
-    assert 'node_id' in detail
-    assert str(detail['node_id']) == 'n2'
+    body = r2.json()
+    assert 'message' in body
+    assert 'node_id' in body
+    assert str(body.get('node_id')) == 'n2'

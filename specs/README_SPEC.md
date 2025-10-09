@@ -1,5 +1,5 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.9
+Version: 1.10
 Last updated: 2025-10-09
 Maintainer: (fill in)
 
@@ -103,6 +103,7 @@ Change log
 - [x] 1.7 — Implemented redaction coverage for worker log writes and structured messages (unit tests added) (2025-10-05)
 - [x] 1.8 — Added GET /api/runs/{run_id}/logs implementation and response envelope tests; frontend editor save/load wiring finalized (2025-10-07)
 - [x] 1.9 — Added server-side validation for workflow update (PUT /api/workflows/{workflow_id}) to mirror create_workflow validation; added tests for update validation (2025-10-09)
+- [x] 1.10 — Documented structured validation error contract (2025-10-09)
 
 
 References
@@ -117,5 +118,27 @@ Completed next steps (automated updates):
 - [x] (1) Implement GET /api/runs/{run_id}/logs and return a LogsResponse envelope (backend/app.py endpoint implemented and wired to schemas). Verified by backend tests.
 - [x] (2) Harden worker redaction and add unit tests to ensure secrets are not persisted in RunLog entries (backend/tasks.py uses redact_secrets for structured messages; test added: backend/tests/test_write_log_redacts_dict_message.py).
 - [x] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows — frontend editor save/load wiring implemented; basic editor unit tests added. Manual test checklist updated in this file and specs/IMPLEMENTATION_CHECKLIST.md.
+
+Validation error response contract
+---------------------------------
+
+To ensure the editor (and other clients) can reliably surface validation errors and focus the offending node in the visual editor, the backend provides a small, stable contract for validation error responses when a workflow save or update fails server-side validation.
+
+Behavior and shape
+- Status code: 400 (Bad Request).
+- Response body: JSON object with at minimum a human-friendly "message" string. When the server can infer which node in the submitted graph is the cause of the validation failure it MUST include a top-level string field "node_id" with the node's id. Clients should prefer the structured "node_id" value when present; they may fall back to parsing the "message" text for legacy compatibility.
+
+Examples:
+- Node-specific error (preferred):
+  { "message": "LLM node missing prompt", "node_id": "node-123" }
+- Graph-level / unknown node (fallback):
+  { "message": "Graph is not a valid workflow: missing nodes" }
+
+Notes on backward compatibility
+- Existing clients that expect a plain text message body will continue to work because the response still includes a human-readable "message" and the status code remains 400.
+- New clients (the editor) SHOULD use the presence of "node_id" to focus the offending node and display inline validation UI.
+
+Why this contract exists
+- The editor needs a reliable way to focus and highlight the offending node on save/update so users can quickly correct invalid node configuration. Relying on string parsing of error messages proved brittle; the structured "node_id" value is a lightweight, backward-compatible extension that greatly improves UX.
 
 Preferred default: proceed with small, focused commits for each remaining subtask so you can review changes incrementally. If you'd like a different order or want to postpone any item, tell me which.

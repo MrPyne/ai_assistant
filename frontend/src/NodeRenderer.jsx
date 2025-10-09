@@ -36,6 +36,7 @@ function Icon({ type, size = 18 }) {
 export default function NodeRenderer({ data }) {
   const label = data && data.label ? data.label : ''
   const config = data && data.config ? data.config : {}
+  const isInvalid = data && (data.validation_error || data.__validation_error)
 
   let type = 'generic'
   if (label && label.toLowerCase().includes('webhook')) type = 'webhook'
@@ -43,7 +44,7 @@ export default function NodeRenderer({ data }) {
   else if (label && (label.toLowerCase().includes('llm') || label.toLowerCase().includes('ai') || label.toLowerCase().includes('model'))) type = 'llm'
 
   return (
-    <div className="node-card" tabIndex={0}>
+    <div className="node-card" tabIndex={0} style={isInvalid ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)' } : {}}>
       <div className="node-header">
         <span className={`node-icon node-icon-${type}`} aria-hidden>
           <Icon type={type} />

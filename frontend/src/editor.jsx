@@ -334,15 +334,17 @@ export default function Editor(){
         if (nodeToSelect) {
           // focus node so the user can edit its config immediately
           setSelectedNodeId(String(nodeToSelect))
+          // mark the node visually as invalid so NodeRenderer can highlight it
+          setNodes((nds) => nds.map(n => (String(n.id) === String(nodeToSelect) ? { ...n, data: { ...(n.data || {}), __validation_error: true } } : n)))
         }
 
         // Also show a user-visible alert as a fallback for older browsers/tests
         alert('Save failed: ' + (detail || 'Unknown error'))
       }
-    } catch (err) {
-      alert('Save failed: ' + String(err))
+      } catch (err) {
+        alert('Save failed: ' + String(err))
+      }
     }
-  }
 
   const loadWorkflows = async () => {
     try {
