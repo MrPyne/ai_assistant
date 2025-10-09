@@ -196,6 +196,50 @@ except Exception:
 
 app = FastAPI()
 
+def _normalize_http_exception_detail(detail):
+    """Normalize various HTTPException.detail shapes into the lightweight
+    contract expected by the frontend editor and documented in
+    specs/README_SPEC.md.
+
+    Returns a dict that always contains a 'message' string and preserves
+    'node_id' when provided.
+    """
+    # If it's already a dict, try to coerce it into the contract.
+    if isinstance(detail, dict):
+        out = dict(detail)  # shallow copy to avoid mutating caller data
+        if 'message' not in out:
+            # Accept common alternate shapes like {'detail': '...'} or
+            # {'error': '...'}; prefer 'detail' then 'error' then str(detail)
+            if isinstance(out.get('detail'), str):
+                out['message'] = out.pop('detail')
+            elif isinstance(out.get('error'), str):
+                out['message'] = out.pop('error')
+            else:
+                out['message'] = str(detail)
+        return out
+
+    # Non-dict details (strings, exceptions, etc.) -> wrap into envelope
+    return {'message': str(detail)}
+
+
+# Custom HTTPException handler to ensure validation error contract is respected.
+if HAS_FASTAPI:
+    from fastapi.responses import JSONResponse as _JSONResponse
+    from fastapi import Request as _Request
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: _Request, exc: HTTPException):
+        """Normalize HTTPException responses.
+
+        - If exc.detail is already a dict following our contract return it.
+        - Otherwise coerce the detail into {'message': ...} so clients always
+          receive a top-level 'message' field and (optionally) 'node_id'.
+        """
+        detail = exc.detail
+        status_code = getattr(exc, 'status_code', 500)
+        normalized = _normalize_http_exception_detail(detail)
+        return _JSONResponse(status_code=status_code, content=normalized)
+
 # Auth helpers
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 # Prefer a hashing scheme without bcrypt's 72-byte input limit for development
