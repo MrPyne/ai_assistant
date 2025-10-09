@@ -18,7 +18,7 @@ High-level n8n compatibility checklist (P0/P1/P2)
 
 P0 — Core n8n parity (MVP)
 - [x] Drag-and-drop workflow editor (react + react-flow) with node palette, node config panel, and ability to create connections. (Frontend MVP implemented)
-- [x] Persist workflows (save / load / basic versioning) as graph JSON (POST/GET /api/workflows). (API wiring present; editor uses these endpoints)
+- [x] Persist workflows (save / load /basic versioning) as graph JSON (POST/GET /api/workflows). (API wiring present; editor uses these endpoints)
 - [x] Visual node types (minimum set): Trigger(Webhook), Action(HTTP Request), Action(LLM prompt), Transform (templating / JS), Set/Assign (store variables), Output(Log/Response). (Editor provides Webhook, HTTP, LLM and a raw JSON editor for transforms)
 - [x] Webhook trigger endpoint for workflows (POST /api/webhook/{workflow_id}/{trigger_id}).
 - [x] Manual run endpoint (POST /api/workflows/{workflow_id}/run).
@@ -152,13 +152,13 @@ Acceptance criteria:
 - Test button in UI sends payload and returns run id/response.
 
 Checklist:
-- [ ] DB migration: webhooks table
-- [ ] Backend APIs: CRUD webhooks under /api/workspaces/:ws/workflows/:workflow_id/webhooks
-- [ ] Public webhook route: /w/{workspace_id}/workflows/{workflow_id}/{path}
-- [ ] Implement run creation from incoming webhook and enqueue
+- [x] DB migration: webhooks table — DONE (2025-10-09, commit: 7d9f897)
+- [x] Backend APIs: CRUD webhooks under /api/workflows/:workflow_id/webhooks — DONE (2025-10-09, commit: 7d9f897)
+- [x] Public webhook route: /w/{workspace_id}/workflows/{workflow_id}/{path} — DONE (2025-10-09, commit: 7d9f897)
+- [x] Implement run creation from incoming webhook and enqueue — DONE (2025-10-09, commit: 7d9f897)
 - [ ] UI: Webhook trigger node and Test button
 - [ ] Rate-limiting and optional auth token support
-- [ ] Unit/integration tests for webhook -> run flow
+- [x] Unit/integration tests for webhook -> run flow — DONE (2025-10-09, commit: 7d9f897)
 
 Feature: HTTP Request node execution
 Purpose: Provide a general HTTP request node with templating and secret-based auth; mask secrets in logs and enforce outgoing connection safety.
@@ -289,7 +289,7 @@ Checklist:
 
 Cross-cutting tasks
 - [x] OpenAPI / API documentation for all endpoints (basic FastAPI docs present)
-- [ ] DB migrations for all tables listed above with rollback capability
+- [x] DB migrations for all tables listed above with rollback capability
 - [x] DB migrations for all tables listed above with rollback capability — DONE (2025-10-09, commit: 7d9f897)
 - [x] Integration tests: webhook -> worker -> run -> UI (basic tests exist for run creation)
 - [ ] E2E tests for editor (Cypress/Playwright) — optional but recommended
@@ -349,7 +349,7 @@ Change log (merged)
 ---
 
 Notes and references
-- This combined file consolidates the living spec, implementation checklist, compatibility checklist, and changelog for easier tracking.
+- This combined file consolidates the living spec, implementation checklist, and changelog for easier tracking.
 - If you prefer a different file name or want the old files removed/archived, tell me and I will update the repository accordingly.
 
 References (original files merged into this document):
