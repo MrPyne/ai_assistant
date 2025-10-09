@@ -135,14 +135,14 @@ Acceptance criteria:
 - Nodes can reference secrets; at runtime workers receive usable credentials without secrets exposed in logs or APIs.
 
 Checklist:
-- [ ] DB migration: create secrets table
-- [ ] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets
-- [ ] Encryption helpers (Fernet/KMS) and rotate strategy documented
-- [ ] UI: Secrets page and create/edit modal (masked input)
-- [ ] Node config: credential selector lists workspace secrets (metadata only)
-- [ ] Worker secret resolution flow (secure injection or server-forwarded secrets)
-- [ ] Audit logging for secret access
-- [ ] Unit/integration tests to ensure no plaintext secret leakage
+ - [x] DB migration: create secrets table — DONE (TO_BE_FILLED)
+ - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets — DONE (TO_BE_FILLED)
+ - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented — DONE (TO_BE_FILLED)
+ - [ ] UI: Secrets page and create/edit modal (masked input)
+ - [x] Node config: credential selector lists workspace secrets (metadata only) — DONE (TO_BE_FILLED)
+ - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) — DONE (TO_BE_FILLED)
+ - [ ] Audit logging for secret access
+ - [x] Unit/integration tests to ensure no plaintext secret leakage — DONE (TO_BE_FILLED)
 
 Feature: Webhook trigger + Test Runner
 Purpose: Per-workflow webhook endpoints; incoming requests create runs and enqueue worker execution. UI test runner to exercise webhooks.
