@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.7
-Last updated: 2025-10-07
+Version: 1.9
+Last updated: 2025-10-09
 Maintainer: (fill in)
 
 Purpose
@@ -102,6 +102,8 @@ Change log
 - [x] 1.6 — Clarified priorities and immediate backend/frontend tasks (2025-10-04)
 - [x] 1.7 — Implemented redaction coverage for worker log writes and structured messages (unit tests added) (2025-10-05)
 - [x] 1.8 — Added GET /api/runs/{run_id}/logs implementation and response envelope tests; frontend editor save/load wiring finalized (2025-10-07)
+- [x] 1.9 — Added server-side validation for workflow update (PUT /api/workflows/{workflow_id}) to mirror create_workflow validation; added tests for update validation (2025-10-09)
+
 
 References
 - specs/N8N_COMPATIBILITY.md
