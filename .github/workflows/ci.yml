@@ -29,6 +29,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          # Ensure integration job has the httpx TestClient extras available so
+          # the backend integration test that exercises FastAPI/TestClient runs
+          # in CI instead of being skipped.
+          pip install "httpx[testclient]" pytest-asyncio
+          # Install test-time extras required to run FastAPI TestClient integration
+          # tests (httpx[testclient] provides the TestClient runtime used by FastAPI).
+          pip install "httpx[testclient]" pytest-asyncio
       - name: Lint (ruff)
         run: |
           pip install ruff

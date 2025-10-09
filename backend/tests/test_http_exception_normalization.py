@@ -26,3 +26,25 @@ def test_http_exception_non_dict_detail_normalized(client):
     assert body.get('message') == 'email required'
     # Handler should not nest this under 'detail'
     assert 'detail' not in body
+
+
+def test_http_exception_dict_detail_pass_through(client):
+    """If the app raises an HTTPException with a dict detail (message/node_id),
+    FastAPI + our handler should preserve the structured dict shape and return
+    the same top-level keys to the client. Skip when DummyClient is in use.
+    """
+    if not hasattr(client, 'app'):
+        pytest.skip('requires FastAPI TestClient')
+
+    # Use the create_workflow endpoint which performs validation and raises a
+    # structured dict detail like {'message': ..., 'node_id': ...} for invalid
+    # graphs. Provide a graph that triggers a missing-url http node error.
+    wf = {"name": "bad-http-node", "graph": {"nodes": [{"id": "nid", "data": {"label": "HTTP Request", "config": {}}}]}}
+    r = client.post('/api/workflows', json=wf)
+    assert r.status_code == 400
+    body = r.json()
+    assert isinstance(body, dict)
+    # Should include human-friendly message and node_id preserved
+    assert 'message' in body
+    assert 'node_id' in body
+    assert str(body.get('node_id')) == 'nid'
