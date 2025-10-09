@@ -641,6 +641,85 @@ if HAS_SQLALCHEMY:
         name = data.get('name') or 'Untitled'
         description = data.get('description')
         graph = data.get('graph')
+        # Validate workflow graph shape to avoid storing invalid node configs
+        # that would later cause worker/runtime errors. Validation is intentionally
+        # lightweight: it checks node shapes and required fields for core node
+        # types (http, llm) while remaining permissive for unknown or future
+        # node types used in the editor.
+        def validate_workflow_graph(g):
+            if g is None:
+                return
+            # Normalize to list of node dicts
+            nodes = None
+            if isinstance(g, dict):
+                nodes = g.get('nodes')
+            elif isinstance(g, list):
+                nodes = g
+            else:
+                raise HTTPException(status_code=400, detail='graph must be an object with "nodes" or an array of nodes')
+
+            if nodes is None:
+                # allow empty graphs
+                return
+
+            allowed_core = {'http', 'llm', 'webhook', 'transform', 'set', 'output'}
+
+            errors = []
+
+            for idx, el in enumerate(nodes):
+                # react-flow style element
+                node_type = None
+                cfg = None
+                node_id = None
+                if isinstance(el, dict) and 'data' in el:
+                    data_field = el.get('data') or {}
+                    label = (data_field.get('label') or '').lower()
+                    cfg = data_field.get('config') or {}
+                    node_id = el.get('id')
+                    if 'http' in label:
+                        node_type = 'http'
+                    elif 'llm' in label or label.startswith('llm'):
+                        node_type = 'llm'
+                    elif 'webhook' in label:
+                        node_type = 'webhook'
+                    else:
+                        node_type = label or None
+                elif isinstance(el, dict) and el.get('type'):
+                    node_type = el.get('type')
+                    cfg = el
+                    node_id = el.get('id')
+                else:
+                    errors.append(f'node at index {idx} has invalid shape')
+                    continue
+
+                if not node_id:
+                    errors.append(f'node at index {idx} missing id')
+
+                if node_type in ('http', 'http_request'):
+                    # accept config.url in either runtime node or react-flow config
+                    url = None
+                    if isinstance(cfg, dict):
+                        url = cfg.get('url') or (cfg.get('config') or {}).get('url')
+                    if not url:
+                        errors.append(f'http node {node_id or idx} missing url')
+
+                if node_type == 'llm':
+                    # require a prompt field (may be empty string) to catch obvious misconfigs
+                    prompt = None
+                    if isinstance(cfg, dict):
+                        prompt = cfg.get('prompt') if 'prompt' in cfg else (cfg.get('config') or {}).get('prompt')
+                    if prompt is None:
+                        errors.append(f'llm node {node_id or idx} missing prompt')
+
+                # for unknown types we remain permissive
+
+            if errors:
+                # return the first error to keep response concise
+                raise HTTPException(status_code=400, detail=errors[0])
+
+        # perform validation (raises HTTPException on invalid graph)
+        if graph is not None:
+            validate_workflow_graph(graph)
         res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
         ws = res.scalars().first()
         if not ws:
@@ -649,6 +728,102 @@ if HAS_SQLALCHEMY:
         db.add(wf)
         await db.commit()
         await db.refresh(wf)
+        return {"id": wf.id, "workspace_id": wf.workspace_id, "name": wf.name}
+
+
+    @app.put('/api/workflows/{workflow_id}')
+    async def update_workflow(workflow_id: int, data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        """Update an existing workflow. Performs the same lightweight
+        validation as create_workflow to avoid storing broken node configs.
+        """
+        name = data.get('name')
+        description = data.get('description')
+        graph = data.get('graph') if 'graph' in data else None
+
+        def validate_workflow_graph(g):
+            if g is None:
+                return
+            nodes = None
+            if isinstance(g, dict):
+                nodes = g.get('nodes')
+            elif isinstance(g, list):
+                nodes = g
+            else:
+                raise HTTPException(status_code=400, detail='graph must be an object with "nodes" or an array of nodes')
+
+            if nodes is None:
+                return
+
+            errors = []
+
+            for idx, el in enumerate(nodes):
+                node_type = None
+                cfg = None
+                node_id = None
+                if isinstance(el, dict) and 'data' in el:
+                    data_field = el.get('data') or {}
+                    label = (data_field.get('label') or '').lower()
+                    cfg = data_field.get('config') or {}
+                    node_id = el.get('id')
+                    if 'http' in label:
+                        node_type = 'http'
+                    elif 'llm' in label or label.startswith('llm'):
+                        node_type = 'llm'
+                    elif 'webhook' in label:
+                        node_type = 'webhook'
+                    else:
+                        node_type = label or None
+                elif isinstance(el, dict) and el.get('type'):
+                    node_type = el.get('type')
+                    cfg = el
+                    node_id = el.get('id')
+                else:
+                    errors.append(f'node at index {idx} has invalid shape')
+                    continue
+
+                if not node_id:
+                    errors.append(f'node at index {idx} missing id')
+
+                if node_type in ('http', 'http_request'):
+                    url = None
+                    if isinstance(cfg, dict):
+                        url = cfg.get('url') or (cfg.get('config') or {}).get('url')
+                    if not url:
+                        errors.append(f'http node {node_id or idx} missing url')
+
+                if node_type == 'llm':
+                    prompt = None
+                    if isinstance(cfg, dict):
+                        prompt = cfg.get('prompt') if 'prompt' in cfg else (cfg.get('config') or {}).get('prompt')
+                    if prompt is None:
+                        errors.append(f'llm node {node_id or idx} missing prompt')
+
+            if errors:
+                raise HTTPException(status_code=400, detail=errors[0])
+
+        if graph is not None:
+            validate_workflow_graph(graph)
+
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            raise HTTPException(status_code=404, detail='workflow not found')
+
+        # ensure workflow belongs to user's workspace
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws or wf.workspace_id != ws.id:
+            raise HTTPException(status_code=404, detail='workflow not found')
+
+        # apply updates
+        if name is not None:
+            wf.name = name
+        if description is not None:
+            wf.description = description
+        if 'graph' in data:
+            wf.graph = graph
+        await db_commit(db)
+        await db_refresh(db, wf)
         return {"id": wf.id, "workspace_id": wf.workspace_id, "name": wf.name}
 
     @app.get('/api/workflows')
