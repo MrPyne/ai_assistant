@@ -39,6 +39,10 @@ export default function Editor(){
   const [newProviderSecretId, setNewProviderSecretId] = useState('')
   const [webhookTestPayload, setWebhookTestPayload] = useState('{}')
 
+  // new: store validation error returned by the backend on save so we can
+  // surface it in the editor UI and optionally focus the problematic node
+  const [validationError, setValidationError] = useState(null)
+
   // Run detail state
   const [selectedRunDetail, setSelectedRunDetail] = useState(null)
   const [runDetailError, setRunDetailError] = useState(null)
@@ -275,12 +279,58 @@ export default function Editor(){
       if (resp.ok) {
         const data = await resp.json()
         alert('Saved')
+        setValidationError(null)
         if (data && data.id) setWorkflowId(data.id)
         // reload workflows so the list reflects the newly saved workflow
         await loadWorkflows()
       } else {
-        const txt = await resp.text()
-        alert('Save failed: ' + txt)
+        // Try to parse JSON error body and extract a concise detail message
+        let detail = null
+        try {
+          const j = await resp.json()
+          detail = j && (j.detail || j.message || JSON.stringify(j))
+        } catch (e) {
+          try {
+            detail = await resp.text()
+          } catch (e2) {
+            detail = String(e)
+          }
+        }
+
+        // Basic heuristic parsing to map backend validation messages to a
+        // node id so we can focus the problematic node in the editor.
+        let nodeToSelect = null
+        if (typeof detail === 'string') {
+          // patterns we expect from backend: "http node n1 missing url",
+          // "llm node n1 missing prompt", "node at index 0 has invalid shape",
+          // "node at index 0 missing id", etc.
+          const httpMatch = detail.match(/http node (\S+)/i)
+          const llmMatch = detail.match(/llm node (\S+)/i)
+          const idxMatch = detail.match(/node at index (\d+)/i)
+          const missingIdMatch = detail.match(/missing id/i)
+
+          if (httpMatch) nodeToSelect = httpMatch[1]
+          else if (llmMatch) nodeToSelect = llmMatch[1]
+          else if (idxMatch) {
+            const idx = parseInt(idxMatch[1], 10)
+            if (!Number.isNaN(idx) && nodes && nodes.length > idx) {
+              nodeToSelect = String(nodes[idx].id)
+            }
+          } else if (missingIdMatch) {
+            // generic missing id: try to find any node with empty / falsy id
+            const bad = nodes.find(n => n == null || n.id == null || String(n.id).trim() === '')
+            if (bad) nodeToSelect = String(bad.id)
+          }
+        }
+
+        setValidationError(detail)
+        if (nodeToSelect) {
+          // focus node so the user can edit its config immediately
+          setSelectedNodeId(String(nodeToSelect))
+        }
+
+        // Also show a user-visible alert as a fallback for older browsers/tests
+        alert('Save failed: ' + (detail || 'Unknown error'))
       }
     } catch (err) {
       alert('Save failed: ' + String(err))
@@ -651,6 +701,11 @@ export default function Editor(){
 
         <div className="rightpanel">
           <h3>Selected Node</h3>
+          {validationError && (
+            <div style={{ background: '#ffe6e6', border: '1px solid #ffcccc', padding: 8, marginBottom: 8 }}>
+              <strong>Validation error:</strong> {validationError}
+            </div>
+          )}
           {selectedNode ? (
             <div>
               <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
