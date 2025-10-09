@@ -68,3 +68,13 @@ class RunLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     level = Column(String, default='info')
     message = Column(String)
+
+
+class Webhook(Base):
+    __tablename__ = 'webhooks'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'))
+    workflow_id = Column(Integer, ForeignKey('workflows.id'))
+    path = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

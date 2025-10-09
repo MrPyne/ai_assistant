@@ -78,10 +78,12 @@ def upgrade():
         sa.Column('level', sa.String, nullable=True),
         sa.Column('message', sa.String, nullable=True),
     )
+    # Note: webhooks table moved to a separate revision for migration hygiene.
 
 
 def downgrade():
     op.drop_table('run_logs')
+    # webhooks table dropped in its own revision downgrade
     op.drop_table('runs')
     op.drop_table('workflows')
     op.drop_table('secrets')

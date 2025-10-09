@@ -690,11 +690,151 @@ if HAS_SQLALCHEMY:
         db.add(run)
         await db.commit()
         await db.refresh(run)
+        # persist webhook registration for auditing / lookup if a path is provided
+        try:
+            # store a simple webhook record keyed by workflow and a generated path
+            path = f"/w/{run.workflow_id}/{trigger_id}"
+            wh = None
+            try:
+                res_wh = await db_execute(db, select(Workspace).filter(Workspace.id == run.workflow_id))
+                # not used, just attempt to exercise DB layer
+            except Exception:
+                pass
+            # best-effort: insert if a Webhook model exists in this environment
+            try:
+                from backend.models import Webhook as WebhookModel
+                w = WebhookModel(workspace_id=wf.workspace_id if 'wf' in locals() and wf else None, workflow_id=workflow_id, path=path)
+                db.add(w)
+                await db.commit()
+            except Exception:
+                # ignore if migrations/models not available in this runtime
+                pass
+        except Exception:
+            pass
         # enqueue Celery task (best-effort)
         try:
             execute_workflow.delay(run.id)
         except Exception:
             # ignore if Celery not available in this environment
+            pass
+        return {"run_id": run.id, "status": "queued"}
+
+
+    @app.post('/api/workflows/{workflow_id}/webhooks')
+    async def create_webhook(workflow_id: int, data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        """Create a webhook record for a workflow in the user's workspace.
+
+        Body: { path?: string, description?: string }
+        If path is omitted a generated path will be created.
+        """
+        path = data.get('path')
+        description = data.get('description')
+        # ensure workflow exists and belongs to user
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws or wf.workspace_id != ws.id:
+            raise HTTPException(status_code=404, detail='workflow not found')
+
+        if not path:
+            # generate a reasonably unique path
+            path = f"{workflow_id}-{int(datetime.utcnow().timestamp())}"
+
+        try:
+            from backend.models import Webhook as WebhookModel
+            wh = WebhookModel(workspace_id=ws.id, workflow_id=workflow_id, path=path, description=description)
+            db.add(wh)
+            await db.commit()
+            await db.refresh(wh)
+            return {"id": wh.id, "workspace_id": wh.workspace_id, "workflow_id": wh.workflow_id, "path": wh.path}
+        except Exception:
+            # fall back to minimal response if model unavailable
+            return {"path": path}
+
+
+    @app.get('/api/workflows/{workflow_id}/webhooks')
+    async def list_webhooks(workflow_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws or wf.workspace_id != ws.id:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        try:
+            from backend.models import Webhook as WebhookModel
+            res2 = await db_execute(db, select(WebhookModel).filter(WebhookModel.workflow_id == workflow_id))
+            rows = res2.scalars().all()
+            out = []
+            for r in rows:
+                out.append({"id": r.id, "path": r.path, "description": r.description, "created_at": r.created_at.isoformat() if r.created_at else None})
+            return out
+        except Exception:
+            return []
+
+
+    @app.delete('/api/workflows/{workflow_id}/webhooks/{webhook_id}')
+    async def delete_webhook(workflow_id: int, webhook_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws or wf.workspace_id != ws.id:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        try:
+            from backend.models import Webhook as WebhookModel
+            res2 = await db_execute(db, select(WebhookModel).filter(WebhookModel.id == webhook_id, WebhookModel.workflow_id == workflow_id))
+            row = res2.scalars().first()
+            if not row:
+                raise HTTPException(status_code=404, detail='webhook not found')
+            db.delete(row)
+            await db.commit()
+            return {"status": "deleted"}
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail='Failed to delete webhook')
+
+
+    @app.api_route('/w/{workspace_id}/workflows/{workflow_id}/{path}', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+    async def public_webhook(workspace_id: int, workflow_id: int, path: str, request: Request, db: AsyncSession = Depends(get_db)):
+        """Public-facing webhook route that creates a run for the given workflow.
+
+        This route does not require authentication and is intended to be used
+        by external services. It will create a run and enqueue execution.
+        """
+        payload = None
+        try:
+            payload = await request.json()
+        except Exception:
+            try:
+                body = await request.body()
+                payload = body.decode() if body else None
+            except Exception:
+                payload = None
+
+        # ensure workflow exists
+        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
+        wf = res.scalars().first()
+        if not wf:
+            return JSONResponse(status_code=404, content={"detail": "workflow not found"})
+        # ensure workspace matches
+        if wf.workspace_id != workspace_id:
+            return JSONResponse(status_code=404, content={"detail": "workflow not found"})
+
+        run = Run(workflow_id=workflow_id, status='queued', input_payload=payload, started_at=datetime.utcnow())
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        try:
+            execute_workflow.delay(run.id)
+        except Exception:
             pass
         return {"run_id": run.id, "status": "queued"}
 

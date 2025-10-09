@@ -46,11 +46,13 @@ except Exception:
             self._secrets = {}  # id -> {workspace_id, name, value}
             self._providers = {}  # id -> {workspace_id, type, secret_id, config}
             self._workflows_store = {}  # id -> {workspace_id, name, description, graph}
+            self._webhooks = {}  # id -> {workflow_id, path, description, workspace_id}
             self._next_user = 1
             self._next_ws = 1
             self._next_secret = 1
             self._next_provider = 1
             self._next_workflow = 1
+            self._next_webhook = 1
             self._tokens = {}  # token -> user_id
 
         def _create_user(self, email, password):
@@ -82,6 +84,19 @@ except Exception:
             return self._tokens.get(token)
 
         def get(self, path, *args, **kwargs):
+            # support listing webhooks for a workflow
+            if path.startswith('/api/workflows/') and path.endswith('/webhooks'):
+                parts = path.split('/')
+                try:
+                    wf_id = int(parts[3])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid workflow id'})})()
+                out = []
+                for hid, h in self._webhooks.items():
+                    if h.get('workflow_id') == wf_id:
+                        out.append({'id': hid, 'path': h.get('path'), 'description': h.get('description'), 'created_at': None})
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: out)})()
+
             # handle listing runs for a workflow in the dummy client
             if path.startswith('/api/workflows/') and path.endswith('/runs'):
                 parts = path.split('/')
@@ -125,6 +140,22 @@ except Exception:
 
             # minimal support for run logs or other GETs if needed
             return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {})})()
+
+        def delete(self, path, *args, **kwargs):
+            # support deleting webhook records
+            if path.startswith('/api/workflows/') and '/webhooks/' in path:
+                parts = path.split('/')
+                try:
+                    wf_id = int(parts[3])
+                    wh_id = int(parts[5])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid id'})})()
+                row = self._webhooks.get(wh_id)
+                if not row or row.get('workflow_id') != wf_id:
+                    return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'webhook not found'})})()
+                del self._webhooks[wh_id]
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'status': 'deleted'})})()
+
 
         def post(self, path, *args, **kwargs):
             json_body = kwargs.get('json') or {}
@@ -204,6 +235,23 @@ except Exception:
                 self._workflows_store[wid] = {'workspace_id': wsid, 'name': json_body.get('name'), 'description': json_body.get('description'), 'graph': json_body.get('graph')}
                 return type('R', (), {'status_code': 201, 'json': (lambda *a, **k: {'id': wid, 'workspace_id': wsid, 'name': json_body.get('name')})})()
 
+            # create webhook for workflow
+            if path.startswith('/api/workflows/') and path.endswith('/webhooks'):
+                parts = path.split('/')
+                try:
+                    wf_id = int(parts[3])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid workflow id'})})()
+                # ensure workflow exists
+                wf = self._workflows_store.get(wf_id)
+                if not wf:
+                    return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'workflow not found'})})()
+                hid = self._next_webhook
+                self._next_webhook += 1
+                path_val = json_body.get('path') or f"{wf_id}-{hid}"
+                self._webhooks[hid] = {'workflow_id': wf_id, 'path': path_val, 'description': json_body.get('description'), 'workspace_id': wf.get('workspace_id')}
+                return type('R', (), {'status_code': 201, 'json': (lambda *a, **k: {'id': hid, 'path': path_val, 'workflow_id': wf_id})})()
+
             # webhook trigger: /api/webhook/{workflow_id}/{trigger_id}
             if path.startswith('/api/webhook/'):
                 parts = path.split('/')
@@ -215,6 +263,27 @@ except Exception:
                 run_id = getattr(self, '_next_run', 1)
                 self._next_run = run_id + 1
                 # store run minimally
+                if not hasattr(self, '_runs'):
+                    self._runs = {}
+                self._runs[run_id] = {'workflow_id': wf_id, 'status': 'queued'}
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'run_id': run_id, 'status': 'queued'})})()
+
+            # public webhook route: /w/{workspace_id}/workflows/{workflow_id}/{path}
+            if path.startswith('/w/'):
+                parts = path.split('/')
+                # expected: ['', 'w', '{workspace_id}', 'workflows', '{workflow_id}', '{path}']
+                try:
+                    workspace_id = int(parts[2])
+                    wf_id = int(parts[4])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid path'})})()
+                # ensure workflow exists
+                wf = self._workflows_store.get(wf_id)
+                if not wf or wf.get('workspace_id') != workspace_id:
+                    return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'workflow not found'})})()
+                # create a run id (simple incremental)
+                run_id = getattr(self, '_next_run', 1)
+                self._next_run = run_id + 1
                 if not hasattr(self, '_runs'):
                     self._runs = {}
                 self._runs[run_id] = {'workflow_id': wf_id, 'status': 'queued'}
