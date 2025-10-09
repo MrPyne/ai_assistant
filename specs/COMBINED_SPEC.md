@@ -290,7 +290,7 @@ Checklist:
 Cross-cutting tasks
 - [x] OpenAPI / API documentation for all endpoints (basic FastAPI docs present)
 - [ ] DB migrations for all tables listed above with rollback capability
-- [x] DB migrations for all tables listed above with rollback capability — DONE (2025-10-09, commit: COMMIT_HASH_PLACEHOLDER)
+- [x] DB migrations for all tables listed above with rollback capability — DONE (2025-10-09, commit: 7d9f897)
 - [x] Integration tests: webhook -> worker -> run -> UI (basic tests exist for run creation)
 - [ ] E2E tests for editor (Cypress/Playwright) — optional but recommended
 - [x] CI: linting, type-check, unit tests, secret-scan test (CI runs unit tests; secret-scan pending)
