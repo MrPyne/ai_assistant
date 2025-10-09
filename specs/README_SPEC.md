@@ -1,5 +1,5 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.10
+Version: 1.11
 Last updated: 2025-10-09
 Maintainer: (fill in)
 
@@ -81,6 +81,8 @@ Milestones & deliverables (short)
 - Milestone 2: Credentials UI + Provider wiring + LLM adapter live mode toggle. Acceptance: user can create a provider referencing a secret and run an LLM node in mock/live mode.
 - Milestone 3: Control nodes (If/Condition, Loop), Scheduler. Acceptance: workflows with branching can be built and executed.
 
+Sprint 1 — Immediate work items (I will start these now)
+
 How I will proceed (process)
 - I will work in short, testable iterations. For each completed item I will:
   - Commit code with a clear message, update specs/README_SPEC.md with a check & changelog entry (version bump + date), and add/update tests.
@@ -102,9 +104,9 @@ Change log
 - [x] 1.6 — Clarified priorities and immediate backend/frontend tasks (2025-10-04)
 - [x] 1.7 — Implemented redaction coverage for worker log writes and structured messages (unit tests added) (2025-10-05)
 - [x] 1.8 — Added GET /api/runs/{run_id}/logs implementation and response envelope tests; frontend editor save/load wiring finalized (2025-10-07)
-- [x] 1.9 — Added server-side validation for workflow update (PUT /api/workflows/{workflow_id}) to mirror create_workflow validation; added tests for update validation (2025-10-09)
+- [x] 1.9 — Added server-side validation for workflow update to mirror create_workflow validation; added tests for update validation (2025-10-09)
 - [x] 1.10 — Documented structured validation error contract (2025-10-09)
-
+- [x] 1.11 — Added backend integration test to verify HTTPException normalization to the validation error contract and a conftest import shim to prevent test collection failures when FastAPI/TestClient are not installed. Test will be skipped unless FastAPI/TestClient are available in the environment; to run this test in CI, add backend test dependencies (fastapi, starlette, httpx[testclient]) to the CI job. (2025-10-09)
 
 References
 - specs/N8N_COMPATIBILITY.md
@@ -118,6 +120,7 @@ Completed next steps (automated updates):
 - [x] (1) Implement GET /api/runs/{run_id}/logs and return a LogsResponse envelope (backend/app.py endpoint implemented and wired to schemas). Verified by backend tests.
 - [x] (2) Harden worker redaction and add unit tests to ensure secrets are not persisted in RunLog entries (backend/tasks.py uses redact_secrets for structured messages; test added: backend/tests/test_write_log_redacts_dict_message.py).
 - [x] (3) Scaffold/update frontend editor files and wire them to POST/GET /api/workflows — frontend editor save/load wiring implemented; basic editor unit tests added. Manual test checklist updated in this file and specs/IMPLEMENTATION_CHECKLIST.md.
+- [x] (4) Add backend integration test to assert HTTPException detail normalization into the structured validation error contract and add a conftest import shim to make test collection robust in environments where FastAPI/TestClient are not present. Test is skipped when FastAPI/TestClient are missing; CI should install backend test deps to exercise it.
 
 Validation error response contract
 ---------------------------------
@@ -137,6 +140,10 @@ Examples:
 Notes on backward compatibility
 - Existing clients that expect a plain text message body will continue to work because the response still includes a human-readable "message" and the status code remains 400.
 - New clients (the editor) SHOULD use the presence of "node_id" to focus the offending node and display inline validation UI.
+
+Testing this contract
+- Unit tests validate that server-side workflow validation returns the proper envelope when validation errors are raised from validation helpers.
+- A focused backend integration test has been added (backend/tests/test_http_exception_normalization.py) which exercises the FastAPI/TestClient path to ensure HTTPException(detail=...) values are normalized into the envelope (top-level "message" string and optional "node_id" when applicable). The test is designed to be skipped in lightweight environments where FastAPI/TestClient are not installed; to enable running it add FastAPI and httpx[testclient] to the test environment.
 
 Why this contract exists
 - The editor needs a reliable way to focus and highlight the offending node on save/update so users can quickly correct invalid node configuration. Relying on string parsing of error messages proved brittle; the structured "node_id" value is a lightweight, backward-compatible extension that greatly improves UX.

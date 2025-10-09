@@ -29,3 +29,12 @@ Changelog
 1.8 (2025-10-07)
 - Frontend editor save/load wiring finalized; editor unit tests added
 - Updated README_SPEC.md and IMPLEMENTATION_CHECKLIST.md to reflect completed editor persistence work
+
+1.9 (2025-10-09)
+- Added server-side validation for workflow update to mirror create_workflow validation; added tests for update validation
+
+1.10 (2025-10-09)
+- Documented structured validation error contract
+
+1.11 (2025-10-09)
+- Added backend integration test to verify HTTPException normalization to the validation error contract and a conftest import shim to prevent test collection failures when FastAPI/TestClient are not installed. Test will be skipped unless FastAPI/TestClient are available in the environment; to run this test in CI, add backend test dependencies (fastapi, starlette, httpx[testclient]) to the CI job.

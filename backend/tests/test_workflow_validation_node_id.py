@@ -1,12 +1,11 @@
 import pytest
-from fastapi.testclient import TestClient
 
 # Tests to assert the backend returns structured validation errors with node_id
 # when it can be inferred. These are low-risk unit tests that codify the
 # contract used by the editor to focus offending nodes.
 
 
-def test_create_workflow_returns_node_id_in_validation_error(client: TestClient):
+def test_create_workflow_returns_node_id_in_validation_error(client):
     wf = {
         "name": "bad-http-node-id",
         "graph": {"nodes": [{"id": "n1", "data": {"label": "HTTP Request", "config": {}}}]}
@@ -21,7 +20,7 @@ def test_create_workflow_returns_node_id_in_validation_error(client: TestClient)
     assert str(body.get('node_id')) == 'n1'
 
 
-def test_create_workflow_invalid_shape_returns_node_id_from_index(client: TestClient):
+def test_create_workflow_invalid_shape_returns_node_id_from_index(client):
     # An element that is a dict but lacks 'data' and 'type' is considered an
     # invalid shape; the validator should still try to resolve the node id by
     # index and include it in the structured error detail.
@@ -34,7 +33,7 @@ def test_create_workflow_invalid_shape_returns_node_id_from_index(client: TestCl
     assert str(body.get('node_id')) == 'bad1'
 
 
-def test_update_workflow_returns_node_id_in_validation_error(client: TestClient):
+def test_update_workflow_returns_node_id_in_validation_error(client):
     # Create a valid workflow first, then attempt an update that makes the
     # http node invalid (missing url). The update validator should return a
     # structured error with the offending node_id.
