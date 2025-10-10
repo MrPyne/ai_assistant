@@ -843,6 +843,47 @@ if HAS_SQLALCHEMY:
         except Exception:
             return JSONResponse(status_code=500, content={'error': 'failed to reset metrics'})
 
+
+    @app.post('/internal/redaction_metrics/export')
+    async def redaction_metrics_export(user: User = Depends(get_current_user)):
+        """Persist a snapshot of current redaction metrics to a local file.
+
+        This is an opt-in, admin-only helper intended for debugging and small
+        scale diagnostics. Persistence is only performed when the
+        ENABLE_METRICS_PERSISTENCE environment variable is set to a truthy
+        value and a target path is provided via REDACTION_METRICS_DUMP_PATH
+        (defaults to 'backend/redaction_metrics.log'). The endpoint appends a
+        newline-delimited JSON snapshot with a timestamp.
+        """
+        try:
+            if getattr(user, 'role', None) != 'admin':
+                raise HTTPException(status_code=403, detail='Forbidden')
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=403, detail='Forbidden')
+
+        enabled = os.getenv('ENABLE_METRICS_PERSISTENCE', '').lower() in ('1', 'true', 'yes')
+        if not enabled:
+            return JSONResponse(status_code=400, content={'error': 'persistence disabled'})
+
+        path = os.getenv('REDACTION_METRICS_DUMP_PATH', 'backend/redaction_metrics.log')
+        try:
+            from backend.utils import get_redaction_metrics as _get_metrics
+            metrics = _get_metrics()
+            try:
+                import json as _json
+                import time as _time
+                payload = {'timestamp': int(_time.time()), 'metrics': metrics}
+                # Append newline-delimited JSON to the target file
+                with open(path, 'a', encoding='utf-8') as f:
+                    f.write(_json.dumps(payload, separators=(',', ':')) + '\n')
+                return JSONResponse(status_code=200, content={'status': 'ok', 'path': path})
+            except Exception:
+                return JSONResponse(status_code=500, content={'error': 'failed to persist metrics'})
+        except Exception:
+            return JSONResponse(status_code=500, content={'error': 'failed to fetch metrics'})
+
     @app.get('/metrics')
     async def metrics():
         """Expose redaction telemetry in Prometheus format when the
@@ -853,6 +894,24 @@ if HAS_SQLALCHEMY:
         try:
             from backend.utils import get_redaction_metrics as _get_metrics
             metrics = _get_metrics()
+
+            # Derive a couple of small, non-invasive metrics useful to ops:
+            # - patterns_total: number of distinct patterns observed
+            # - last_updated: unix epoch seconds when this snapshot was produced
+            try:
+                import time as _time
+                metrics = dict(metrics) if isinstance(metrics, dict) else metrics
+                try:
+                    metrics['patterns_total'] = len((metrics.get('patterns') or {}))
+                except Exception:
+                    metrics['patterns_total'] = 0
+                try:
+                    metrics['last_updated'] = int(_time.time())
+                except Exception:
+                    metrics['last_updated'] = None
+            except Exception:
+                _time = None
+
             try:
                 # Import prometheus_client lazily so it's optional
                 from prometheus_client import CollectorRegistry, Gauge, generate_latest, CONTENT_TYPE_LATEST
@@ -896,6 +955,22 @@ if HAS_SQLALCHEMY:
                         g_budget.labels(pattern=str(k)).set(int(v or 0))
                     except Exception:
                         pass
+
+                # Derived, non-fatal gauges useful to ops
+                g_patterns_total = Gauge('redaction_patterns_total', 'Number of distinct redaction patterns observed', registry=reg)
+                try:
+                    g_patterns_total.set(int(metrics.get('patterns_total', 0) or 0))
+                except Exception:
+                    pass
+
+                g_last = Gauge('redaction_metrics_last_updated_seconds', 'Unix time of metrics snapshot', registry=reg)
+                try:
+                    if metrics.get('last_updated') is not None:
+                        g_last.set(float(metrics.get('last_updated')))
+                    elif _time is not None:
+                        g_last.set(float(_time.time()))
+                except Exception:
+                    pass
 
                 payload = generate_latest(reg)
                 return _Response(content=payload, media_type=CONTENT_TYPE_LATEST)
