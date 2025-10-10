@@ -21,5 +21,7 @@ def redact_secrets(obj):
         # Bearer tokens or key=... patterns
         obj = re.sub(r"(?i)bearer\s+[A-Za-z0-9\._\-\=]{8,}", "[REDACTED]", obj)
         obj = re.sub(r"key=([A-Za-z0-9\._\-]{8,})", "key=[REDACTED]", obj)
+        # AWS Access Key IDs (e.g. AKIAxxxxxxxxxxxxxx)
+        obj = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED]", obj)
         return obj
     return obj

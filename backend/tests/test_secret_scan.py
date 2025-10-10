@@ -9,12 +9,22 @@ def test_no_plaintext_secrets_in_audit_export_and_workflows(client):
     token = r.json().get('access_token')
     headers = {'Authorization': f'Bearer {token}'} if token else {}
 
-    secret_value = 'sk-SECRET_SCAN_123456'
-    s = {'name': 'scan_key', 'value': secret_value}
-    r2 = client.post('/api/secrets', json=s, headers=headers)
-    assert r2.status_code in (200, 201)
-    sid = r2.json().get('id')
-    assert sid
+    # common secret-like patterns to scan for in exports and listings
+    secret_patterns = [
+        'sk-SECRET_SCAN_123456',  # OpenAI-like
+        'AKIAABCDEFGHIJKLMNOP',  # AWS Access Key ID style
+        'Bearer abcdefghijklmnopqrstu',  # bearer token
+        'key=supersecretvalue123',  # key=... pattern
+    ]
+
+    created_secret_ids = []
+    for idx, secret_value in enumerate(secret_patterns):
+        s = {'name': f'scan_key_{idx}', 'value': secret_value}
+        r2 = client.post('/api/secrets', json=s, headers=headers)
+        assert r2.status_code in (200, 201)
+        sid = r2.json().get('id')
+        assert sid
+        created_secret_ids.append(sid)
 
     # create a workflow and trigger a run so an audit entry exists
     wf = {'name': 'scan-wf', 'graph': None}
@@ -26,19 +36,22 @@ def test_no_plaintext_secrets_in_audit_export_and_workflows(client):
     r4 = client.post(f'/api/workflows/{wid}/run', json={}, headers=headers)
     assert r4.status_code in (200, 201)
 
-    # Export CSV and verify secret value does not appear anywhere
+    # Export CSV and verify none of the secret values appear anywhere
     r_csv = client.get('/api/audit_logs/export', headers=headers)
     assert r_csv.status_code == 200
     text = getattr(r_csv, 'text', None) or ''
-    assert secret_value not in text
+    for secret_value in secret_patterns:
+        assert secret_value not in text
 
     # Also ensure listing workflows and providers do not leak secret values
     r_wfs = client.get('/api/workflows', headers=headers)
     assert r_wfs.status_code == 200
     wfs_text = str(r_wfs.json())
-    assert secret_value not in wfs_text
+    for secret_value in secret_patterns:
+        assert secret_value not in wfs_text
 
     r_prov = client.get('/api/providers', headers=headers)
     assert r_prov.status_code == 200
     prov_text = str(r_prov.json())
-    assert secret_value not in prov_text
+    for secret_value in secret_patterns:
+        assert secret_value not in prov_text
