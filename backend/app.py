@@ -1300,6 +1300,83 @@ if HAS_SQLALCHEMY:
 
         return {"items": out, "total": total, "limit": limit, "offset": offset}
 
+
+    @app.get('/api/audit_logs')
+    async def list_audit_logs(
+        limit: int = 50,
+        offset: int = 0,
+        action: Optional[str] = None,
+        object_type: Optional[str] = None,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user),
+    ):
+        """List audit log entries for the current user's workspace.
+
+        Supports basic pagination (limit/offset) and simple filtering by
+        action and object_type. For security we only return entries for the
+        workspace owned by the authenticated user.
+        """
+        # sanitize pagination params
+        try:
+            limit = int(limit)
+        except Exception:
+            limit = 50
+        try:
+            offset = int(offset)
+        except Exception:
+            offset = 0
+        if limit <= 0:
+            limit = 1
+        if limit > 100:
+            limit = 100
+        if offset < 0:
+            offset = 0
+
+        # fetch user's workspace
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+        # build base query scoped to the workspace
+        stmt = select(AuditLog).filter(AuditLog.workspace_id == ws.id).order_by(AuditLog.id.desc())
+        if action:
+            stmt = stmt.filter(AuditLog.action == action)
+        if object_type:
+            stmt = stmt.filter(AuditLog.object_type == object_type)
+
+        # load full (small) result set and paginate in Python for predictable
+        # behaviour across DB backends used in tests/dev
+        res = await db_execute(db, stmt)
+        all_rows = res.scalars().all()
+        rows = all_rows[offset: offset + limit]
+        out = []
+        for r in rows:
+            out.append({
+                "id": r.id,
+                "workspace_id": r.workspace_id,
+                "user_id": r.user_id,
+                "action": r.action,
+                "object_type": r.object_type,
+                "object_id": r.object_id,
+                "detail": r.detail,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            })
+
+        # compute total matching count
+        try:
+            stmt_count = select(func.count()).select_from(AuditLog).filter(AuditLog.workspace_id == ws.id)
+            if action:
+                stmt_count = stmt_count.filter(AuditLog.action == action)
+            if object_type:
+                stmt_count = stmt_count.filter(AuditLog.object_type == object_type)
+            res_count = await db_execute(db, stmt_count)
+            total = int(res_count.scalar() or 0)
+        except Exception:
+            total = len(all_rows)
+
+        return {"items": out, "total": total, "limit": limit, "offset": offset}
+
     @app.post('/api/workflows/{workflow_id}/run')
     async def run_workflow(workflow_id: int, data: dict = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
