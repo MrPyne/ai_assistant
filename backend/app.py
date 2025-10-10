@@ -218,26 +218,109 @@ if HAS_FASTAPI:
                     # Helper: stream-redact an (async or sync) body iterator for
                     # text-like responses without buffering the entire body.
                     async def _stream_redact_async(body_iter):
-                        # Body chunks may be bytes (typical). Support both async
-                        # and sync iterables by attempting async iteration first.
+                        # Body chunks may be bytes (typical). We implement a
+                        # small sliding lookback buffer so secrets that span
+                        # chunk boundaries can still be detected. The lookback
+                        # size is configurable via REDACT_LOOKBACK (chars,
+                        # default 256).
                         try:
-                            async for c in body_iter:
+                            LOOKBACK = int(os.getenv('REDACT_LOOKBACK', '256'))
+                        except Exception:
+                            LOOKBACK = 256
+
+                        async def _process_iterable(it, is_async=True):
+                            raw_buf = ''
+                            try:
+                                if is_async:
+                                    iterator = it.__aiter__()
+                                else:
+                                    iterator = iter(it)
+                            except Exception:
+                                iterator = it
+
+                            while True:
                                 try:
-                                    s = c.decode()
+                                    if is_async:
+                                        c = await iterator.__anext__()
+                                    else:
+                                        c = next(iterator)
+                                except StopAsyncIteration:
+                                    break
+                                except StopIteration:
+                                    break
+                                except AttributeError:
+                                    # Not an iterator; break out
+                                    break
+
+                                # Decode bytes to text, robustly handling errors
+                                if isinstance(c, (bytes, bytearray)):
+                                    try:
+                                        s = c.decode()
+                                    except Exception:
+                                        s = c.decode('utf-8', errors='replace')
+                                else:
+                                    s = str(c)
+
+                                # Build combined window of recent raw text
+                                combined_raw = raw_buf + s
+
+                                # Redact the buffered prefix alone and the combined
+                                # window so we can emit only the redacted portion
+                                # corresponding to the newly-received chunk. This
+                                # avoids re-emitting previously-yielded data while
+                                # still allowing matches that cross the boundary.
+                                try:
+                                    redacted_buf = _redact(raw_buf) if raw_buf else ''
+                                    redacted_combined = _redact(combined_raw)
+
+                                    # If redacted_combined starts with redacted_buf
+                                    # we can safely slice the tail corresponding to s
+                                    if redacted_combined.startswith(redacted_buf):
+                                        emit_part = redacted_combined[len(redacted_buf):]
+                                    else:
+                                        # Fallback: redact the incoming chunk
+                                        # alone to ensure we still redact tokens
+                                        # that don't span the boundary.
+                                        emit_part = _redact(s)
                                 except Exception:
-                                    s = c.decode('utf-8', errors='replace')
-                                s2 = _redact(s)
-                                yield s2.encode()
+                                    # On any redaction error, fall back to best-effort
+                                    # non-failing behaviour: emit the chunk
+                                    try:
+                                        emit_part = s
+                                    except Exception:
+                                        emit_part = ''
+
+                                # Yield encoded bytes for the emitted part
+                                try:
+                                    yield emit_part.encode()
+                                except Exception:
+                                    try:
+                                        yield emit_part.encode('utf-8', errors='replace')
+                                    except Exception:
+                                        # give up on this chunk
+                                        pass
+
+                                # Update raw buffer to the last LOOKBACK characters
+                                try:
+                                    raw_buf = (combined_raw)[-LOOKBACK:]
+                                except Exception:
+                                    raw_buf = ''
+
+                            return
+
+                        # Attempt async iteration first; fall back to sync.
+                        try:
+                            async for _ in _process_iterable(body_iter, is_async=True):
+                                # _process_iterable yields bytes chunks; we forward
+                                # them through the async generator by iterating
+                                # here and yielding each item.
+                                yield _
                             return
                         except TypeError:
                             # Fallback to sync iteration
-                            for c in body_iter:
-                                try:
-                                    s = c.decode()
-                                except Exception:
-                                    s = c.decode('utf-8', errors='replace')
-                                s2 = _redact(s)
-                                yield s2.encode()
+                            for _ in _process_iterable(body_iter, is_async=False):
+                                yield _
+                            return
 
                     # Handle JSON responses by parsing and redacting only when
                     # it's safe to buffer the full body (content-length present
@@ -721,6 +804,26 @@ if HAS_SQLALCHEMY:
             return JSONResponse(status_code=200, content=metrics)
         except Exception:
             return JSONResponse(status_code=500, content={'error': 'failed to fetch metrics'})
+
+
+    @app.post('/internal/redaction_metrics/reset')
+    async def redaction_metrics_reset(user: User = Depends(get_current_user)):
+        """Reset in-process redaction telemetry. Restricted to admin users."""
+        try:
+            if getattr(user, 'role', None) != 'admin':
+                raise HTTPException(status_code=403, detail='Forbidden')
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=403, detail='Forbidden')
+
+        try:
+            from backend.utils import reset_redaction_metrics as _reset_metrics
+
+            _reset_metrics()
+            return JSONResponse(status_code=200, content={'status': 'ok'})
+        except Exception:
+            return JSONResponse(status_code=500, content={'error': 'failed to reset metrics'})
 
     
     def send_email(to_email: str, subject: str, body: str):
