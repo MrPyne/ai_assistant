@@ -228,31 +228,21 @@ if HAS_FASTAPI:
                         except Exception:
                             LOOKBACK = 256
 
-                        async def _process_iterable(it, is_async=True):
+                        def _process_iterable_sync(it):
                             raw_buf = ''
                             try:
-                                if is_async:
-                                    iterator = it.__aiter__()
-                                else:
-                                    iterator = iter(it)
+                                iterator = iter(it)
                             except Exception:
                                 iterator = it
 
                             while True:
                                 try:
-                                    if is_async:
-                                        c = await iterator.__anext__()
-                                    else:
-                                        c = next(iterator)
-                                except StopAsyncIteration:
-                                    break
+                                    c = next(iterator)
                                 except StopIteration:
                                     break
                                 except AttributeError:
-                                    # Not an iterator; break out
                                     break
 
-                                # Decode bytes to text, robustly handling errors
                                 if isinstance(c, (bytes, bytearray)):
                                     try:
                                         s = c.decode()
@@ -261,64 +251,92 @@ if HAS_FASTAPI:
                                 else:
                                     s = str(c)
 
-                                # Build combined window of recent raw text
                                 combined_raw = raw_buf + s
-
-                                # Redact the buffered prefix alone and the combined
-                                # window so we can emit only the redacted portion
-                                # corresponding to the newly-received chunk. This
-                                # avoids re-emitting previously-yielded data while
-                                # still allowing matches that cross the boundary.
                                 try:
                                     redacted_buf = _redact(raw_buf) if raw_buf else ''
                                     redacted_combined = _redact(combined_raw)
-
-                                    # If redacted_combined starts with redacted_buf
-                                    # we can safely slice the tail corresponding to s
                                     if redacted_combined.startswith(redacted_buf):
                                         emit_part = redacted_combined[len(redacted_buf):]
                                     else:
-                                        # Fallback: redact the incoming chunk
-                                        # alone to ensure we still redact tokens
-                                        # that don't span the boundary.
                                         emit_part = _redact(s)
                                 except Exception:
-                                    # On any redaction error, fall back to best-effort
-                                    # non-failing behaviour: emit the chunk
                                     try:
                                         emit_part = s
                                     except Exception:
                                         emit_part = ''
 
-                                # Yield encoded bytes for the emitted part
                                 try:
                                     yield emit_part.encode()
                                 except Exception:
                                     try:
                                         yield emit_part.encode('utf-8', errors='replace')
                                     except Exception:
-                                        # give up on this chunk
                                         pass
 
-                                # Update raw buffer to the last LOOKBACK characters
                                 try:
                                     raw_buf = (combined_raw)[-LOOKBACK:]
                                 except Exception:
                                     raw_buf = ''
 
-                            return
+
+                        async def _process_iterable_async(it):
+                            raw_buf = ''
+                            try:
+                                iterator = it.__aiter__()
+                            except Exception:
+                                iterator = it
+
+                            while True:
+                                try:
+                                    c = await iterator.__anext__()
+                                except StopAsyncIteration:
+                                    break
+                                except AttributeError:
+                                    break
+
+                                if isinstance(c, (bytes, bytearray)):
+                                    try:
+                                        s = c.decode()
+                                    except Exception:
+                                        s = c.decode('utf-8', errors='replace')
+                                else:
+                                    s = str(c)
+
+                                combined_raw = raw_buf + s
+                                try:
+                                    redacted_buf = _redact(raw_buf) if raw_buf else ''
+                                    redacted_combined = _redact(combined_raw)
+                                    if redacted_combined.startswith(redacted_buf):
+                                        emit_part = redacted_combined[len(redacted_buf):]
+                                    else:
+                                        emit_part = _redact(s)
+                                except Exception:
+                                    try:
+                                        emit_part = s
+                                    except Exception:
+                                        emit_part = ''
+
+                                try:
+                                    yield emit_part.encode()
+                                except Exception:
+                                    try:
+                                        yield emit_part.encode('utf-8', errors='replace')
+                                    except Exception:
+                                        pass
+
+                                try:
+                                    raw_buf = (combined_raw)[-LOOKBACK:]
+                                except Exception:
+                                    raw_buf = ''
 
                         # Attempt async iteration first; fall back to sync.
                         try:
-                            async for _ in _process_iterable(body_iter, is_async=True):
-                                # _process_iterable yields bytes chunks; we forward
-                                # them through the async generator by iterating
-                                # here and yielding each item.
+                            async for _ in _process_iterable_async(body_iter):
                                 yield _
                             return
                         except TypeError:
                             # Fallback to sync iteration
-                            for _ in _process_iterable(body_iter, is_async=False):
+                            for _ in _process_iterable_sync(body_iter):
                                 yield _
                             return
 
