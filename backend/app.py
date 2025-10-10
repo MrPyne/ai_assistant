@@ -1372,10 +1372,14 @@ if HAS_SQLALCHEMY:
         # build CSV
         try:
             import io, csv
+            from backend.utils import redact_secrets as _redact
+
             buf = io.StringIO()
             writer = csv.writer(buf)
             writer.writerow(['id', 'workspace_id', 'user_id', 'action', 'object_type', 'object_id', 'detail', 'timestamp'])
             for r in rows:
+                # redact any secret-like content in the detail field before export
+                detail_safe = _redact(r.detail or '')
                 writer.writerow([
                     r.id,
                     r.workspace_id,
@@ -1383,7 +1387,7 @@ if HAS_SQLALCHEMY:
                     r.action,
                     r.object_type,
                     r.object_id,
-                    (r.detail or ''),
+                    detail_safe,
                     (r.timestamp.isoformat() if r.timestamp else ''),
                 ])
             csv_str = buf.getvalue()
