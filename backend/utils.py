@@ -26,6 +26,11 @@ _VENDOR_LOCK = threading.Lock()
 _COMPILED_VENDOR_REGEXES = None
 _VENDOR_REGEXES_RAW = None
 
+# Safety limits for user-provided vendor regexes. These are intentionally
+# conservative to avoid DoS by extremely large lists or very long patterns.
+_MAX_VENDOR_REGEXES = 50
+_MAX_VENDOR_PATTERN_LENGTH = 1000
+
 
 def get_redaction_metrics():
     """Return a shallow copy of current redaction metrics."""
@@ -182,33 +187,41 @@ def redact_secrets(obj):
         # Allow callers to inject additional redaction regexes at runtime via
         # the REDACT_VENDOR_REGEXES environment variable. To avoid reparsing
         # and recompiling on every redact call we cache compiled regexes and
-        # only reload when the raw env value changes.
-        extra = os.getenv('REDACT_VENDOR_REGEXES')
-        if extra:
-            try:
-                # fast-path: check cached compiled patterns
-                global _COMPILED_VENDOR_REGEXES, _VENDOR_REGEXES_RAW
-                with _VENDOR_LOCK:
-                    if _COMPILED_VENDOR_REGEXES is None or _VENDOR_REGEXES_RAW != extra:
-                        # reload/compile patterns
-                        compiled = []
+        # only reload when the raw env value changes. We also enforce a few
+        # conservative safety limits to avoid resource exhaustion from
+        # untrusted input.
+        extra = os.getenv('REDACT_VENDOR_REGEXES', '')
+        try:
+            global _COMPILED_VENDOR_REGEXES, _VENDOR_REGEXES_RAW
+            with _VENDOR_LOCK:
+                if _VENDOR_REGEXES_RAW != extra:
+                    compiled = []
+                    raw = extra or ''
+                    if raw.strip():
                         try:
                             import json as _json
 
-                            if extra.strip().startswith('['):
-                                parsed = _json.loads(extra)
+                            if raw.strip().startswith('['):
+                                parsed = _json.loads(raw)
                                 for item in parsed:
+                                    if len(compiled) >= _MAX_VENDOR_REGEXES:
+                                        break
                                     if isinstance(item, dict) and 'pattern' in item:
-                                        pname = item.get('name') or f"extra_{abs(hash(item.get('pattern') or ''))}"
+                                        pat = item.get('pattern') or ''
+                                        if not pat or len(pat) > _MAX_VENDOR_PATTERN_LENGTH:
+                                            continue
+                                        pname = item.get('name') or f"extra_{abs(hash(pat))}"
                                         try:
-                                            cre = re.compile(item['pattern'])
+                                            cre = re.compile(pat)
                                             compiled.append((pname, cre))
                                         except Exception:
                                             # skip invalid patterns
                                             continue
                             else:
                                 # newline-separated name:pattern entries
-                                for line in extra.splitlines():
+                                for line in raw.splitlines():
+                                    if len(compiled) >= _MAX_VENDOR_REGEXES:
+                                        break
                                     line = line.strip()
                                     if not line or line.startswith('#'):
                                         continue
@@ -216,6 +229,8 @@ def redact_secrets(obj):
                                         name, pat = line.split(':', 1)
                                         name = name.strip() or f"extra_{abs(hash(pat))}"
                                         pat = pat.strip()
+                                        if not pat or len(pat) > _MAX_VENDOR_PATTERN_LENGTH:
+                                            continue
                                         try:
                                             cre = re.compile(pat)
                                             compiled.append((name, cre))
@@ -224,19 +239,19 @@ def redact_secrets(obj):
                         except Exception:
                             compiled = []
 
-                        _COMPILED_VENDOR_REGEXES = compiled
-                        _VENDOR_REGEXES_RAW = extra
+                    _COMPILED_VENDOR_REGEXES = compiled
+                    _VENDOR_REGEXES_RAW = extra
 
-                # apply compiled patterns
-                if _COMPILED_VENDOR_REGEXES:
-                    for pname, cre in _COMPILED_VENDOR_REGEXES:
-                        try:
-                            s = _apply(cre, "[REDACTED]", pname)
-                        except Exception:
-                            continue
-            except Exception:
-                # ignore malformed config; do not raise
-                pass
+            # apply compiled patterns
+            if _COMPILED_VENDOR_REGEXES:
+                for pname, cre in _COMPILED_VENDOR_REGEXES:
+                    try:
+                        s = _apply(cre, "[REDACTED]", pname)
+                    except Exception:
+                        continue
+        except Exception:
+            # ignore malformed config; do not raise
+            pass
 
         return s
 
