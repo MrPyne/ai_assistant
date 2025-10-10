@@ -92,3 +92,16 @@ class AuditLog(Base):
     object_id = Column(Integer, nullable=True)
     detail = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class SchedulerEntry(Base):
+    __tablename__ = 'scheduler_entries'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'))
+    workflow_id = Column(Integer, ForeignKey('workflows.id'))
+    # cron expression or simple interval string (freeform for now)
+    schedule = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_run_at = Column(DateTime, nullable=True)
