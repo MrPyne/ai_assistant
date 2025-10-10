@@ -18,3 +18,6 @@ def test_reset_clears_metrics():
     metrics = get_redaction_metrics()
     assert metrics['count'] == 0
     assert metrics['patterns'] == {}
+    # vendor diagnostic keys should be present and empty after reset
+    assert metrics.get('vendor_timeouts', {}) == {}
+    assert metrics.get('vendor_errors', {}) == {}

@@ -29,7 +29,12 @@ def test_vendor_regex_timeout_skips_pathological_pattern():
         # pattern should not alter the non-matching input
         assert out == s
         metrics = get_redaction_metrics()
+        # No successful redactions should have occurred
         assert metrics["count"] == 0
+        # The pathological pattern should have been skipped due to timeout
+        # and recorded in vendor_timeouts telemetry
+        vt = metrics.get('vendor_timeouts', {})
+        assert vt.get('slow', 0) >= 1
     finally:
         os.environ.pop("REDACT_VENDOR_REGEXES", None)
         os.environ.pop("REDACT_VENDOR_REGEX_TIMEOUT_MS", None)

@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.11
-Last updated: 2025-10-09
+Version: 1.14
+Last updated: 2025-10-10
 Maintainer: (fill in)
 
 Purpose
@@ -135,14 +135,14 @@ Acceptance criteria:
 - Nodes can reference secrets; at runtime workers receive usable credentials without secrets exposed in logs or APIs.
 
 Checklist:
- - [x] DB migration: create secrets table — DONE (TO_BE_FILLED)
- - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets — DONE (TO_BE_FILLED)
- - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented — DONE (TO_BE_FILLED)
+ - [x] DB migration: create secrets table ï¿½ DONE (TO_BE_FILLED)
+ - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets ï¿½ DONE (TO_BE_FILLED)
+ - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented ï¿½ DONE (TO_BE_FILLED)
  - [ ] UI: Secrets page and create/edit modal (masked input)
- - [x] Node config: credential selector lists workspace secrets (metadata only) — DONE (TO_BE_FILLED)
- - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) — DONE (TO_BE_FILLED)
+ - [x] Node config: credential selector lists workspace secrets (metadata only) ï¿½ DONE (TO_BE_FILLED)
+ - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) ï¿½ DONE (TO_BE_FILLED)
  - [ ] Audit logging for secret access
- - [x] Unit/integration tests to ensure no plaintext secret leakage — DONE (TO_BE_FILLED)
+ - [x] Unit/integration tests to ensure no plaintext secret leakage ï¿½ DONE (TO_BE_FILLED)
 
 Feature: Webhook trigger + Test Runner
 Purpose: Per-workflow webhook endpoints; incoming requests create runs and enqueue worker execution. UI test runner to exercise webhooks.
@@ -236,7 +236,7 @@ Checklist:
 - [ ] Integrate prometheus_client and expose /metrics
 - [ ] Instrument run creation/completion and node execution durations
 - [ ] Add trace id propagation and basic OpenTelemetry support (optional)
-- [ ] Dashboard sample queries documented
+- [ ] Add sample dashboard queries documented
 
 Feature: Versioning & Rollback
 Purpose: Save and view workflow versions; revert to older snapshots.
@@ -281,9 +281,26 @@ Acceptance criteria:
 - CI includes secret-scan tests; secrets cannot be seen in run logs or exports.
 
 Checklist:
-- [ ] Implement secret scanning utility used in tests
-- [ ] Add tests scanning run logs and workflow exports for secret patterns
+- [x] Implement secret scanning utility used in tests
+- [x] Add tests scanning run logs and workflow exports for secret patterns
 - [ ] Integrate into CI pipeline
+- [x] Add unit test for aggregate vendor regex budget handling (ensures budget-exceeded telemetry recorded)
+
+Note: Recent changes (2025-10-10)
+- Hardened vendor-supplied redaction regex handling in backend/utils.py:
+  - Added caching of compiled REDACT_VENDOR_REGEXES and thread-safe reload when env changes.
+  - Added conservative safety limits: max number of vendor regexes (50) and max pattern length (1000).
+  - Use optional 'regex' package when available to enable per-pattern timeouts; fall back to builtin 're' otherwise.
+  - Introduced REDACT_VENDOR_REGEX_TIMEOUT_MS env var (per-pattern timeout, default 100 ms) to bound vendor regex execution.
+  - Preserved previous behavior of silently ignoring malformed vendor patterns.
+- Tests added/updated:
+  - backend/tests/test_vendor_regexes.py: covers parsing formats and malformed inputs.
+  - backend/tests/test_vendor_regex_timeouts.py: asserts pathological patterns are skipped quickly; test skips if 'regex' package not available in the environment.
+  - backend/tests/test_vendor_regex_budget.py: new unit test that asserts aggregate vendor regex budget exceeding records telemetry and short-circuits pattern application.
+- Backend/requirements.txt: optionally includes 'regex' as a dependency for CI to exercise timeouts (this is optional and can be reverted if desired).
+- In-memory redaction telemetry (get_redaction_metrics / reset_redaction_metrics) used by tests was kept and extended to include per-pattern counts and vendor diagnostics (vendor_timeouts, vendor_errors, vendor_budget_exceeded).
+- These changes were committed; tests should be executed in CI or locally (pip install -r backend/requirements.txt && pytest -q) to validate.
+ - Added vendor-specific diagnostic telemetry: vendor_timeouts and vendor_errors counters are tracked by reset_redaction_metrics/get_redaction_metrics and exposed via the internal metrics endpoints. This helps CI and ops quickly identify problematic vendor patterns that time out or fail to compile.
 
 ---
 
@@ -293,11 +310,11 @@ Cross-cutting tasks
 - [x] DB migrations for all tables listed above with rollback capability â€” DONE (2025-10-09, commit: 7d9f897)
 - [x] Integration tests: webhook -> worker -> run -> UI (basic tests exist for run creation)
 - [ ] E2E tests for editor (Cypress/Playwright) â€” optional but recommended
-- [x] CI: linting, type-check, unit tests, secret-scan test (CI runs unit tests; secret-scan pending)
+- [x] CI: linting, type-check, unit tests, secret-scan test (unit tests and secret-scan tests added; CI integration pending)
 - [ ] Dev documentation: local dev setup for vite frontend and backend (include env var defaults)
 - [ ] Security review report (post-implementation)
 
-Last updated: 2025-10-09
+Last updated: 2025-10-10
 
 ---
 
@@ -307,6 +324,21 @@ N8N Compatibility (authoritative checklist)
 ---
 
 Change log (merged)
+
+1.13 (2025-10-10)
+- Extended in-process redaction telemetry to record vendor-specific diagnostics:
+  - vendor_timeouts: counts of vendor patterns that were skipped due to timeout when applying regexes (requires 'regex' package to exercise timeouts).
+  - vendor_errors: counts of vendor patterns that failed to compile or raised errors during application.
+  - Exposed on the existing /internal/redaction_metrics endpoint and reset by /internal/redaction_metrics/reset. These additions are intended to aid CI and operational diagnostics without changing previous behavior.
+
+1.12 (2025-10-10)
+- Hardened vendor-provided redaction regex handling and added safety controls:
+  - Caching of compiled vendor regexes and thread-safe reloads when REDACT_VENDOR_REGEXES changes.
+  - Conservative limits on number and length of vendor patterns to reduce resource exhaustion risk.
+  - Optional use of the PyPI 'regex' package to enable per-pattern timeouts; fallback to builtin 're' preserved.
+  - Added REDACT_VENDOR_REGEX_TIMEOUT_MS env var to configure the timeout (default 100 ms).
+- Added tests for vendor regex parsing and timeout behavior. The timeout test is skipped when the 'regex' package is not available so test suites remain runnable without the optional dependency.
+- Kept previous behavior of silently ignoring malformed vendor patterns to preserve backward compatibility.
 
 1.11 (2025-10-09)
 - Added backend integration test to verify HTTPException normalization to the validation error contract and a conftest import shim to prevent test collection failures when FastAPI/TestClient are not installed. Test will be skipped unless FastAPI/TestClient are available in the environment; to run this test in CI, add backend test dependencies (fastapi, starlette, httpx[testclient]) to the CI job.

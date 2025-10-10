@@ -52,3 +52,20 @@ def test_redact_vendor_regexes_malformed_ignored():
         assert metrics['count'] == 0
     finally:
         os.environ.pop('REDACT_VENDOR_REGEXES', None)
+
+
+def test_redact_vendor_regexes_malformed_records_error():
+    reset_redaction_metrics()
+    # Provide a JSON array with an invalid regex pattern to ensure we record
+    # a vendor_errors telemetry entry instead of raising.
+    os.environ['REDACT_VENDOR_REGEXES'] = '[{"name":"bad","pattern":"(unclosed"}]'
+    try:
+        s = "nothing to redact"
+        out = redact_secrets(s)
+        assert out == s
+        metrics = get_redaction_metrics()
+        # malformed pattern should have been skipped and recorded as an error
+        ve = metrics.get('vendor_errors', {})
+        assert ve.get('bad', 0) >= 1
+    finally:
+        os.environ.pop('REDACT_VENDOR_REGEXES', None)

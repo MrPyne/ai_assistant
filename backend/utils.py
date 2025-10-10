@@ -10,6 +10,8 @@ and can be disabled or reset via the helper functions below.
 import re
 import os
 import threading
+import multiprocessing
+import time
 
 # Optional faster/safer regex engine with timeout support. If available we
 # will compile vendor-provided patterns with the 'regex' package and apply a
@@ -21,8 +23,10 @@ except Exception:
     _regex = None
     _REGEX_AVAILABLE = False
 
-# Timeout for vendor regex application (milliseconds). Can be tuned by env.
-_VENDOR_TIMEOUT_MS = int(os.getenv('REDACT_VENDOR_REGEX_TIMEOUT_MS', '100'))
+# Note: timeout is read dynamically at time of application so tests or
+# long-running processes can adjust REDACT_VENDOR_REGEX_TIMEOUT_MS at
+# runtime without needing to reload the module. Value is interpreted as
+# milliseconds and converted to seconds when passed to the regex engine.
 
 # Simple in-memory telemetry counters. Tests/CI can call
 # get_redaction_metrics() / reset_redaction_metrics() to observe activity.
@@ -48,6 +52,9 @@ _MAX_VENDOR_PATTERN_LENGTH = 1000
 def get_redaction_metrics():
     """Return a shallow copy of current redaction metrics."""
     with _METRICS_LOCK:
+        # Return a shallow copy so callers can't mutate the in-process
+        # counters directly. Dict-valued entries are copied to preserve
+        # snapshot semantics for tests/telemetry readers.
         return {k: (dict(v) if isinstance(v, dict) else v) for k, v in _REDACTION_METRICS.items()}
 
 
@@ -56,6 +63,10 @@ def reset_redaction_metrics():
     with _METRICS_LOCK:
         _REDACTION_METRICS['count'] = 0
         _REDACTION_METRICS['patterns'].clear()
+        # Clear vendor-specific diagnostic counters if present
+        _REDACTION_METRICS.setdefault('vendor_timeouts', {}).clear()
+        _REDACTION_METRICS.setdefault('vendor_errors', {}).clear()
+        _REDACTION_METRICS.setdefault('vendor_budget_exceeded', {}).clear()
 
 
 def _note_redaction(pattern_name: str, n: int = 1):
@@ -64,6 +75,48 @@ def _note_redaction(pattern_name: str, n: int = 1):
     with _METRICS_LOCK:
         _REDACTION_METRICS['count'] += n
         _REDACTION_METRICS['patterns'][pattern_name] = _REDACTION_METRICS['patterns'].get(pattern_name, 0) + n
+
+
+def _note_vendor_timeout(pattern_name: str, n: int = 1):
+    """Record that applying a vendor regex timed out/skipped.
+
+    This helps tests and telemetry distinguish between patterns that
+    successfully matched and patterns that were skipped due to the
+    configured timeout.
+    """
+    if n <= 0:
+        return
+    with _METRICS_LOCK:
+        d = _REDACTION_METRICS.setdefault('vendor_timeouts', {})
+        d[pattern_name] = d.get(pattern_name, 0) + n
+
+
+def _note_vendor_error(pattern_name: str, n: int = 1):
+    """Record a non-timeout error related to a vendor pattern (e.g. compile error).
+
+    These are non-fatal and the implementation preserves the previous
+    behavior of silently skipping malformed patterns; recording the
+    occurrence makes debugging easier in CI or telemetry.
+    """
+    if n <= 0:
+        return
+    with _METRICS_LOCK:
+        d = _REDACTION_METRICS.setdefault('vendor_errors', {})
+        d[pattern_name] = d.get(pattern_name, 0) + n
+
+
+def _note_vendor_budget_exceeded(key: str = 'aggregate', n: int = 1):
+    """Record that an aggregate vendor regex time budget was exceeded.
+
+    This is recorded separately from per-pattern timeouts so CI and
+    telemetry can distinguish between a single pathological pattern and
+    the cumulative cost of applying many vendor patterns.
+    """
+    if n <= 0:
+        return
+    with _METRICS_LOCK:
+        d = _REDACTION_METRICS.setdefault('vendor_budget_exceeded', {})
+        d[key] = d.get(key, 0) + n
 
 
 def redact_secrets(obj):
@@ -227,12 +280,14 @@ def redact_secrets(obj):
                                         try:
                                             if _REGEX_AVAILABLE:
                                                 cre = _regex.compile(pat)
-                                                compiled.append((pname, cre, 'regex'))
+                                                compiled.append((pname, cre, 'regex', pat))
                                             else:
                                                 cre = re.compile(pat)
-                                                compiled.append((pname, cre, 're'))
+                                                compiled.append((pname, cre, 're', pat))
                                         except Exception:
-                                            # skip invalid patterns
+                                            # skip invalid patterns but record the
+                                            # occurrence for telemetry to aid CI
+                                            _note_vendor_error(pname)
                                             continue
                             else:
                                 # newline-separated name:pattern entries
@@ -251,11 +306,12 @@ def redact_secrets(obj):
                                         try:
                                             if _REGEX_AVAILABLE:
                                                 cre = _regex.compile(pat)
-                                                compiled.append((name, cre, 'regex'))
+                                                compiled.append((name, cre, 'regex', pat))
                                             else:
                                                 cre = re.compile(pat)
-                                                compiled.append((name, cre, 're'))
+                                                compiled.append((name, cre, 're', pat))
                                         except Exception:
+                                            _note_vendor_error(name)
                                             continue
                         except Exception:
                             compiled = []
@@ -264,23 +320,61 @@ def redact_secrets(obj):
                     _VENDOR_REGEXES_RAW = extra
 
         # apply compiled patterns
-            if _COMPILED_VENDOR_REGEXES:
-                for pname, cre, engine in _COMPILED_VENDOR_REGEXES:
-                    try:
-                        # Use the compiled pattern's subn method. If the 'regex'
-                        # package is available we apply a short timeout to avoid
-                        # pathological backtracking patterns. We treat any
-                        # exception as a non-fatal skip for that pattern.
-                        if engine == 'regex' and _REGEX_AVAILABLE:
-                            # regex.subn expects timeout in seconds (float)
-                            new, n = cre.subn("[REDACTED]", s, timeout=_VENDOR_TIMEOUT_MS / 1000.0)
-                        else:
-                            new, n = cre.subn("[REDACTED]", s)
-                        if n:
-                            _note_redaction(pname, n)
-                            s = new
-                    except Exception:
-                        continue
+                    if _COMPILED_VENDOR_REGEXES:
+                        # enforce an aggregate time budget for applying all
+                        # vendor regexes to avoid repeated small costs adding
+                        # up to a DoS. This budget is checked before each
+                        # pattern application so tests can force an immediate
+                        # skip by setting the budget to 0.
+                        try:
+                            total_budget_ms = int(os.getenv('REDACT_VENDOR_REGEX_TOTAL_TIMEOUT_MS', '200'))
+                        except Exception:
+                            total_budget_ms = 200
+                        start_time = time.time()
+                        for pname, cre, engine, _raw in _COMPILED_VENDOR_REGEXES:
+                            # check aggregate budget before attempting this pattern
+                            elapsed_ms = (time.time() - start_time) * 1000.0
+                            if elapsed_ms >= total_budget_ms:
+                                _note_vendor_budget_exceeded()
+                                break
+                            try:
+                                # Use the compiled pattern's subn method. If the
+                                # 'regex' package is available we apply a short
+                                # timeout to avoid pathological backtracking
+                                # patterns. We treat timeout exceptions and
+                                # other exceptions as non-fatal skips for that
+                                # pattern but record telemetry so CI/ops can
+                                # surface problematic patterns.
+                                if engine == 'regex' and _REGEX_AVAILABLE:
+                                    # Read the timeout dynamically in case tests
+                                    # or runtime adjust the env var.
+                                    try:
+                                        timeout_ms = int(os.getenv('REDACT_VENDOR_REGEX_TIMEOUT_MS', '100'))
+                                    except Exception:
+                                        timeout_ms = 100
+                                    # regex.subn expects timeout in seconds (float)
+                                    new, n = cre.subn("[REDACTED]", s, timeout=timeout_ms / 1000.0)
+                                else:
+                                    new, n = cre.subn("[REDACTED]", s)
+                                if n:
+                                    _note_redaction(pname, n)
+                                    s = new
+                            except Exception as e:
+                                # regex raises a specific TimeoutError type on
+                                # timeouts; when that happens record a vendor
+                                # timeout metric. Other exceptions are recorded
+                                # as vendor errors and skipped silently to
+                                # preserve backward compatibility.
+                                try:
+                                    if _REGEX_AVAILABLE and isinstance(e, _regex.TimeoutError):
+                                        _note_vendor_timeout(pname)
+                                        continue
+                                except Exception:
+                                    # defensive: if _regex.TimeoutError isn't
+                                    # available for some reason, fall through.
+                                    pass
+                                _note_vendor_error(pname)
+                                continue
         except Exception:
             # ignore malformed config; do not raise
             pass
