@@ -1472,6 +1472,9 @@ if HAS_SQLALCHEMY:
         res = await db_execute(db, stmt)
         all_rows = res.scalars().all()
         rows = all_rows[offset: offset + limit]
+        # redact sensitive content in detail before returning to clients
+        from backend.utils import redact_secrets as _redact
+
         out = []
         for r in rows:
             out.append({
@@ -1481,7 +1484,7 @@ if HAS_SQLALCHEMY:
                 "action": r.action,
                 "object_type": r.object_type,
                 "object_id": r.object_id,
-                "detail": r.detail,
+                "detail": _redact(r.detail) if r.detail else r.detail,
                 "timestamp": r.timestamp.isoformat() if r.timestamp else None,
             })
 
