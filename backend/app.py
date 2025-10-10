@@ -701,6 +701,27 @@ if HAS_SQLALCHEMY:
     async def ping():
         return {"status": "ok"}
 
+    @app.get('/internal/redaction_metrics')
+    async def redaction_metrics(user: User = Depends(get_current_user)):
+        """Return in-process redaction telemetry used to tune regexes.
+
+        Access restricted to admin users to avoid exposing internal heuristics.
+        """
+        try:
+            if getattr(user, 'role', None) != 'admin':
+                raise HTTPException(status_code=403, detail='Forbidden')
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=403, detail='Forbidden')
+
+        try:
+            from backend.utils import get_redaction_metrics as _get_metrics
+            metrics = _get_metrics()
+            return JSONResponse(status_code=200, content=metrics)
+        except Exception:
+            return JSONResponse(status_code=500, content={'error': 'failed to fetch metrics'})
+
     
     def send_email(to_email: str, subject: str, body: str):
         """Simple SMTP send helper used by the auth resend flow.
@@ -1098,8 +1119,6 @@ if HAS_SQLALCHEMY:
                         m_generic = m_http or m_llm
                         if m_generic:
                             gid = m_generic.group(1)
-                            # if the captured group looks like an integer index,
-                            # try to resolve it to the node id in the nodes list.
                             if gid.isdigit():
                                 idx = int(gid)
                                 if isinstance(nodes, list) and 0 <= idx < len(nodes):
@@ -1299,7 +1318,7 @@ if HAS_SQLALCHEMY:
             if not row:
                 raise HTTPException(status_code=404, detail='webhook not found')
             db.delete(row)
-            await db.commit()
+            await db_commit(db)
             try:
                 al = AuditLog(workspace_id=ws.id, user_id=user.id, action='delete_webhook', object_type='webhook', object_id=webhook_id, detail=None)
                 await db_add(db, al)
