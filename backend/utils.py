@@ -14,6 +14,7 @@ def redact_secrets(obj):
     providers.
     """
     import re
+    import os
 
     SKIP_KEYS = {
         # common secret-containing keys
@@ -103,6 +104,19 @@ def redact_secrets(obj):
 
         # private_key_id fields in service account JSON (hex-like)
         s = re.sub(r'"private_key_id"\s*:\s*"[0-9a-fA-F]{16,}"', '"private_key_id":"[REDACTED]"', s)
+
+        # Optionally include additional vendor-specific patterns. This is
+        # guarded by the REDACT_VENDOR_PATTERNS environment variable so
+        # callers can opt-in to broader heuristics that may increase false
+        # positives.
+        vendor_enabled = os.getenv('REDACT_VENDOR_PATTERNS', '').lower() in ('1', 'true', 'yes')
+        if vendor_enabled:
+            # GitHub personal access tokens (newer 'ghp_' format)
+            s = re.sub(r"ghp_[A-Za-z0-9_]{36,}", "[REDACTED]", s)
+            # Slack tokens (xoxp-, xoxb-)
+            s = re.sub(r"xox[pbo]-[A-Za-z0-9-]{8,}", "[REDACTED]", s)
+            # Generic vendor API keys prefixed with known labels (conservative length)
+            s = re.sub(r"(?i)(sk_live|sk_test)_[A-Za-z0-9]{8,}", "[REDACTED]", s)
 
         return s
 
