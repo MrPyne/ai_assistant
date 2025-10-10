@@ -13,3 +13,4 @@ requests
 cryptography
 asyncpg
 regex
+prometheus-client
