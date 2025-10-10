@@ -12,3 +12,4 @@ redis
 requests
 cryptography
 asyncpg
+regex

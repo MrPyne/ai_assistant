@@ -11,6 +11,19 @@ import re
 import os
 import threading
 
+# Optional faster/safer regex engine with timeout support. If available we
+# will compile vendor-provided patterns with the 'regex' package and apply a
+# short timeout when running them to avoid pathological backtracking DoS.
+try:
+    import regex as _regex  # type: ignore
+    _REGEX_AVAILABLE = True
+except Exception:
+    _regex = None
+    _REGEX_AVAILABLE = False
+
+# Timeout for vendor regex application (milliseconds). Can be tuned by env.
+_VENDOR_TIMEOUT_MS = int(os.getenv('REDACT_VENDOR_REGEX_TIMEOUT_MS', '100'))
+
 # Simple in-memory telemetry counters. Tests/CI can call
 # get_redaction_metrics() / reset_redaction_metrics() to observe activity.
 _REDACTION_METRICS = {
@@ -212,8 +225,12 @@ def redact_secrets(obj):
                                             continue
                                         pname = item.get('name') or f"extra_{abs(hash(pat))}"
                                         try:
-                                            cre = re.compile(pat)
-                                            compiled.append((pname, cre))
+                                            if _REGEX_AVAILABLE:
+                                                cre = _regex.compile(pat)
+                                                compiled.append((pname, cre, 'regex'))
+                                            else:
+                                                cre = re.compile(pat)
+                                                compiled.append((pname, cre, 're'))
                                         except Exception:
                                             # skip invalid patterns
                                             continue
@@ -232,8 +249,12 @@ def redact_secrets(obj):
                                         if not pat or len(pat) > _MAX_VENDOR_PATTERN_LENGTH:
                                             continue
                                         try:
-                                            cre = re.compile(pat)
-                                            compiled.append((name, cre))
+                                            if _REGEX_AVAILABLE:
+                                                cre = _regex.compile(pat)
+                                                compiled.append((name, cre, 'regex'))
+                                            else:
+                                                cre = re.compile(pat)
+                                                compiled.append((name, cre, 're'))
                                         except Exception:
                                             continue
                         except Exception:
@@ -242,11 +263,22 @@ def redact_secrets(obj):
                     _COMPILED_VENDOR_REGEXES = compiled
                     _VENDOR_REGEXES_RAW = extra
 
-            # apply compiled patterns
+        # apply compiled patterns
             if _COMPILED_VENDOR_REGEXES:
-                for pname, cre in _COMPILED_VENDOR_REGEXES:
+                for pname, cre, engine in _COMPILED_VENDOR_REGEXES:
                     try:
-                        s = _apply(cre, "[REDACTED]", pname)
+                        # Use the compiled pattern's subn method. If the 'regex'
+                        # package is available we apply a short timeout to avoid
+                        # pathological backtracking patterns. We treat any
+                        # exception as a non-fatal skip for that pattern.
+                        if engine == 'regex' and _REGEX_AVAILABLE:
+                            # regex.subn expects timeout in seconds (float)
+                            new, n = cre.subn("[REDACTED]", s, timeout=_VENDOR_TIMEOUT_MS / 1000.0)
+                        else:
+                            new, n = cre.subn("[REDACTED]", s)
+                        if n:
+                            _note_redaction(pname, n)
+                            s = new
                     except Exception:
                         continue
         except Exception:
