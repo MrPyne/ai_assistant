@@ -1433,19 +1433,11 @@ if HAS_SQLALCHEMY:
         if not ws:
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
-        # build base query scoped to the workspace
+        # build base query scoped to the workspace. Listing audit logs is
+        # allowed for workspace members (owners) so users can inspect events
+        # that occurred in their own workspace. Exporting logs (CSV) remains
+        # restricted to admin users via the /api/audit_logs/export endpoint.
         stmt = select(AuditLog).filter(AuditLog.workspace_id == ws.id).order_by(AuditLog.id.desc())
-        # Only admin users may view audit logs. Regular workspace members are
-        # denied access. This enforces a simple RBAC policy; adjust as needed
-        # to allow broader visibility.
-        try:
-            role = getattr(user, 'role', None)
-            if role != 'admin':
-                raise HTTPException(status_code=403, detail='Forbidden')
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=403, detail='Forbidden')
         if action:
             stmt = stmt.filter(AuditLog.action == action)
         if object_type:
