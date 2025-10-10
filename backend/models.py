@@ -78,3 +78,15 @@ class Webhook(Base):
     path = Column(String, nullable=False, unique=True)
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = 'audit_logs'
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('workspaces.id'), nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    action = Column(String, nullable=False)
+    object_type = Column(String, nullable=True)
+    object_id = Column(Integer, nullable=True)
+    detail = Column(String, nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)

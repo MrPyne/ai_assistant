@@ -149,7 +149,7 @@ async def db_refresh(db, obj):
 # functionality will run with proper deps installed in CI/dev environments).
 try:
     from backend.database import get_db, AsyncSessionLocal
-    from backend.models import RunLog, User, Workspace, Secret, Provider, Workflow, Run
+    from backend.models import RunLog, User, Workspace, Secret, Provider, Workflow, Run, AuditLog
     from backend.crypto import encrypt_value
     from backend.tasks import execute_workflow
 except Exception:
@@ -217,6 +217,57 @@ def _normalize_http_exception_detail(detail):
             else:
                 out['message'] = str(detail)
         return out
+
+
+    @app.put('/api/secrets/{secret_id}')
+    async def update_secret(secret_id: int, data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        name = data.get('name')
+        value = data.get('value')
+        # find workspace
+        res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res.scalars().first()
+        if not ws:
+            raise HTTPException(status_code=404, detail='workspace not found')
+        res2 = await db_execute(db, select(Secret).filter(Secret.id == secret_id, Secret.workspace_id == ws.id))
+        s = res2.scalars().first()
+        if not s:
+            raise HTTPException(status_code=404, detail='secret not found')
+        if name is not None:
+            s.name = name
+        if value is not None:
+            s.encrypted_value = encrypt_value(value)
+        await db_commit(db)
+        await db_refresh(db, s)
+        try:
+            al = AuditLog(workspace_id=ws.id, user_id=user.id, action='update_secret', object_type='secret', object_id=s.id, detail=s.name)
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            pass
+        return {"id": s.id}
+
+
+    @app.delete('/api/secrets/{secret_id}')
+    async def delete_secret(secret_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+        # find workspace
+        res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res.scalars().first()
+        if not ws:
+            raise HTTPException(status_code=404, detail='workspace not found')
+        res2 = await db_execute(db, select(Secret).filter(Secret.id == secret_id, Secret.workspace_id == ws.id))
+        s = res2.scalars().first()
+        if not s:
+            raise HTTPException(status_code=404, detail='secret not found')
+        try:
+            db.delete(s)
+            await db_commit(db)
+            # audit
+            al = AuditLog(workspace_id=ws.id, user_id=user.id, action='delete_secret', object_type='secret', object_id=secret_id, detail=s.name)
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            raise HTTPException(status_code=500, detail='Failed to delete secret')
+        return {"status": "deleted"}
 
     # Non-dict details (strings, exceptions, etc.) -> wrap into envelope
     return {'message': str(detail)}
@@ -625,6 +676,13 @@ if HAS_SQLALCHEMY:
         db.add(s)
         await db.commit()
         await db.refresh(s)
+        # audit
+        try:
+            al = AuditLog(workspace_id=ws.id, user_id=user.id, action='create_secret', object_type='secret', object_id=s.id, detail=s.name)
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            pass
         return {"id": s.id}
 
 
@@ -639,6 +697,13 @@ if HAS_SQLALCHEMY:
         out = []
         for r in rows:
             out.append({"id": r.id, "workspace_id": r.workspace_id, "name": r.name, "created_by": r.created_by, "created_at": r.created_at.isoformat() if r.created_at else None})
+        # audit: list access (do not include secret values)
+        try:
+            al = AuditLog(workspace_id=ws.id if ws else None, user_id=user.id, action='list_secrets', object_type='secret', object_id=None, detail=f'count={len(out)}')
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            pass
         return out
 
 
@@ -663,6 +728,13 @@ if HAS_SQLALCHEMY:
         db.add(prov)
         await db.commit()
         await db.refresh(prov)
+        # audit
+        try:
+            al = AuditLog(workspace_id=ws.id, user_id=user.id, action='create_provider', object_type='provider', object_id=prov.id, detail=ptype)
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            pass
         # Do not return provider.config to avoid leaking secrets; tests expect minimal response
         return {"id": prov.id, "workspace_id": prov.workspace_id, "type": prov.type, "secret_id": prov.secret_id}
 
@@ -1004,6 +1076,13 @@ if HAS_SQLALCHEMY:
         except Exception:
             pass
         # enqueue Celery task (best-effort)
+        # audit run creation (public trigger has no user; workspace derived from wf)
+        try:
+            al = AuditLog(workspace_id=wf.workspace_id if wf else None, user_id=None, action='create_run', object_type='run', object_id=run.id, detail=f'trigger_id={trigger_id}')
+            db.add(al)
+            await db.commit()
+        except Exception:
+            pass
         try:
             execute_workflow.delay(run.id)
         except Exception:
@@ -1041,6 +1120,13 @@ if HAS_SQLALCHEMY:
             db.add(wh)
             await db.commit()
             await db.refresh(wh)
+            # audit
+            try:
+                al = AuditLog(workspace_id=ws.id, user_id=user.id, action='create_webhook', object_type='webhook', object_id=wh.id, detail=path)
+                await db_add(db, al)
+                await db_commit(db)
+            except Exception:
+                pass
             return {"id": wh.id, "workspace_id": wh.workspace_id, "workflow_id": wh.workflow_id, "path": wh.path}
         except Exception:
             # fall back to minimal response if model unavailable
@@ -1087,6 +1173,12 @@ if HAS_SQLALCHEMY:
                 raise HTTPException(status_code=404, detail='webhook not found')
             db.delete(row)
             await db.commit()
+            try:
+                al = AuditLog(workspace_id=ws.id, user_id=user.id, action='delete_webhook', object_type='webhook', object_id=webhook_id, detail=None)
+                await db_add(db, al)
+                await db_commit(db)
+            except Exception:
+                pass
             return {"status": "deleted"}
         except HTTPException:
             raise
@@ -1124,6 +1216,12 @@ if HAS_SQLALCHEMY:
         db.add(run)
         await db.commit()
         await db.refresh(run)
+        try:
+            al = AuditLog(workspace_id=wf.workspace_id if wf else workspace_id, user_id=None, action='create_run', object_type='run', object_id=run.id, detail=f'public_path={path}')
+            db.add(al)
+            await db.commit()
+        except Exception:
+            pass
         try:
             execute_workflow.delay(run.id)
         except Exception:
@@ -1213,6 +1311,12 @@ if HAS_SQLALCHEMY:
         db.add(run)
         await db.commit()
         await db.refresh(run)
+        try:
+            al = AuditLog(workspace_id=wf.workspace_id if wf else None, user_id=user.id if user else None, action='create_run', object_type='run', object_id=run.id, detail='manual')
+            await db_add(db, al)
+            await db_commit(db)
+        except Exception:
+            pass
         try:
             execute_workflow.delay(run.id)
         except Exception:

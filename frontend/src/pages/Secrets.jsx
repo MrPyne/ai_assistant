@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import SecretRow from '../components/SecretRow'
 
 export default function Secrets(){
   const { token } = useAuth()
@@ -39,6 +40,18 @@ export default function Secrets(){
     } catch (err) { alert('Failed: ' + String(err)) }
   }
 
+  const del = async (id) => {
+    if (!confirm('Delete secret?')) return
+    try {
+      const resp = await fetch(`/api/secrets/${id}`, { method: 'DELETE', headers: authHeaders() })
+      if (resp.ok) {
+        await load()
+      } else {
+        alert('Failed to delete')
+      }
+    } catch (e) { alert('Failed: ' + String(e)) }
+  }
+
   return (
     <div style={{ padding: 12 }}>
       <h2>Secrets</h2>
@@ -51,12 +64,11 @@ export default function Secrets(){
         <button onClick={create}>Create</button>
       </div>
       <div>
-        {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
-          <div key={s.id} style={{ padding: 6, borderBottom: '1px solid #eee' }}>
-            <div><strong>{s.name}</strong></div>
-            <div className="muted">id: {s.id} created_by: {s.created_by}</div>
-          </div>
-        ))}
+        {secrets.length === 0 ? (
+          <div className="muted">No secrets</div>
+        ) : (
+          secrets.map((s) => <SecretRow key={s.id} s={s} onDelete={del} />)
+        )}
       </div>
     </div>
   )
