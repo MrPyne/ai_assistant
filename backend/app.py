@@ -206,16 +206,57 @@ if HAS_FASTAPI:
                 res = await call_next(request)
                 try:
                     from backend.utils import redact_secrets as _redact
-
                     ct = res.headers.get("content-type", "") or ""
 
-                    # Handle JSON responses by parsing, redacting, and rebuilding
+                    # limit for buffering streaming responses when attempting to
+                    # parse JSON. Default 1MB but configurable via env var.
+                    try:
+                        MAX_BUFFER = int(os.getenv('REDACT_MAX_BUFFER', '1048576'))
+                    except Exception:
+                        MAX_BUFFER = 1048576
+
+                    # Helper: stream-redact an (async or sync) body iterator for
+                    # text-like responses without buffering the entire body.
+                    async def _stream_redact_async(body_iter):
+                        # Body chunks may be bytes (typical). Support both async
+                        # and sync iterables by attempting async iteration first.
+                        try:
+                            async for c in body_iter:
+                                try:
+                                    s = c.decode()
+                                except Exception:
+                                    s = c.decode('utf-8', errors='replace')
+                                s2 = _redact(s)
+                                yield s2.encode()
+                            return
+                        except TypeError:
+                            # Fallback to sync iteration
+                            for c in body_iter:
+                                try:
+                                    s = c.decode()
+                                except Exception:
+                                    s = c.decode('utf-8', errors='replace')
+                                s2 = _redact(s)
+                                yield s2.encode()
+
+                    # Handle JSON responses by parsing and redacting only when
+                    # it's safe to buffer the full body (content-length present
+                    # and small enough) or when the response already exposes
+                    # .body. Streaming JSON responses are left untouched to avoid
+                    # buffering arbitrarily large payloads and breaking the
+                    # stream contract.
                     if "application/json" in ct:
                         body = None
+                        content_length = None
+                        try:
+                            content_length = int(res.headers.get('content-length')) if res.headers.get('content-length') else None
+                        except Exception:
+                            content_length = None
+
                         if hasattr(res, "body") and res.body is not None:
                             body = res.body
-                        else:
-                            # attempt to consume body_iterator for streaming responses
+                        elif content_length is not None and content_length <= MAX_BUFFER:
+                            # safe to consume full iterator
                             try:
                                 body = b"".join([c async for c in res.body_iterator])
                             except Exception:
@@ -237,25 +278,31 @@ if HAS_FASTAPI:
                                 # fall through to return original response
                                 pass
 
-                    # Handle plain text / CSV responses by redacting strings
+                    # Handle plain text / CSV responses by redacting on-the-fly
+                    # without buffering the entire response body.
                     if "text/" in ct or "csv" in ct:
-                        body = None
+                        # If response already has .body (buffered), redact and
+                        # return a small StreamingResponse with that content.
                         if hasattr(res, "body") and res.body is not None:
-                            body = res.body
-                        else:
                             try:
-                                body = b"".join([c async for c in res.body_iterator])
-                            except Exception:
-                                body = None
-
-                        if body is not None:
-                            try:
-                                s = body.decode()
+                                s = res.body.decode()
                                 s2 = _redact(s)
                                 headers = dict(res.headers)
-                                return StreamingResponse(iter([s2]), media_type=ct, headers=headers, status_code=res.status_code)
+                                return StreamingResponse(iter([s2.encode()]), media_type=ct, headers=headers, status_code=res.status_code)
                             except Exception:
                                 pass
+
+                        # Otherwise, stream-redact the body iterator chunk by
+                        # chunk using an async generator to avoid buffering large
+                        # streaming responses.
+                        try:
+                            gen = _stream_redact_async(res.body_iterator)
+                            headers = dict(res.headers)
+                            return StreamingResponse(gen, media_type=ct, headers=headers, status_code=res.status_code)
+                        except Exception:
+                            # If streaming-redaction fails for any reason,
+                            # fall through and return original response.
+                            pass
                 except Exception:
                     # Never fail requests due to redaction middleware issues
                     pass

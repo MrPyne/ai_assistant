@@ -1,3 +1,46 @@
+"""Utilities for redacting secret-like content from structures.
+
+Primary entrypoint: redact_secrets(obj)
+
+This module also exposes simple in-process telemetry useful for tuning
+redaction heuristics in tests/CI. The telemetry is intentionally minimal
+and can be disabled or reset via the helper functions below.
+"""
+
+import re
+import os
+import threading
+
+# Simple in-memory telemetry counters. Tests/CI can call
+# get_redaction_metrics() / reset_redaction_metrics() to observe activity.
+_REDACTION_METRICS = {
+    'count': 0,  # total number of string redactions performed
+    'patterns': {},  # map pattern name -> total replacements
+}
+_METRICS_LOCK = threading.Lock()
+
+
+def get_redaction_metrics():
+    """Return a shallow copy of current redaction metrics."""
+    with _METRICS_LOCK:
+        return {k: (dict(v) if isinstance(v, dict) else v) for k, v in _REDACTION_METRICS.items()}
+
+
+def reset_redaction_metrics():
+    """Reset in-memory redaction metrics to zero."""
+    with _METRICS_LOCK:
+        _REDACTION_METRICS['count'] = 0
+        _REDACTION_METRICS['patterns'].clear()
+
+
+def _note_redaction(pattern_name: str, n: int = 1):
+    if n <= 0:
+        return
+    with _METRICS_LOCK:
+        _REDACTION_METRICS['count'] += n
+        _REDACTION_METRICS['patterns'][pattern_name] = _REDACTION_METRICS['patterns'].get(pattern_name, 0) + n
+
+
 def redact_secrets(obj):
     """Recursively redact secret-like keys in dicts and items in lists or strings.
 
@@ -13,9 +56,6 @@ def redact_secrets(obj):
     corruption; add patterns carefully and expand tests when adding new
     providers.
     """
-    import re
-    import os
-
     SKIP_KEYS = {
         # common secret-containing keys
         "password",
@@ -45,65 +85,79 @@ def redact_secrets(obj):
     def _redact_str(s: str) -> str:
         # apply a sequence of regex substitutions. Order matters for some
         # overlapping patterns; prefer specific vendor patterns first.
+        # We'll apply each substitution via re.subn so we can record simple
+        # telemetry about which pattern matched and how many replacements
+        # occurred. The order below mirrors the previous implementation.
+
+        def _apply(pat, repl, name, flags=0):
+            try:
+                new, n = re.subn(pat, repl, s, flags=flags)
+            except TypeError:
+                # Some repls may be callables that expect a match object; try
+                # re.subn with the callable directly.
+                new, n = re.subn(pat, repl, s, flags=flags)
+            if n:
+                _note_redaction(name, n)
+            return new
 
         # OpenAI-style keys: sk-<...>
-        s = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "[REDACTED]", s)
+        s = _apply(r"sk-[A-Za-z0-9_-]{8,}", "[REDACTED]", 'openai_sk')
 
         # Google OAuth2/ya29 tokens
-        s = re.sub(r"ya29\.[A-Za-z0-9_\-\.]{8,}", "[REDACTED]", s)
+        s = _apply(r"ya29\.[A-Za-z0-9_\-\.]{8,}", "[REDACTED]", 'google_ya29')
 
         # Google API keys (AIza...)
-        s = re.sub(r"AIza[0-9A-Za-z\-_]{35,}", "[REDACTED]", s)
+        s = _apply(r"AIza[0-9A-Za-z\-_]{35,}", "[REDACTED]", 'google_api_key')
 
         # Bearer tokens (case-insensitive)
-        s = re.sub(r"(?i)bearer\s+[A-Za-z0-9\._\-\=]{8,}", "[REDACTED]", s)
+        s = _apply(r"bearer\s+[A-Za-z0-9\._\-\=]{8,}", "[REDACTED]", 'bearer_token', flags=re.I)
 
         # Generic token= or access_token= patterns. Keep the left-hand name and
         # replace the value with [REDACTED] (avoid swallowing surrounding text).
-        s = re.sub(r"(?i)(access_token|token)=([A-Za-z0-9_\-\.]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", s)
+        s = _apply(r"(access_token|token)=([A-Za-z0-9_\-\.]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", 'token_param', flags=re.I)
 
         # Other common token parameter names (id_token, oauth_token, refresh_token)
-        s = re.sub(r"(?i)(id_token|oauth_token|refresh_token)=([A-Za-z0-9_\-\. %]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", s)
+        s = _apply(r"(id_token|oauth_token|refresh_token)=([A-Za-z0-9_\-\. %]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", 'other_token_params', flags=re.I)
 
         # key=... patterns (e.g., ?key=XYZ)
-        s = re.sub(r"(?i)key=([A-Za-z0-9_\-\.]{8,})", "key=[REDACTED]", s)
+        s = _apply(r"key=([A-Za-z0-9_\-\.]{8,})", "key=[REDACTED]", 'key_param', flags=re.I)
 
         # AWS Access Key IDs (AKIA...)
-        s = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED]", s)
+        s = _apply(r"AKIA[0-9A-Z]{16}", "[REDACTED]", 'aws_akid')
 
         # AWS Secret Access Key or other long base64-like secrets (conservative)
-        s = re.sub(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40,}(?![A-Za-z0-9/+=])", "[REDACTED]", s)
+        s = _apply(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40,}(?![A-Za-z0-9/+=])", "[REDACTED]", 'long_base64')
 
         # PEM private keys (RSA/PRIVATE KEY blocks)
-        s = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED]", s)
-        s = re.sub(r"-----BEGIN RSA PRIVATE KEY-----[\s\S]+?-----END RSA PRIVATE KEY-----", "[REDACTED]", s)
+        s = _apply(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED]", 'pem_private')
+        s = _apply(r"-----BEGIN RSA PRIVATE KEY-----[\s\S]+?-----END RSA PRIVATE KEY-----", "[REDACTED]", 'pem_rsa')
         # Additional PEM variants (OPENSSH, EC)
-        s = re.sub(r"-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----", "[REDACTED]", s)
-        s = re.sub(r"-----BEGIN EC PRIVATE KEY-----[\s\S]+?-----END EC PRIVATE KEY-----", "[REDACTED]", s)
+        s = _apply(r"-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----", "[REDACTED]", 'pem_openssh')
+        s = _apply(r"-----BEGIN EC PRIVATE KEY-----[\s\S]+?-----END EC PRIVATE KEY-----", "[REDACTED]", 'pem_ec')
 
         # SSH key blobs
-        s = re.sub(r"ssh-(rsa|ed25519) [A-Za-z0-9+/=\.]{40,}", "[REDACTED]", s)
+        s = _apply(r"ssh-(rsa|ed25519) [A-Za-z0-9+/=\.]{40,}", "[REDACTED]", 'ssh_blob')
 
         # Azure SAS signature 'sig=' or combined 'se=...&sig=...'
-        s = re.sub(r"(?i)sig=([A-Za-z0-9%_\-\.]{16,})", "sig=[REDACTED]", s)
-        s = re.sub(r"(?i)se=[0-9TZ:\-\.]+&?sig=[A-Za-z0-9%_\-\.]{8,}", "se=[REDACTED]&sig=[REDACTED]", s)
+        s = _apply(r"sig=([A-Za-z0-9%_\-\.]{16,})", "sig=[REDACTED]", 'azure_sig', flags=re.I)
+        s = _apply(r"se=[0-9TZ:\-\.]+&?sig=[A-Za-z0-9%_\-\.]{8,}", "se=[REDACTED]&sig=[REDACTED]", 'azure_se_sig', flags=re.I)
         # URL-encoded variants of sig/se (e.g., sig%3D...)
-        s = re.sub(r"(?i)sig%3D([A-Za-z0-9%_\-\.]{8,})", "sig%3D[REDACTED]", s)
-        s = re.sub(r"(?i)se%3D[0-9TZ%:\-\.]+%26?sig%3D[A-Za-z0-9%_\-\.]{8,}", "se%3D[REDACTED]%26sig%3D[REDACTED]", s)
+        s = _apply(r"sig%3D([A-Za-z0-9%_\-\.]{8,})", "sig%3D[REDACTED]", 'azure_sig_encoded', flags=re.I)
+        s = _apply(r"se%3D[0-9TZ%:\-\.]+%26?sig%3D[A-Za-z0-9%_\-\.]{8,}", "se%3D[REDACTED]%26sig%3D[REDACTED]", 'azure_se_sig_encoded', flags=re.I)
 
         # JWT-like tokens: usually three dot-separated base64url parts and often
         # start with 'eyJ' for JSON web tokens
-        s = re.sub(r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "[REDACTED]", s)
+        s = _apply(r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "[REDACTED]", 'jwt')
 
         # Generic long hex strings (40+ hex chars)
-        s = re.sub(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40,}(?![0-9a-fA-F])", "[REDACTED]", s)
+        s = _apply(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40,}(?![0-9a-fA-F])", "[REDACTED]", 'long_hex')
 
         # Google service account JSON sometimes is embedded as a string containing
         # a private_key field; redact the entire PEM inside JSON strings.
-        s = re.sub(r'"private_key"\s*:\s*"-----BEGIN [^\"]+-----[\s\S]+?-----END [^\"]+-----"', '"private_key":"[REDACTED]"', s)
+        s = _apply(r'"private_key"\s*:\s*"-----BEGIN [^\"]+-----[\s\S]+?-----END [^\"]+-----"', '"private_key":"[REDACTED]"', 'sa_private_key')
 
         # private_key_id fields in service account JSON (hex-like)
-        s = re.sub(r'"private_key_id"\s*:\s*"[0-9a-fA-F]{16,}"', '"private_key_id":"[REDACTED]"', s)
+        s = _apply(r'"private_key_id"\s*:\s*"[0-9a-fA-F]{16,}"', '"private_key_id":"[REDACTED]"', 'sa_private_key_id')
 
         # Optionally include additional vendor-specific patterns. This is
         # guarded by the REDACT_VENDOR_PATTERNS environment variable so
@@ -112,11 +166,43 @@ def redact_secrets(obj):
         vendor_enabled = os.getenv('REDACT_VENDOR_PATTERNS', '').lower() in ('1', 'true', 'yes')
         if vendor_enabled:
             # GitHub personal access tokens (newer 'ghp_' format)
-            s = re.sub(r"ghp_[A-Za-z0-9_]{36,}", "[REDACTED]", s)
+            s = _apply(r"ghp_[A-Za-z0-9_]{36,}", "[REDACTED]", 'github_ghp')
             # Slack tokens (xoxp-, xoxb-)
-            s = re.sub(r"xox[pbo]-[A-Za-z0-9-]{8,}", "[REDACTED]", s)
+            s = _apply(r"xox[pbo]-[A-Za-z0-9-]{8,}", "[REDACTED]", 'slack_xox')
             # Generic vendor API keys prefixed with known labels (conservative length)
-            s = re.sub(r"(?i)(sk_live|sk_test)_[A-Za-z0-9]{8,}", "[REDACTED]", s)
+            s = _apply(r"(sk_live|sk_test)_[A-Za-z0-9]{8,}", "[REDACTED]", 'stripe_sk', flags=re.I)
+
+        # Allow callers to inject additional redaction regexes at runtime via
+        # the REDACT_VENDOR_REGEXES environment variable. This can be either
+        # a JSON array of objects like [{"name":"foo","pattern":"..."}, ...]
+        # or a newline-separated list of `name:pattern` entries. This is
+        # intentionally simple to keep configuration easy in CI/test runs.
+        extra = os.getenv('REDACT_VENDOR_REGEXES')
+        if extra:
+            try:
+                import json as _json
+
+                parsed = None
+                if extra.strip().startswith('['):
+                    parsed = _json.loads(extra)
+                    for item in parsed:
+                        if isinstance(item, dict) and 'pattern' in item:
+                            pname = item.get('name') or f"extra_{hash(item.get('pattern'))}"
+                            s = _apply(item['pattern'], "[REDACTED]", pname)
+                else:
+                    # newline-separated name:pattern entries
+                    for line in extra.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        if ':' in line:
+                            name, pat = line.split(':', 1)
+                            name = name.strip() or f"extra_{abs(hash(pat))}"
+                            pat = pat.strip()
+                            s = _apply(pat, "[REDACTED]", name)
+            except Exception:
+                # ignore malformed config; do not raise
+                pass
 
         return s
 
