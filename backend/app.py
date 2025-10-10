@@ -261,7 +261,10 @@ if HAS_FASTAPI:
                     pass
                 return res
 
-        app.add_middleware(RedactMiddleware)
+        # Allow opt-out of response redaction middleware via environment variable.
+        # Default behavior is enabled for compatibility with existing tests/behavior.
+        if os.getenv('ENABLE_RESPONSE_REDACTION', '1').lower() in ('1', 'true', 'yes'):
+            app.add_middleware(RedactMiddleware)
     except Exception:
         # Best-effort: if starlette middleware isn't available in this
         # environment, skip adding the middleware so tests can still run.
@@ -475,8 +478,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     Behaviour:
     - If SQLAlchemy/db is available, attempt to load the User from the DB.
     - If DB is not available (tests/dev fallback), return a lightweight
-      User-like object with an 'id' attribute so endpoints that expect user.id
-      continue to work.
+    User-like object with an 'id' attribute so endpoints that expect user.id
+    continue to work.
     """
     if not token:
         raise HTTPException(status_code=401, detail='Not authenticated')
@@ -567,7 +570,7 @@ if HAS_SQLALCHEMY:
         except Exception:
             raise HTTPException(status_code=500, detail='Failed to fetch run logs')
 
-
+    
     @app.get('/api/runs/{run_id}/stream')
     async def stream_run_logs(run_id: int, request: Request, user: User = Depends(get_current_user)):
         """Stream RunLog entries as Server-Sent Events (SSE).
@@ -647,12 +650,11 @@ if HAS_SQLALCHEMY:
 
         return StreamingResponse(event_generator(), media_type='text/event-stream')
 
-
     @app.get("/ping")
     async def ping():
         return {"status": "ok"}
 
-
+    
     def send_email(to_email: str, subject: str, body: str):
         """Simple SMTP send helper used by the auth resend flow.
 
@@ -721,7 +723,7 @@ if HAS_SQLALCHEMY:
         token = f"token-{user.id}"
         return {"access_token": token}
 
-
+    
     @app.post('/api/auth/login')
     async def login(data: dict, db: AsyncSession = Depends(get_db)):
         email = data.get('email')
@@ -763,7 +765,7 @@ if HAS_SQLALCHEMY:
             pass
         return {"id": s.id}
 
-
+    
     @app.get('/api/secrets')
     async def list_secrets(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
@@ -960,7 +962,7 @@ if HAS_SQLALCHEMY:
         await db.refresh(wf)
         return {"id": wf.id, "workspace_id": wf.workspace_id, "name": wf.name}
 
-
+    
     @app.put('/api/workflows/{workflow_id}')
     async def update_workflow(workflow_id: int, data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         """Update an existing workflow. Performs the same lightweight
@@ -1106,7 +1108,7 @@ if HAS_SQLALCHEMY:
             out.append({"id": r.id, "workspace_id": r.workspace_id, "name": r.name, "description": r.description, "graph": r.graph, "version": r.version})
         return out
 
-
+    
     @app.post('/api/webhook/{workflow_id}/{trigger_id}')
     async def webhook_trigger(workflow_id: int, trigger_id: str, request: Request, db: AsyncSession = Depends(get_db)):
         """Webhook trigger that creates a Run and enqueues processing.
@@ -1168,7 +1170,7 @@ if HAS_SQLALCHEMY:
             pass
         return {"run_id": run.id, "status": "queued"}
 
-
+    
     @app.post('/api/workflows/{workflow_id}/webhooks')
     async def create_webhook(workflow_id: int, data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         """Create a webhook record for a workflow in the user's workspace.
@@ -1210,7 +1212,7 @@ if HAS_SQLALCHEMY:
             # fall back to minimal response if model unavailable
             return {"path": path}
 
-
+    
     @app.get('/api/workflows/{workflow_id}/webhooks')
     async def list_webhooks(workflow_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
@@ -1232,7 +1234,7 @@ if HAS_SQLALCHEMY:
         except Exception:
             return []
 
-
+    
     @app.delete('/api/workflows/{workflow_id}/webhooks/{webhook_id}')
     async def delete_webhook(workflow_id: int, webhook_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
@@ -1262,7 +1264,6 @@ if HAS_SQLALCHEMY:
             raise
         except Exception:
             raise HTTPException(status_code=500, detail='Failed to delete webhook')
-
 
     @app.api_route('/w/{workspace_id}/workflows/{workflow_id}/{path}', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
     async def public_webhook(workspace_id: int, workflow_id: int, path: str, request: Request, db: AsyncSession = Depends(get_db)):
@@ -1306,7 +1307,7 @@ if HAS_SQLALCHEMY:
             pass
         return {"run_id": run.id, "status": "queued"}
 
-
+    
     @app.get('/api/workflows/{workflow_id}/runs', response_model=schemas.RunsPage)
     async def list_runs_for_workflow(
         workflow_id: int,
@@ -1347,7 +1348,6 @@ if HAS_SQLALCHEMY:
         res2 = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
         ws = res2.scalars().first()
         if not ws or wf.workspace_id != ws.id:
-            # hide existence of workflow if not accessible
             raise HTTPException(status_code=404, detail='workflow not found')
 
         # Some DB/session combinations (notably the in-memory sqlite used in
@@ -1378,7 +1378,7 @@ if HAS_SQLALCHEMY:
 
         return {"items": out, "total": total, "limit": limit, "offset": offset}
 
-
+    
     @app.get('/api/audit_logs/export')
     async def export_audit_logs(
         action: Optional[str] = None,
@@ -1467,7 +1467,7 @@ if HAS_SQLALCHEMY:
         except Exception:
             return JSONResponse(status_code=500, content='Failed to export')
 
-
+    
     @app.get('/api/audit_logs')
     async def list_audit_logs(
         limit: int = 50,
@@ -1528,7 +1528,6 @@ if HAS_SQLALCHEMY:
         if date_from:
             try:
                 dtf = datetime.fromisoformat(date_from)
-                stmt = stmt.filter(AuditLog.timestamp >= dtf)
             except Exception:
                 pass
         if date_to:
@@ -1672,7 +1671,6 @@ if HAS_SQLALCHEMY:
                 total = len(out)
 
         return {"items": out, "total": total, "limit": limit, "offset": offset}
-
 
     @app.get('/api/runs/{run_id}', response_model=schemas.RunDetail)
     async def get_run(run_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
