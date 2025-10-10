@@ -19,6 +19,13 @@ _REDACTION_METRICS = {
 }
 _METRICS_LOCK = threading.Lock()
 
+# Cache compiled vendor regexes to avoid reparsing on every redact call.
+# We track the raw env values so tests/long-running processes that change
+# the env can trigger a reload.
+_VENDOR_LOCK = threading.Lock()
+_COMPILED_VENDOR_REGEXES = None
+_VENDOR_REGEXES_RAW = None
+
 
 def get_redaction_metrics():
     """Return a shallow copy of current redaction metrics."""
@@ -173,33 +180,60 @@ def redact_secrets(obj):
             s = _apply(r"(sk_live|sk_test)_[A-Za-z0-9]{8,}", "[REDACTED]", 'stripe_sk', flags=re.I)
 
         # Allow callers to inject additional redaction regexes at runtime via
-        # the REDACT_VENDOR_REGEXES environment variable. This can be either
-        # a JSON array of objects like [{"name":"foo","pattern":"..."}, ...]
-        # or a newline-separated list of `name:pattern` entries. This is
-        # intentionally simple to keep configuration easy in CI/test runs.
+        # the REDACT_VENDOR_REGEXES environment variable. To avoid reparsing
+        # and recompiling on every redact call we cache compiled regexes and
+        # only reload when the raw env value changes.
         extra = os.getenv('REDACT_VENDOR_REGEXES')
         if extra:
             try:
-                import json as _json
+                # fast-path: check cached compiled patterns
+                global _COMPILED_VENDOR_REGEXES, _VENDOR_REGEXES_RAW
+                with _VENDOR_LOCK:
+                    if _COMPILED_VENDOR_REGEXES is None or _VENDOR_REGEXES_RAW != extra:
+                        # reload/compile patterns
+                        compiled = []
+                        try:
+                            import json as _json
 
-                parsed = None
-                if extra.strip().startswith('['):
-                    parsed = _json.loads(extra)
-                    for item in parsed:
-                        if isinstance(item, dict) and 'pattern' in item:
-                            pname = item.get('name') or f"extra_{hash(item.get('pattern'))}"
-                            s = _apply(item['pattern'], "[REDACTED]", pname)
-                else:
-                    # newline-separated name:pattern entries
-                    for line in extra.splitlines():
-                        line = line.strip()
-                        if not line or line.startswith('#'):
+                            if extra.strip().startswith('['):
+                                parsed = _json.loads(extra)
+                                for item in parsed:
+                                    if isinstance(item, dict) and 'pattern' in item:
+                                        pname = item.get('name') or f"extra_{abs(hash(item.get('pattern') or ''))}"
+                                        try:
+                                            cre = re.compile(item['pattern'])
+                                            compiled.append((pname, cre))
+                                        except Exception:
+                                            # skip invalid patterns
+                                            continue
+                            else:
+                                # newline-separated name:pattern entries
+                                for line in extra.splitlines():
+                                    line = line.strip()
+                                    if not line or line.startswith('#'):
+                                        continue
+                                    if ':' in line:
+                                        name, pat = line.split(':', 1)
+                                        name = name.strip() or f"extra_{abs(hash(pat))}"
+                                        pat = pat.strip()
+                                        try:
+                                            cre = re.compile(pat)
+                                            compiled.append((name, cre))
+                                        except Exception:
+                                            continue
+                        except Exception:
+                            compiled = []
+
+                        _COMPILED_VENDOR_REGEXES = compiled
+                        _VENDOR_REGEXES_RAW = extra
+
+                # apply compiled patterns
+                if _COMPILED_VENDOR_REGEXES:
+                    for pname, cre in _COMPILED_VENDOR_REGEXES:
+                        try:
+                            s = _apply(cre, "[REDACTED]", pname)
+                        except Exception:
                             continue
-                        if ':' in line:
-                            name, pat = line.split(':', 1)
-                            name = name.strip() or f"extra_{abs(hash(pat))}"
-                            pat = pat.strip()
-                            s = _apply(pat, "[REDACTED]", name)
             except Exception:
                 # ignore malformed config; do not raise
                 pass
