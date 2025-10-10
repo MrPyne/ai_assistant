@@ -196,6 +196,77 @@ except Exception:
 
 app = FastAPI()
 
+# Middleware to automatically redact secrets from JSON/text responses.
+if HAS_FASTAPI:
+    try:
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        class RedactMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                res = await call_next(request)
+                try:
+                    from backend.utils import redact_secrets as _redact
+
+                    ct = res.headers.get("content-type", "") or ""
+
+                    # Handle JSON responses by parsing, redacting, and rebuilding
+                    if "application/json" in ct:
+                        body = None
+                        if hasattr(res, "body") and res.body is not None:
+                            body = res.body
+                        else:
+                            # attempt to consume body_iterator for streaming responses
+                            try:
+                                body = b"".join([c async for c in res.body_iterator])
+                            except Exception:
+                                body = None
+
+                        if body is not None:
+                            try:
+                                import json as _json
+
+                                data = _json.loads(body.decode())
+                                data = _redact(data)
+                                new = _JSONResponse(status_code=res.status_code, content=data)
+                                # preserve non-content headers
+                                for k, v in res.headers.items():
+                                    if k.lower() not in ("content-type", "content-length"):
+                                        new.headers[k] = v
+                                return new
+                            except Exception:
+                                # fall through to return original response
+                                pass
+
+                    # Handle plain text / CSV responses by redacting strings
+                    if "text/" in ct or "csv" in ct:
+                        body = None
+                        if hasattr(res, "body") and res.body is not None:
+                            body = res.body
+                        else:
+                            try:
+                                body = b"".join([c async for c in res.body_iterator])
+                            except Exception:
+                                body = None
+
+                        if body is not None:
+                            try:
+                                s = body.decode()
+                                s2 = _redact(s)
+                                headers = dict(res.headers)
+                                return StreamingResponse(iter([s2]), media_type=ct, headers=headers, status_code=res.status_code)
+                            except Exception:
+                                pass
+                except Exception:
+                    # Never fail requests due to redaction middleware issues
+                    pass
+                return res
+
+        app.add_middleware(RedactMiddleware)
+    except Exception:
+        # Best-effort: if starlette middleware isn't available in this
+        # environment, skip adding the middleware so tests can still run.
+        pass
+
 def _normalize_http_exception_detail(detail):
     """Normalize various HTTPException.detail shapes into the lightweight
     contract expected by the frontend editor and documented in
