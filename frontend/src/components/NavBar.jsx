@@ -17,6 +17,7 @@ export default function NavBar(){
         <Link to="/" className="nav-link">Home</Link>
         <Link to="/editor" className="nav-link">Editor</Link>
         <Link to="/secrets" className="nav-link">Secrets</Link>
+        <Link to="/schedulers" className="nav-link">Schedulers</Link>
         <Link to="/audit_logs" className="nav-link">Audit Logs</Link>
         {token ? (
           <>

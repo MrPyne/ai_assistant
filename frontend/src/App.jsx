@@ -9,6 +9,7 @@ import Register from './pages/Register'
 import Profile from './pages/Profile'
 import Secrets from './pages/Secrets'
 import AuditLogs from './pages/AuditLogs'
+import Schedulers from './pages/Schedulers'
 import Editor from './editor'
 
 function RequireAuth({ children }) {
@@ -48,6 +49,7 @@ export default function App(){
               <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
               <Route path="/editor" element={<RequireAuth><Editor /></RequireAuth>} />
               <Route path="/secrets" element={<RequireAuth><Secrets /></RequireAuth>} />
+              <Route path="/schedulers" element={<RequireAuth><Schedulers /></RequireAuth>} />
               <Route path="/audit_logs" element={<RequireAuth><AuditLogs /></RequireAuth>} />
             </Routes>
           </div>

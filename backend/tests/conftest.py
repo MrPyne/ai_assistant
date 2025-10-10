@@ -74,6 +74,8 @@ except Exception:
             self._next_webhook = 1
             self._next_run = 1
             self._next_audit = 1
+            self._schedulers = {}  # id -> {workspace_id, workflow_id, schedule, description, active, created_at, last_run_at}
+            self._next_scheduler = 1
             self._tokens = {}  # token -> user_id
 
         def _create_user(self, email, password, role='user'):
@@ -177,6 +179,20 @@ except Exception:
                 # emulate backend JSON shape
                 return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'items': items, 'total': total, 'limit': limit, 'offset': offset})})()
 
+            # list scheduler entries for user's workspace
+            if path == '/api/scheduler':
+                user_id = self._user_from_token(headers)
+                if not user_id:
+                    return type('R', (), {'status_code': 401, 'json': (lambda *a, **k: {'detail': 'Unauthorized'})})()
+                wsid = self._workspace_for_user(user_id)
+                items = []
+                for sid, s in self._schedulers.items():
+                    if s.get('workspace_id') == wsid:
+                        obj = dict(s)
+                        obj['id'] = sid
+                        items.append(obj)
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: items)})()
+
             # audit logs export (CSV) - require admin role
             if path == '/api/audit_logs/export':
                 user_id = self._user_from_token(headers)
@@ -269,6 +285,18 @@ except Exception:
                 if not row or row.get('workflow_id') != wf_id:
                     return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'webhook not found'})})()
                 del self._webhooks[wh_id]
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'status': 'deleted'})})()
+
+            # support deleting scheduler entries
+            if path.startswith('/api/scheduler/'):
+                parts = path.split('/')
+                try:
+                    sid = int(parts[3])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid id'})})()
+                if sid not in self._schedulers:
+                    return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'not found'})})()
+                del self._schedulers[sid]
                 return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: {'status': 'deleted'})})()
 
 
@@ -475,6 +503,26 @@ except Exception:
                 self._webhooks[hid] = {'workflow_id': wf_id, 'path': path_val, 'description': json_body.get('description'), 'workspace_id': wf.get('workspace_id')}
                 return type('R', (), {'status_code': 201, 'json': (lambda *a, **k: {'id': hid, 'path': path_val, 'workflow_id': wf_id})})()
 
+            # create scheduler entry POST /api/scheduler
+            if path == '/api/scheduler':
+                user_id = self._user_from_token(headers)
+                if not user_id:
+                    return type('R', (), {'status_code': 401, 'json': (lambda *a, **k: {'detail': 'Unauthorized'})})()
+                wsid = self._workspace_for_user(user_id)
+                if not wsid:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'Workspace not found'})})()
+                wid = json_body.get('workflow_id')
+                # ensure workflow exists and belongs to workspace
+                wf = self._workflows_store.get(wid)
+                if not wf or wf.get('workspace_id') != wsid:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'workflow not found in workspace'})})()
+                sid = self._next_scheduler
+                self._next_scheduler += 1
+                self._schedulers[sid] = {'workspace_id': wsid, 'workflow_id': wid, 'schedule': json_body.get('schedule'), 'description': json_body.get('description'), 'active': 1, 'created_at': None, 'last_run_at': None}
+                # audit
+                self._add_audit(wsid, user_id, 'create_scheduler', object_type='scheduler', object_id=sid, detail=json_body.get('schedule'))
+                return type('R', (), {'status_code': 201, 'json': (lambda *a, **k: {'id': sid, 'workflow_id': wid, 'schedule': json_body.get('schedule')})})()
+
             # webhook trigger: /api/webhook/{workflow_id}/{trigger_id}
             if path.startswith('/api/webhook/'):
                 parts = path.split('/')
@@ -555,6 +603,25 @@ except Exception:
     def put(self, path, *args, **kwargs):
             # For our tests, PUT is used to update workflows at /api/workflows/{id}
             json_body = kwargs.get('json') or {}
+            # allow updating scheduler entries via PUT /api/scheduler/{id}
+            if path.startswith('/api/scheduler/'):
+                parts = path.split('/')
+                try:
+                    sid = int(parts[3])
+                except Exception:
+                    return type('R', (), {'status_code': 400, 'json': (lambda *a, **k: {'detail': 'invalid id'})})()
+                s = self._schedulers.get(sid)
+                if not s:
+                    return type('R', (), {'status_code': 404, 'json': (lambda *a, **k: {'detail': 'not found'})})()
+                # allow updating schedule, description, active
+                if 'schedule' in json_body:
+                    s['schedule'] = json_body.get('schedule')
+                if 'description' in json_body:
+                    s['description'] = json_body.get('description')
+                if 'active' in json_body:
+                    s['active'] = 1 if json_body.get('active') else 0
+                return type('R', (), {'status_code': 200, 'json': (lambda *a, **k: dict(s, id=sid))})()
+
             parts = path.split('/')
             try:
                 wf_id = int(parts[3])
