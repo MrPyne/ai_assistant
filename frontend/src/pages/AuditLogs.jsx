@@ -9,6 +9,9 @@ export default function AuditLogs() {
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState('');
   const [objectType, setObjectType] = useState('');
+  const [userId, setUserId] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     if (token) load();
@@ -24,6 +27,9 @@ export default function AuditLogs() {
       params.set('offset', String(offset));
       if (action) params.set('action', action);
       if (objectType) params.set('object_type', objectType);
+      if (userId) params.set('user_id', userId);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
       const resp = await fetch('/api/audit_logs?' + params.toString(), { headers: authHeaders() });
       if (resp.ok) {
         const data = await resp.json();
@@ -36,6 +42,33 @@ export default function AuditLogs() {
     }
   };
 
+  const exportCsv = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (action) params.set('action', action);
+      if (objectType) params.set('object_type', objectType);
+      if (userId) params.set('user_id', userId);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const resp = await fetch('/api/audit_logs/export?' + params.toString(), { headers: authHeaders() });
+      if (resp.ok) {
+        const text = await resp.text();
+        const blob = new Blob([text], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'audit_logs.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('Export failed', err);
+    }
+  };
+
   const prev = () => { setOffset(Math.max(0, offset - limit)); };
   const next = () => { if (offset + limit < total) setOffset(offset + limit); };
 
@@ -45,7 +78,11 @@ export default function AuditLogs() {
       <div style={{ marginBottom: 8 }}>
         <input placeholder="Action" value={action} onChange={(e) => setAction(e.target.value)} style={{ marginRight: 6 }} />
         <input placeholder="Object type" value={objectType} onChange={(e) => setObjectType(e.target.value)} style={{ marginRight: 6 }} />
+        <input placeholder="User id" value={userId} onChange={(e) => setUserId(e.target.value)} style={{ marginRight: 6, width: 100 }} />
+        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ marginRight: 6 }} />
+        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ marginRight: 6 }} />
         <button onClick={() => { setOffset(0); load(); }}>Filter</button>
+        <button onClick={exportCsv} style={{ marginLeft: 8 }}>Export CSV</button>
       </div>
       <div style={{ marginBottom: 8 }}>
         <button onClick={prev} disabled={offset === 0}>Prev</button>

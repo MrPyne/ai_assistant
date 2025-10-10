@@ -1301,12 +1301,86 @@ if HAS_SQLALCHEMY:
         return {"items": out, "total": total, "limit": limit, "offset": offset}
 
 
+    @app.get('/api/audit_logs/export')
+    async def export_audit_logs(
+        action: Optional[str] = None,
+        object_type: Optional[str] = None,
+        user_id: Optional[int] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user),
+    ):
+        """Export matching audit logs as CSV for the current user's workspace."""
+        # fetch user's workspace
+        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
+        ws = res_ws.scalars().first()
+        if not ws:
+            return JSONResponse(status_code=200, content='')
+
+        stmt = select(AuditLog).filter(AuditLog.workspace_id == ws.id).order_by(AuditLog.id.desc())
+        if action:
+            stmt = stmt.filter(AuditLog.action == action)
+        if object_type:
+            stmt = stmt.filter(AuditLog.object_type == object_type)
+        if user_id:
+            try:
+                uid = int(user_id)
+                stmt = stmt.filter(AuditLog.user_id == uid)
+            except Exception:
+                pass
+        if date_from:
+            try:
+                dtf = datetime.fromisoformat(date_from)
+                stmt = stmt.filter(AuditLog.timestamp >= dtf)
+            except Exception:
+                pass
+        if date_to:
+            try:
+                dtt = datetime.fromisoformat(date_to)
+                stmt = stmt.filter(AuditLog.timestamp <= dtt)
+            except Exception:
+                pass
+
+        try:
+            res = await db_execute(db, stmt)
+            rows = res.scalars().all()
+        except Exception:
+            rows = []
+
+        # build CSV
+        try:
+            import io, csv
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(['id', 'workspace_id', 'user_id', 'action', 'object_type', 'object_id', 'detail', 'timestamp'])
+            for r in rows:
+                writer.writerow([
+                    r.id,
+                    r.workspace_id,
+                    r.user_id,
+                    r.action,
+                    r.object_type,
+                    r.object_id,
+                    (r.detail or ''),
+                    (r.timestamp.isoformat() if r.timestamp else ''),
+                ])
+            csv_str = buf.getvalue()
+            headers = {'Content-Disposition': 'attachment; filename="audit_logs.csv"'}
+            return StreamingResponse(iter([csv_str]), media_type='text/csv', headers=headers)
+        except Exception:
+            return JSONResponse(status_code=500, content='Failed to export')
+
+
     @app.get('/api/audit_logs')
     async def list_audit_logs(
         limit: int = 50,
         offset: int = 0,
         action: Optional[str] = None,
         object_type: Optional[str] = None,
+        user_id: Optional[int] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
         db: AsyncSession = Depends(get_db),
         user: User = Depends(get_current_user),
     ):
@@ -1344,6 +1418,26 @@ if HAS_SQLALCHEMY:
             stmt = stmt.filter(AuditLog.action == action)
         if object_type:
             stmt = stmt.filter(AuditLog.object_type == object_type)
+        # optional user filter
+        if user_id:
+            try:
+                uid = int(user_id)
+                stmt = stmt.filter(AuditLog.user_id == uid)
+            except Exception:
+                pass
+        # optional date range filters (expect ISO dates)
+        if date_from:
+            try:
+                dtf = datetime.fromisoformat(date_from)
+                stmt = stmt.filter(AuditLog.timestamp >= dtf)
+            except Exception:
+                pass
+        if date_to:
+            try:
+                dtt = datetime.fromisoformat(date_to)
+                stmt = stmt.filter(AuditLog.timestamp <= dtt)
+            except Exception:
+                pass
 
         # load full (small) result set and paginate in Python for predictable
         # behaviour across DB backends used in tests/dev
