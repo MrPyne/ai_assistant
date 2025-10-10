@@ -14,7 +14,7 @@ def test_redact_embedded_string():
 
 
 def test_redact_aws_and_bearer_and_key_equals():
-    text = "aws=AKIAABCDEFGHIJKLMNOP and token=key=supersecretvalue123 and auth=Bearer abcdefghijklmnopqrstu"
+    text = "aws=AKIAABCDEFGHIJKLMNOP and token=key=supersecretvalue123 and auth=Bearer abcdefghijklmnopqrstu and jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
     out = redact_secrets(text)
     # AWS key should be redacted
     assert "AKIAABCDEFGHIJKLMNOP" not in out
@@ -22,3 +22,5 @@ def test_redact_aws_and_bearer_and_key_equals():
     assert "supersecretvalue123" not in out
     # Bearer token should be redacted (case-insensitive)
     assert "abcdefghijklmnopqrstu" not in out
+    # JWT (starts with eyJ...) should be redacted
+    assert "eyJhbGciOiJIUzI1NiI" not in out

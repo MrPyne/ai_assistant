@@ -23,5 +23,11 @@ def redact_secrets(obj):
         obj = re.sub(r"key=([A-Za-z0-9\._\-]{8,})", "key=[REDACTED]", obj)
         # AWS Access Key IDs (e.g. AKIAxxxxxxxxxxxxxx)
         obj = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED]", obj)
+        # AWS Secret Access Keys or other long base64-like secrets (conservative: 40+ chars)
+        obj = re.sub(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40,}(?![A-Za-z0-9/+=])", "[REDACTED]", obj)
+        # Google API keys (common format starts with AIza)
+        obj = re.sub(r"AIza[0-9A-Za-z\-_]{35,}", "[REDACTED]", obj)
+        # JWTs typically start with eyJ and have three dot-separated base64url parts
+        obj = re.sub(r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "[REDACTED]", obj)
         return obj
     return obj
