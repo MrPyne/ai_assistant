@@ -61,6 +61,9 @@ def redact_secrets(obj):
         # replace the value with [REDACTED] (avoid swallowing surrounding text).
         s = re.sub(r"(?i)(access_token|token)=([A-Za-z0-9_\-\.]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", s)
 
+        # Other common token parameter names (id_token, oauth_token, refresh_token)
+        s = re.sub(r"(?i)(id_token|oauth_token|refresh_token)=([A-Za-z0-9_\-\. %]{8,})", lambda m: f"{m.group(1)}=[REDACTED]", s)
+
         # key=... patterns (e.g., ?key=XYZ)
         s = re.sub(r"(?i)key=([A-Za-z0-9_\-\.]{8,})", "key=[REDACTED]", s)
 
@@ -73,6 +76,9 @@ def redact_secrets(obj):
         # PEM private keys (RSA/PRIVATE KEY blocks)
         s = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED]", s)
         s = re.sub(r"-----BEGIN RSA PRIVATE KEY-----[\s\S]+?-----END RSA PRIVATE KEY-----", "[REDACTED]", s)
+        # Additional PEM variants (OPENSSH, EC)
+        s = re.sub(r"-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----", "[REDACTED]", s)
+        s = re.sub(r"-----BEGIN EC PRIVATE KEY-----[\s\S]+?-----END EC PRIVATE KEY-----", "[REDACTED]", s)
 
         # SSH key blobs
         s = re.sub(r"ssh-(rsa|ed25519) [A-Za-z0-9+/=\.]{40,}", "[REDACTED]", s)
@@ -80,6 +86,9 @@ def redact_secrets(obj):
         # Azure SAS signature 'sig=' or combined 'se=...&sig=...'
         s = re.sub(r"(?i)sig=([A-Za-z0-9%_\-\.]{16,})", "sig=[REDACTED]", s)
         s = re.sub(r"(?i)se=[0-9TZ:\-\.]+&?sig=[A-Za-z0-9%_\-\.]{8,}", "se=[REDACTED]&sig=[REDACTED]", s)
+        # URL-encoded variants of sig/se (e.g., sig%3D...)
+        s = re.sub(r"(?i)sig%3D([A-Za-z0-9%_\-\.]{8,})", "sig%3D[REDACTED]", s)
+        s = re.sub(r"(?i)se%3D[0-9TZ%:\-\.]+%26?sig%3D[A-Za-z0-9%_\-\.]{8,}", "se%3D[REDACTED]%26sig%3D[REDACTED]", s)
 
         # JWT-like tokens: usually three dot-separated base64url parts and often
         # start with 'eyJ' for JSON web tokens
@@ -93,7 +102,7 @@ def redact_secrets(obj):
         s = re.sub(r'"private_key"\s*:\s*"-----BEGIN [^\"]+-----[\s\S]+?-----END [^\"]+-----"', '"private_key":"[REDACTED]"', s)
 
         # private_key_id fields in service account JSON (hex-like)
-        s = re.sub(r'"private_key_id"\s*:\s*"[0-9a-fA-F]{16,}\"', '"private_key_id":"[REDACTED]"', s)
+        s = re.sub(r'"private_key_id"\s*:\s*"[0-9a-fA-F]{16,}"', '"private_key_id":"[REDACTED]"', s)
 
         return s
 
