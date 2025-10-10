@@ -843,7 +843,68 @@ if HAS_SQLALCHEMY:
         except Exception:
             return JSONResponse(status_code=500, content={'error': 'failed to reset metrics'})
 
-    
+    @app.get('/metrics')
+    async def metrics():
+        """Expose redaction telemetry in Prometheus format when the
+        prometheus_client package is available. Falls back to JSON when
+        prometheus_client is not installed so environments without the
+        optional dependency continue to function.
+        """
+        try:
+            from backend.utils import get_redaction_metrics as _get_metrics
+            metrics = _get_metrics()
+            try:
+                # Import prometheus_client lazily so it's optional
+                from prometheus_client import CollectorRegistry, Gauge, generate_latest, CONTENT_TYPE_LATEST
+                from fastapi.responses import Response as _Response
+
+                reg = CollectorRegistry()
+                # Total redactions
+                g_total = Gauge('redaction_total_count', 'Total number of redactions', registry=reg)
+                g_total.set(int(metrics.get('count', 0) or 0))
+
+                # Per-pattern counts
+                patterns = metrics.get('patterns', {}) or {}
+                gp = Gauge('redaction_pattern_count', 'Redactions by pattern', ['pattern'], registry=reg)
+                for k, v in patterns.items():
+                    try:
+                        gp.labels(pattern=str(k)).set(int(v or 0))
+                    except Exception:
+                        pass
+
+                # Vendor-specific counters: timeouts, errors, budget_exceeded
+                vendor_timeouts = metrics.get('vendor_timeouts', {}) or {}
+                g_timeout = Gauge('redaction_vendor_timeouts', 'Vendor regex timeouts', ['pattern'], registry=reg)
+                for k, v in vendor_timeouts.items():
+                    try:
+                        g_timeout.labels(pattern=str(k)).set(int(v or 0))
+                    except Exception:
+                        pass
+
+                vendor_errors = metrics.get('vendor_errors', {}) or {}
+                g_errors = Gauge('redaction_vendor_errors', 'Vendor regex errors', ['pattern'], registry=reg)
+                for k, v in vendor_errors.items():
+                    try:
+                        g_errors.labels(pattern=str(k)).set(int(v or 0))
+                    except Exception:
+                        pass
+
+                vendor_budget = metrics.get('vendor_budget_exceeded', {}) or {}
+                g_budget = Gauge('redaction_vendor_budget_exceeded', 'Vendor regex aggregate budget exceeded', ['pattern'], registry=reg)
+                for k, v in vendor_budget.items():
+                    try:
+                        g_budget.labels(pattern=str(k)).set(int(v or 0))
+                    except Exception:
+                        pass
+
+                payload = generate_latest(reg)
+                return _Response(content=payload, media_type=CONTENT_TYPE_LATEST)
+            except Exception:
+                # prometheus_client not available or failed; return JSON as fallback
+                return JSONResponse(status_code=200, content=metrics)
+        except Exception:
+            return JSONResponse(status_code=500, content={'error': 'failed to fetch metrics'})
+
     def send_email(to_email: str, subject: str, body: str):
         """Simple SMTP send helper used by the auth resend flow.
 
@@ -881,7 +942,7 @@ if HAS_SQLALCHEMY:
         except Exception:
             raise HTTPException(status_code=500, detail='Failed to send email')
 
-
+    
     @app.post('/api/auth/register')
     async def register(data: dict, db: AsyncSession = Depends(get_db)):
         email = data.get('email')
@@ -1020,7 +1081,7 @@ if HAS_SQLALCHEMY:
             out.append({"id": r.id, "workspace_id": r.workspace_id, "type": r.type, "secret_id": r.secret_id, "created_at": r.created_at.isoformat() if r.created_at else None})
         return out
 
-
+    
     @app.post('/api/workflows')
     async def create_workflow(data: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         name = data.get('name') or 'Untitled'
@@ -1495,270 +1556,6 @@ if HAS_SQLALCHEMY:
         return {"run_id": run.id, "status": "queued"}
 
     
-    @app.get('/api/workflows/{workflow_id}/runs', response_model=schemas.RunsPage)
-    async def list_runs_for_workflow(
-        workflow_id: int,
-        limit: int = 50,
-        offset: int = 0,
-        db: AsyncSession = Depends(get_db),
-        user: User = Depends(get_current_user),
-    ):
-        """Return runs for a specific workflow (owned by current user).
-
-        This ensures the workflow belongs to the requesting user's workspace
-        and returns a paginated list of runs ordered by newest first.
-        """
-        # sanitize pagination params
-        try:
-            limit = int(limit)
-        except Exception:
-            limit = 50
-        try:
-            offset = int(offset)
-        except Exception:
-            offset = 0
-        # enforce reasonable limits
-        if limit <= 0:
-            limit = 1
-        if limit > 100:
-            limit = 100
-        if offset < 0:
-            offset = 0
-
-        # ensure workflow exists and belongs to user's workspace
-        res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
-        wf = res.scalars().first()
-        if not wf:
-            raise HTTPException(status_code=404, detail='workflow not found')
-
-        # fetch user's workspace
-        res2 = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
-        ws = res2.scalars().first()
-        if not ws or wf.workspace_id != ws.id:
-            raise HTTPException(status_code=404, detail='workflow not found')
-
-        # Some DB/session combinations (notably the in-memory sqlite used in
-        # tests) can behave inconsistently when applying limit/offset in the
-        # SQL query via our async helpers. Load the full ordered result set
-        # and apply pagination in Python which is predictable for the small
-        # datasets used by tests.
-        stmt = select(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc())
-        res3 = await db_execute(db, stmt)
-        all_rows = res3.scalars().all()
-        rows = all_rows[offset: offset + limit]
-        out = []
-        for r in rows:
-            out.append({
-                "id": r.id,
-                "workflow_id": r.workflow_id,
-                "status": r.status,
-                "started_at": r.started_at.isoformat() if r.started_at else None,
-                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-            })
-        # compute total count for the workflow using an efficient COUNT(*) query
-        try:
-            stmt_count = select(func.count()).select_from(Run).filter(Run.workflow_id == workflow_id)
-            res_count = await db_execute(db, stmt_count)
-            total = int(res_count.scalar() or 0)
-        except Exception:
-            total = len(out)
-
-        return {"items": out, "total": total, "limit": limit, "offset": offset}
-
-    
-    @app.get('/api/audit_logs/export')
-    async def export_audit_logs(
-        action: Optional[str] = None,
-        object_type: Optional[str] = None,
-        user_id: Optional[int] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        db: AsyncSession = Depends(get_db),
-        user: User = Depends(get_current_user),
-    ):
-        """Export matching audit logs as CSV for the current user's workspace."""
-        # fetch user's workspace
-        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
-        ws = res_ws.scalars().first()
-        if not ws:
-            return JSONResponse(status_code=200, content='')
-
-        # Simple RBAC: only admin users may export audit logs. If the User
-        # model has a 'role' attribute set to 'admin' allow export; otherwise
-        # return 403. This is intentionally simple; future work can integrate
-        # with a more flexible permission system.
-        try:
-            role = getattr(user, 'role', None)
-            if role != 'admin':
-                raise HTTPException(status_code=403, detail='Forbidden')
-        except HTTPException:
-            raise
-        except Exception:
-            # if role can't be determined treat as non-admin
-            raise HTTPException(status_code=403, detail='Forbidden')
-
-        stmt = select(AuditLog).filter(AuditLog.workspace_id == ws.id).order_by(AuditLog.id.desc())
-        if action:
-            stmt = stmt.filter(AuditLog.action == action)
-        if object_type:
-            stmt = stmt.filter(AuditLog.object_type == object_type)
-        if user_id:
-            try:
-                uid = int(user_id)
-                stmt = stmt.filter(AuditLog.user_id == uid)
-            except Exception:
-                pass
-        if date_from:
-            try:
-                dtf = datetime.fromisoformat(date_from)
-                stmt = stmt.filter(AuditLog.timestamp >= dtf)
-            except Exception:
-                pass
-        if date_to:
-            try:
-                dtt = datetime.fromisoformat(date_to)
-                stmt = stmt.filter(AuditLog.timestamp <= dtt)
-            except Exception:
-                pass
-
-        try:
-            res = await db_execute(db, stmt)
-            rows = res.scalars().all()
-        except Exception:
-            rows = []
-
-        # build CSV
-        try:
-            import io, csv
-            from backend.utils import redact_secrets as _redact
-
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow(['id', 'workspace_id', 'user_id', 'action', 'object_type', 'object_id', 'detail', 'timestamp'])
-            for r in rows:
-                # redact any secret-like content in the detail field before export
-                detail_safe = _redact(r.detail or '')
-                writer.writerow([
-                    r.id,
-                    r.workspace_id,
-                    r.user_id,
-                    r.action,
-                    r.object_type,
-                    r.object_id,
-                    detail_safe,
-                    (r.timestamp.isoformat() if r.timestamp else ''),
-                ])
-            csv_str = buf.getvalue()
-            headers = {'Content-Disposition': 'attachment; filename="audit_logs.csv"'}
-            return StreamingResponse(iter([csv_str]), media_type='text/csv', headers=headers)
-        except Exception:
-            return JSONResponse(status_code=500, content='Failed to export')
-
-    
-    @app.get('/api/audit_logs')
-    async def list_audit_logs(
-        limit: int = 50,
-        offset: int = 0,
-        action: Optional[str] = None,
-        object_type: Optional[str] = None,
-        user_id: Optional[int] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        db: AsyncSession = Depends(get_db),
-        user: User = Depends(get_current_user),
-    ):
-        """List audit log entries for the current user's workspace.
-
-        Supports basic pagination (limit/offset) and simple filtering by
-        action and object_type. For security we only return entries for the
-        workspace owned by the authenticated user.
-        """
-        # sanitize pagination params
-        try:
-            limit = int(limit)
-        except Exception:
-            limit = 50
-        try:
-            offset = int(offset)
-        except Exception:
-            offset = 0
-        if limit <= 0:
-            limit = 1
-        if limit > 100:
-            limit = 100
-        if offset < 0:
-            offset = 0
-
-        # fetch user's workspace
-        res_ws = await db_execute(db, select(Workspace).filter(Workspace.owner_id == user.id))
-        ws = res_ws.scalars().first()
-        if not ws:
-            return {"items": [], "total": 0, "limit": limit, "offset": offset}
-
-        # build base query scoped to the workspace. Listing audit logs is
-        # allowed for workspace members (owners) so users can inspect events
-        # that occurred in their own workspace. Exporting logs (CSV) remains
-        # restricted to admin users via the /api/audit_logs/export endpoint.
-        stmt = select(AuditLog).filter(AuditLog.workspace_id == ws.id).order_by(AuditLog.id.desc())
-        if action:
-            stmt = stmt.filter(AuditLog.action == action)
-        if object_type:
-            stmt = stmt.filter(AuditLog.object_type == object_type)
-        # optional user filter
-        if user_id:
-            try:
-                uid = int(user_id)
-                stmt = stmt.filter(AuditLog.user_id == uid)
-            except Exception:
-                pass
-        # optional date range filters (expect ISO dates)
-        if date_from:
-            try:
-                dtf = datetime.fromisoformat(date_from)
-            except Exception:
-                pass
-        if date_to:
-            try:
-                dtt = datetime.fromisoformat(date_to)
-                stmt = stmt.filter(AuditLog.timestamp <= dtt)
-            except Exception:
-                pass
-
-        # load full (small) result set and paginate in Python for predictable
-        # behaviour across DB backends used in tests/dev
-        res = await db_execute(db, stmt)
-        all_rows = res.scalars().all()
-        rows = all_rows[offset: offset + limit]
-        # redact sensitive content in detail before returning to clients
-        from backend.utils import redact_secrets as _redact
-
-        out = []
-        for r in rows:
-            out.append({
-                "id": r.id,
-                "workspace_id": r.workspace_id,
-                "user_id": r.user_id,
-                "action": r.action,
-                "object_type": r.object_type,
-                "object_id": r.object_id,
-                "detail": _redact(r.detail) if r.detail else r.detail,
-                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-            })
-
-        # compute total matching count
-        try:
-            stmt_count = select(func.count()).select_from(AuditLog).filter(AuditLog.workspace_id == ws.id)
-            if action:
-                stmt_count = stmt_count.filter(AuditLog.action == action)
-            if object_type:
-                stmt_count = stmt_count.filter(AuditLog.object_type == object_type)
-            res_count = await db_execute(db, stmt_count)
-            total = int(res_count.scalar() or 0)
-        except Exception:
-            total = len(all_rows)
-
-        return {"items": out, "total": total, "limit": limit, "offset": offset}
-
     @app.post('/api/workflows/{workflow_id}/run')
     async def run_workflow(workflow_id: int, data: dict = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
         res = await db_execute(db, select(Workflow).filter(Workflow.id == workflow_id))
