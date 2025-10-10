@@ -4,7 +4,8 @@ from io import StringIO
 
 def test_audit_logs_list_and_export(client):
     # register and create secret
-    r = client.post('/api/auth/register', json={'email': 'auditor@example.com', 'password': 'pass'})
+    # create an admin user so export/list endpoints are allowed
+    r = client.post('/api/auth/register', json={'email': 'auditor@example.com', 'password': 'pass', 'role': 'admin'})
     assert r.status_code in (200, 201)
     token = r.json().get('access_token')
     headers = {'Authorization': f'Bearer {token}'} if token else {}
@@ -52,8 +53,9 @@ def test_audit_logs_list_and_export(client):
 
 
 def test_audit_logs_filters(client):
-    # register a second user to ensure workspace scoping and user_id filter
-    r = client.post('/api/auth/register', json={'email': 'filterer@example.com', 'password': 'pass'})
+    # register a second non-admin user to ensure admins cannot see other
+    # workspace entries and that filters work for their own workspace.
+    r = client.post('/api/auth/register', json={'email': 'filterer@example.com', 'password': 'pass', 'role': 'user'})
     assert r.status_code in (200, 201)
     token = r.json().get('access_token')
     headers = {'Authorization': f'Bearer {token}'} if token else {}

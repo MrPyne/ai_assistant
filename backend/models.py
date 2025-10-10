@@ -8,6 +8,8 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    # role field used for simple RBAC (e.g., 'user' or 'admin'). Default
+    # remains 'user' for existing behaviour.
     role = Column(String, default='user')
     workspaces = relationship('Workspace', back_populates='owner')
 
