@@ -89,19 +89,148 @@ def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, 
             except Exception:
                 pass
     return
-
-# Feature flag indicating whether a DB is present. Keep False to avoid
-# external DB dependencies in tests unless a real DB is wired up.
-_DB_AVAILABLE = False
+    return
 
 
-def _user_from_token(token: Optional[str]) -> Optional[int]:
-    """Very small helper that accepts any non-empty token as an authenticated user.
-    Return None when unauthenticated.
+def _poll_schedulers(poll_interval: float = 1.0):
+    """Background poller that checks scheduler entries and enqueues runs.
+    For MVP we support simple interval schedules expressed as integer seconds.
     """
-    if token:
-        return 1
-    return None
+    while not _scheduler_stop_event.is_set():
+        now_ts = time.time()
+        try:
+            # DB-backed schedulers preferred when available
+            if _DB_AVAILABLE:
+                try:
+                    db = SessionLocal()
+                    rows = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.active == 1).all()
+                    for s in rows:
+                        try:
+                            sched = s.schedule
+                            if sched is None:
+                                continue
+                            try:
+                                interval = int(sched)
+                            except Exception:
+                                continue
+                            last = s.last_run_at
+                            last_ts = last.timestamp() if last is not None else 0
+                            if now_ts - last_ts >= interval:
+                                # ensure workflow exists
+                                wf = db.query(models.Workflow).filter(models.Workflow.id == s.workflow_id).first()
+                                if not wf:
+                                    continue
+                                run = models.Run(workflow_id=s.workflow_id, status='queued')
+                                db.add(run)
+                                s.last_run_at = datetime.utcnow()
+                                db.add(s)
+                                db.commit()
+                                try:
+                                    _add_audit(s.workspace_id, None, 'create_run', object_type='run', object_id=run.id, detail=f'scheduler:{s.id}')
+                                except Exception:
+                                    pass
+                        except Exception:
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                            continue
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+
+            # fallback: in-memory schedulers
+            for sid, s in list(_schedulers.items()):
+                try:
+                    if not s.get('active'):
+                        continue
+                    sched = s.get('schedule')
+                    if sched is None:
+                        continue
+                    try:
+                        interval = int(sched)
+                    except Exception:
+                        continue
+                    last = s.get('last_run', 0)
+                    if now_ts - last >= interval:
+                        wid = s.get('workflow_id')
+                        if not wid:
+                            continue
+                        wf = None
+                        if _DB_AVAILABLE:
+                            try:
+                                db = SessionLocal()
+                                wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
+                            except Exception:
+                                pass
+                            finally:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
+                        else:
+                            wf = None
+                        # if workflow exists (or we assume it does in-memory) create run
+                        rid = None
+                        if _DB_AVAILABLE and wf:
+                            try:
+                                db = SessionLocal()
+                                run = models.Run(workflow_id=wid, status='queued')
+                                db.add(run)
+                                db.commit()
+                                rid = run.id
+                            except Exception:
+                                try:
+                                    db.rollback()
+                                except Exception:
+                                    pass
+                            finally:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
+                        else:
+                            _next['run'] += 1
+                            rid = _next['run']
+                            _runs[rid] = {'workflow_id': wid, 'status': 'queued', 'via_scheduler': sid}
+                        s['last_run'] = now_ts
+                        try:
+                            _add_audit(s.get('workspace_id'), None, 'create_run', object_type='run', object_id=rid, detail=f'scheduler:{sid}')
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        _scheduler_stop_event.wait(poll_interval)
+
+
+@app.on_event('startup')
+def _start_scheduler_thread():
+    global _scheduler_thread
+    if _scheduler_thread is None:
+        _scheduler_stop_event.clear()
+        t = threading.Thread(target=_poll_schedulers, name='scheduler-poller', daemon=True)
+        _scheduler_thread = t
+        t.start()
+
+
+@app.on_event('shutdown')
+def _stop_scheduler_thread():
+    _scheduler_stop_event.set()
+    global _scheduler_thread
+    try:
+        if _scheduler_thread is not None:
+            _scheduler_thread.join(timeout=2.0)
+    finally:
+        _scheduler_thread = None
 
 
 @app.post('/api/workflows/{wf_id}/run')
