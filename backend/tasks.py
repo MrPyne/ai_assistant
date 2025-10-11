@@ -8,6 +8,7 @@ import requests
 from .database import SessionLocal
 from .models import Run, Workflow, RunLog, Provider
 from .utils import redact_secrets
+from .crypto import decrypt_value
 
 from .adapters.openai_adapter import OpenAIAdapter
 from .adapters.ollama_adapter import OllamaAdapter
@@ -148,24 +149,75 @@ def _execute_node(db, run, node):
             _write_log(db, run.id, node_id, 'warning', f"Unknown provider type: {provider.type}")
             return {'text': '[mock] unknown provider'}
 
-    if ntype == 'http':
+    if ntype in ('http', 'http_request'):
         method = node.get('method', 'GET').upper()
         url = node.get('url')
         body = node.get('body')
         headers = node.get('headers') or {}
+        # Resolve any provider secret referenced by a Provider configured
+        # on the node. This allows us to redact literal secret values that
+        # may not be matched by generic regexes. Resolution is best-effort
+        # and failures are non-fatal.
+        known_secrets = []
+        provider_id = node.get('provider_id') or node.get('provider')
+        if provider_id and db is not None:
+            try:
+                prov = db.query(Provider).filter(Provider.id == provider_id).first()
+                if prov and getattr(prov, 'secret_id', None):
+                    from .models import Secret
+
+                    s = db.query(Secret).filter(Secret.id == prov.secret_id, Secret.workspace_id == prov.workspace_id).first()
+                    if s:
+                        try:
+                            val = decrypt_value(s.encrypted_value)
+                            if val:
+                                known_secrets.append(val)
+                        except Exception:
+                            # ignore decryption failures
+                            pass
+            except Exception:
+                pass
+
+        def _replace_known_secrets_in_str(s: str) -> str:
+            if not s or not known_secrets:
+                return s
+            out = s
+            for ks in known_secrets:
+                try:
+                    if ks and ks in out:
+                        out = out.replace(ks, '[REDACTED]')
+                except Exception:
+                    continue
+            return out
+
+        def _replace_known_secrets(obj):
+            # Recursively replace occurrences of known secrets in strings
+            if isinstance(obj, str):
+                return _replace_known_secrets_in_str(obj)
+            if isinstance(obj, dict):
+                return {k: _replace_known_secrets(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_replace_known_secrets(v) for v in obj]
+            return obj
         try:
             if method == 'GET':
                 r = requests.get(url, headers=headers, params=body, timeout=10)
             else:
                 r = requests.post(url, headers=headers, json=body, timeout=10)
-            _write_log(db, run.id, node_id, 'info', f"HTTP {method} {url} -> status {r.status_code}")
+            # redact known secrets from logs
+            info_msg = f"HTTP {method} {url} -> status {r.status_code}"
+            info_msg = _replace_known_secrets_in_str(info_msg)
+            _write_log(db, run.id, node_id, 'info', info_msg)
             try:
-                return r.json()
+                data = r.json()
+                return _replace_known_secrets(data)
             except Exception:
-                return {'text': r.text}
+                return {'text': _replace_known_secrets(r.text)}
         except Exception as e:
-            _write_log(db, run.id, node_id, 'error', f"HTTP request failed: {str(e)}")
-            return {'error': str(e)}
+            err = str(e)
+            err = _replace_known_secrets_in_str(err)
+            _write_log(db, run.id, node_id, 'error', f"HTTP request failed: {err}")
+            return {'error': err}
 
     # default/mock
     _write_log(db, run.id, node_id, 'info', f"Node type {ntype} not implemented; returning mock")
