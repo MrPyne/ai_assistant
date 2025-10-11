@@ -2,6 +2,7 @@ import os
 from typing import Any, Optional
 
 from ..crypto import decrypt_value
+from ..llm_utils import is_live_llm_enabled
 import requests
 
 
@@ -96,11 +97,7 @@ class OpenAIAdapter:
         mocked response for safety in tests/CI.
         """
         api_key = self._get_api_key()
-        enable_live = (
-            os.getenv("ENABLE_LIVE_LLM", "false").lower() == "true"
-            or os.getenv("LIVE_LLM", "false").lower() == "true"
-            or os.getenv("ENABLE_OPENAI", "false").lower() == "true"
-        )
+        enable_live = is_live_llm_enabled("openai")
 
         if not enable_live or not api_key:
             # Mocked response for safety in CI/tests. Include a minimal meta

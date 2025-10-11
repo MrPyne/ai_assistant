@@ -2,6 +2,7 @@ import os
 from typing import Any, Optional
 
 from ..crypto import decrypt_value
+from ..llm_utils import is_live_llm_enabled
 import requests
 
 
@@ -69,10 +70,7 @@ class OllamaAdapter:
         return a mocked response for safety in tests and CI.
         """
         api_key = self._get_api_key()
-        enable_live = (
-            os.getenv("ENABLE_LIVE_LLM", "false").lower() == "true"
-            or os.getenv("ENABLE_OLLAMA", "false").lower() == "true"
-        )
+        enable_live = is_live_llm_enabled("ollama")
 
         model = (self.provider.config or {}).get("model") or "llama"
 
