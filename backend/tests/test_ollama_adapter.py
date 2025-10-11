@@ -36,6 +36,8 @@ class DummyDB:
 
 def test_ollama_resolves_keys(monkeypatch):
     monkeypatch.setenv('LIVE_LLM', 'true')
+    # opt-in to live LLMs for tests that exercise key resolution
+    monkeypatch.setenv('ENABLE_LIVE_LLM', 'true')
     monkeypatch.setenv('SECRET_KEY', 'test-secret')
     token = encrypt_value('ollama-key-123')
     provider = DummyProvider(config={'api_key_encrypted': token})

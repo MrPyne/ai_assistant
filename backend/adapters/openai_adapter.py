@@ -97,13 +97,19 @@ class OpenAIAdapter:
         """
         api_key = self._get_api_key()
         enable_live = (
-            os.getenv("LIVE_LLM", "false").lower() == "true"
+            os.getenv("ENABLE_LIVE_LLM", "false").lower() == "true"
+            or os.getenv("LIVE_LLM", "false").lower() == "true"
             or os.getenv("ENABLE_OPENAI", "false").lower() == "true"
         )
 
         if not enable_live or not api_key:
-            # Mocked response for safety in CI/tests
-            return {"text": f"[mock] OpenAIAdapter would respond to prompt: {prompt[:100]}"}
+            # Mocked response for safety in CI/tests. Include a minimal meta
+            # that matches the live adapter's shape so downstream redaction
+            # and logging operate identically.
+            return {
+                "text": f"[mock] OpenAIAdapter would respond to prompt: {prompt[:100]}",
+                "meta": {"usage": {"prompt_tokens": self._estimate_tokens(prompt), "completion_tokens": 0, "total_tokens": self._estimate_tokens(prompt)}, "model": (self.provider.config or {}).get("model", "gpt-3.5-turbo")},
+            }
 
         model = (self.provider.config or {}).get("model", "gpt-3.5-turbo")
 

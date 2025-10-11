@@ -64,17 +64,25 @@ class OllamaAdapter:
     def generate(self, prompt: str, **kwargs) -> dict:
         """Return a response dict.
 
-        If ENABLE_OLLAMA is true attempt to call the Ollama HTTP API. Provider
-        config may supply 'host' and 'model'. Otherwise return a mocked response.
+        If ENABLE_LIVE_LLM or ENABLE_OLLAMA is true attempt to call the Ollama
+        HTTP API. Provider config may supply 'host' and 'model'. Otherwise
+        return a mocked response for safety in tests and CI.
         """
         api_key = self._get_api_key()
-        enable_live = os.getenv("ENABLE_OLLAMA", "false").lower() == "true"
+        enable_live = (
+            os.getenv("ENABLE_LIVE_LLM", "false").lower() == "true"
+            or os.getenv("ENABLE_OLLAMA", "false").lower() == "true"
+        )
+
+        model = (self.provider.config or {}).get("model") or "llama"
 
         if not enable_live:
-            return {"text": f"[mock] OllamaAdapter would respond to prompt: {prompt[:100]}"}
+            # Return a mock response that mirrors the real response shape so
+            # downstream code (redaction, logging) behaves the same without
+            # performing network IO.
+            return {"text": f"[mock] OllamaAdapter would respond to prompt: {prompt[:100]}", "meta": {"model": model}}
 
         host = (self.provider.config or {}).get("host") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        model = (self.provider.config or {}).get("model") or "llama"
 
         payload = {"model": model, "prompt": prompt}
         headers = {"Content-Type": "application/json"}

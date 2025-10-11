@@ -41,6 +41,7 @@ def test_mock_mode_by_default(monkeypatch):
     # ensure live not enabled
     monkeypatch.delenv('LIVE_LLM', raising=False)
     monkeypatch.delenv('ENABLE_OPENAI', raising=False)
+    monkeypatch.delenv('ENABLE_LIVE_LLM', raising=False)
     provider = DummyProvider(config={'model': 'gpt-3.5-turbo'})
     adapter = OpenAIAdapter(provider)
     resp = adapter.generate('hello world')
@@ -50,6 +51,8 @@ def test_mock_mode_by_default(monkeypatch):
 
 def test_resolves_inline_encrypted_key(monkeypatch):
     monkeypatch.setenv('LIVE_LLM', 'true')
+    # opt-in to live LLMs for tests that exercise key resolution
+    monkeypatch.setenv('ENABLE_LIVE_LLM', 'true')
     monkeypatch.setenv('SECRET_KEY', 'test-secret')
     # simulate provider with api_key_encrypted
     token = encrypt_value('sk-test-123')
@@ -64,6 +67,7 @@ def test_resolves_inline_encrypted_key(monkeypatch):
 
 def test_resolves_secret_reference(monkeypatch):
     monkeypatch.setenv('LIVE_LLM', 'true')
+    monkeypatch.setenv('ENABLE_LIVE_LLM', 'true')
     monkeypatch.setenv('SECRET_KEY', 'test-secret')
     token = encrypt_value('sk-secret-ref')
     # provider has secret_id set; DB returns that secret
