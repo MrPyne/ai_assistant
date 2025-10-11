@@ -12,6 +12,10 @@ from .crypto import decrypt_value
 
 from .adapters.openai_adapter import OpenAIAdapter
 from .adapters.ollama_adapter import OllamaAdapter
+try:
+    from jinja2.sandbox import SandboxedEnvironment as JinjaEnv
+except Exception:
+    JinjaEnv = None
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +158,49 @@ def _execute_node(db, run, node):
         url = node.get('url')
         body = node.get('body')
         headers = node.get('headers') or {}
+        # Render templated fields (safe sandboxed Jinja when available).
+        # Templates have access to a minimal context: input (run.input_payload),
+        # run (id, workflow_id) and a now timestamp. This keeps evaluation
+        # deterministic and avoids exposing internals.
+        def _safe_render(obj):
+            if JinjaEnv is None:
+                return obj
+            env = JinjaEnv()
+            ctx = {
+                'input': getattr(run, 'input_payload', {}) or {},
+                'run': {'id': run.id, 'workflow_id': run.workflow_id},
+                'now': datetime.utcnow().isoformat(),
+            }
+
+            def _render_str(s):
+                try:
+                    if not isinstance(s, str):
+                        return s
+                    tpl = env.from_string(s)
+                    return tpl.render(**ctx)
+                except Exception:
+                    # On template errors, fall back to the original value to
+                    # avoid failing the whole run.
+                    return s
+
+            if isinstance(obj, str):
+                return _render_str(obj)
+            if isinstance(obj, dict):
+                out = {}
+                for k, v in obj.items():
+                    out[k] = _safe_render(v)
+                return out
+            if isinstance(obj, list):
+                return [_safe_render(v) for v in obj]
+            return obj
+
+        try:
+            url = _safe_render(url)
+            headers = _safe_render(headers) or {}
+            body = _safe_render(body)
+        except Exception:
+            # rendering should be best-effort and non-fatal
+            pass
         # Resolve any provider secret referenced by a Provider configured
         # on the node. This allows us to redact literal secret values that
         # may not be matched by generic regexes. Resolution is best-effort
