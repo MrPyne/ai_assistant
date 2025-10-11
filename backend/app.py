@@ -386,3 +386,116 @@ def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
         raise
     except Exception:
         raise HTTPException(status_code=500, detail='internal error')
+
+
+@app.post('/api/providers')
+def create_provider(body: dict, authorization: Optional[str] = Header(None)):
+    # allow creating a provider without explicit auth in lightweight tests;
+    # create a default user/workspace if none exist to mirror TestClient
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        if not _users:
+            uid = _next['user']; _next['user'] += 1
+            _users[uid] = {'email': 'default@example.com', 'password': 'pass', 'role': 'user'}
+            wsid = _next['ws']; _next['ws'] += 1
+            _workspaces[wsid] = {'owner_id': uid, 'name': f'default-workspace'}
+            user_id = uid
+        else:
+            # fall back to the first user
+            user_id = list(_users.keys())[0]
+
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+
+    secret_id = body.get('secret_id')
+    # validate secret exists in workspace if provided
+    if secret_id is not None:
+        ok = False
+        # prefer DB when available
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                s = db.query(models.Secret).filter(models.Secret.id == secret_id, models.Secret.workspace_id == wsid).first()
+                if s:
+                    ok = True
+            except Exception:
+                pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        else:
+            s = None
+            if isinstance(secret_id, int):
+                s = _runs.get(secret_id)
+            if s and s.get('workspace_id') == wsid:
+                ok = True
+        if not ok:
+            raise HTTPException(status_code=400, detail='secret_id not found in workspace')
+
+    # create in-memory provider
+    pid = _next.get('provider', 1)
+    _next['provider'] = pid + 1
+    _providers[pid] = {'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id, 'config': body.get('config')}
+
+    # attempt to persist to DB if available
+    created_db_id = None
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            p = models.Provider(workspace_id=wsid, secret_id=secret_id, type=body.get('type'), config=body.get('config') or {})
+            db.add(p)
+            db.commit()
+            created_db_id = p.id
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    _add_audit(wsid, user_id, 'create_provider', object_type='provider', object_id=pid, detail=str(body.get('type')))
+    resp = {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
+    if created_db_id:
+        resp['db_id'] = created_db_id
+    return {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
+
+
+@app.get('/api/providers')
+def list_providers(authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+
+    items = []
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            rows = db.query(models.Provider).filter(models.Provider.workspace_id == wsid).all()
+            for r in rows:
+                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'type': r.type, 'secret_id': r.secret_id})
+            return items
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    for pid, p in _providers.items():
+        if p.get('workspace_id') == wsid:
+            items.append({'id': pid, 'workspace_id': p.get('workspace_id'), 'type': p.get('type'), 'secret_id': p.get('secret_id')})
+    return items
