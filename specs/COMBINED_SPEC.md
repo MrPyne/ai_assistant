@@ -1,5 +1,5 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.15
+Version: 1.16
 Last updated: 2025-10-11
 Maintainer: (fill in)
 
@@ -50,7 +50,7 @@ P2 — Advanced / long-term
 
 Non-functional & security requirements (applies to P0+)
 - [ ] Secrets encrypted at rest (Fernet/KMS) and never logged in plaintext.
-- [ ] Live LLM calls disabled by default (ENABLE_LIVE_LLM=false). Live calls require explicit flag + provider.secret_id.
+- [x] Live LLM calls disabled by default (ENABLE_LIVE_LLM=false). Live calls require explicit flag + provider.secret_id.
  - [x] Live outbound HTTP disabled by default (LIVE_HTTP=false). Outbound HTTP from workers requires LIVE_HTTP=true to opt-in. Tests that exercise HTTP behavior should set LIVE_HTTP accordingly.
 - [ ] Use strong password hashing (argon2 / bcrypt) and HTTPS in production.
 - [ ] Sanitize and validate all node inputs and template execution to prevent injection.
@@ -91,215 +91,15 @@ Milestones & deliverables (short)
 - Milestone 2: Credentials UI + Provider wiring + LLM adapter live mode toggle. Acceptance: user can create a provider referencing a secret and run an LLM node in mock/live mode.
 - Milestone 3: Control nodes (If/Condition, Loop), Scheduler. Acceptance: workflows with branching can be built and executed.
 
----
-
-Implementation Checklist (merged)
-
-This checklist is the single-source tracker for implemented work and remaining tasks required to reach feature parity with n8n. Use it to assign, mark progress, and run DoD verification for each feature.
-
-Guidelines
-- Tasks checked [x] are implemented (committed or verified in repo).
-- Tasks unchecked [ ] are outstanding.
-- Each feature includes: Purpose, Acceptance criteria (DoD), Estimate, and a granular checklist.
-
-Project status summary
-- Repo scaffold with FastAPI backend, Celery/Redis worker, React frontend (react-flow) — [x]
-- Adapter skeletons & basic worker — [x]
-- Frontend editor MVP exists (editor runtime unstable; add-node failing historically) — [x]
-- Spec updated toward n8n parity — [x]
-
-P0 (Must have)
-
-Feature: Editor stabilization & Add Node
-Purpose: Make the visual editor reliable and enable node additions, rendering, save/load.
-Estimate: 0.5–1 day
-Acceptance criteria:
-- Clicking Add Node invokes handler and logs event.
-- New node appears on canvas (nodes[] updated).
-- No runtime console errors after adding nodes.
-- Editor persists saved workflows via POST /api/workflows and loads them back.
-
-Checklist:
-- [x] Audit current editor wiring and locate add-node handler (frontend)
-- [x] Migrate react-flow usage to controlled pattern (onNodesChange/onEdgesChange)
-- [x] Implement addNode(type) handler that creates node and updates state
-- [x] Add safe fallback node renderer for unknown node types
-- [x] Wire save (POST /api/workflows) and load (GET /api/workflows/:id) to editor
-- [x] Add unit tests for addNode handler
-- [x] Manual test checklist and update README_SPEC
-
-Feature: Secrets (Credentials) UI & Backend
-Purpose: Workspace-scoped secrets storage, selection in nodes, and secure resolution at runtime.
-Estimate: 1 day
-Acceptance criteria:
-- Create/edit/delete secrets via UI.
-- Designed so secret values are not returned by GET endpoints or shown in UI after save.
-- Nodes can reference secrets; at runtime workers receive usable credentials without secrets exposed in logs or APIs.
-
-Checklist:
- - [x] DB migration: create secrets table — DONE (TO_BE_FILLED)
- - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets — DONE (TO_BE_FILLED)
- - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented — DONE (TO_BE_FILLED)
- - [ ] UI: Secrets page and create/edit modal (masked input)
- - [x] Node config: credential selector lists workspace secrets (metadata only) — DONE (TO_BE_FILLED)
- - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) — DONE (TO_BE_FILLED)
- - [ ] Audit logging for secret access
- - [x] Unit/integration tests to ensure no plaintext secret leakage — DONE (TO_BE_FILLED)
-
-Feature: Webhook trigger + Test Runner
-Purpose: Per-workflow webhook endpoints; incoming requests create runs and enqueue worker execution. UI test runner to exercise webhooks.
-Estimate: 1–2 days
-Acceptance criteria:
-- Webhook endpoint is routable and triggers run creation with trigger_payload stored.
-- Test button in UI sends payload and returns run id/response.
-
-Checklist:
-- [x] DB migration: webhooks table — DONE (2025-10-09, commit: 7d9f897)
-- [x] Backend APIs: CRUD webhooks under /api/workflows/:workflow_id/webhooks — DONE (2025-10-09, commit: 7d9f897)
-- [x] Public webhook route: /w/{workspace_id}/workflows/{workflow_id}/{path} — DONE (2025-10-09, commit: 7d9f897)
-- [x] Implement run creation from incoming webhook and enqueue — DONE (2025-10-09, commit: 7d9f897)
-- [ ] UI: Webhook trigger node and Test button
-- [ ] Rate-limiting and optional auth token support
-- [x] Unit/integration tests for webhook -> run flow — DONE (2025-10-09, commit: 7d9f897)
-
-Feature: HTTP Request node execution
-Purpose: Provide a general HTTP request node with templating and secret-based auth; mask secrets in logs and enforce outgoing connection safety.
-Estimate: 1–2 days
-Acceptance criteria:
-- Node configured with URL and optional credential; worker executes request and response stored in run logs with sensitive fields masked.
-
-Checklist:
-- [x] Node schema for HTTP node and frontend config UI
-- [x] Worker implementation: template evaluation (Jinja to be added), safe request with allowlist/denylist (basic safety applied), masking logic
-- [x] Mask Authorization/Cookie headers and any secret references in stored logs
-- [x] Unit tests with mock HTTP server to validate masking and behavior
-
-Feature: Run history & per-node logs UI
-Purpose: Show run list for workflows and node-level inputs/outputs/errors for debugging.
-Estimate: 1 day
-Acceptance criteria:
-- Runs created by triggers (webhook/scheduler/manual) are listed and each run’s node logs are viewable.
-
-Checklist:
-- [ ] DB migration: runs and run_node_logs (or JSONB retention plan)
-- [ ] Backend APIs: GET /api/workflows/:id/runs, GET /api/runs/:run_id
-- [ ] Frontend: Runs list and Run detail view with per-node log inspection
-- [ ] Ensure sensitive data masked before persistence
-- [ ] Tests: E2E for a sample webhook-triggered run
-
-P1 (Important)
-
-Feature: Function/Transform node (templating first)
-Purpose: Allow users to transform payloads between nodes using safe templating (Jinja2-like) initially.
-Estimate: 1–2 days
-Acceptance criteria:
-- Template transforms inputs and produces expected outputs; no secret access in templates.
-
-Checklist:
-- [ ] Node UI for template input and selectors
-- [ ] Backend/worker templating evaluation engine (Jinja2 safe context)
-- [ ] Unit tests for templating outputs
-- [ ] Document limitations and opt-in JS sandbox plan
-
-Feature: Scheduler trigger
-Purpose: Cron-like trigger for scheduled runs.
-Estimate: 1–2 days
-Acceptance criteria:
-- Cron/interval configured in node produces runs per schedule; runs persisted and visible.
-
-Checklist:
-- [ ] DB: scheduler_entries table
-- [ ] Scheduler integration (Celery beat or APScheduler) and leader election if needed
-- [ ] UI: Scheduler node config and next run preview
-- [ ] Tests for schedule creation and execution
-
-P2 — Advanced / long-term
-
-Feature: Retries / Backoff / DLQ
-Purpose: Retry strategies for transient failures and dead-letter queue for persistent failures.
-Estimate: 1–2 days
-Acceptance criteria:
-- Per-node retry policy honored; failures move to DLQ after configured retries.
-
-Checklist:
-- [ ] Add retry/backoff settings to node schema
-- [ ] Worker logic to apply retry strategies (Celery retry integration)
-- [ ] DLQ storage and admin view for failed runs
-- [ ] Tests simulating transient failures
-
-Feature: Observability — metrics & tracing
-Purpose: Export Prometheus metrics and trace runs for observability.
-Estimate: 1–3 days
-Acceptance criteria:
-- /metrics endpoint present and key counters/histograms exported.
-- Trace id attached to runs and flows.
-
-Checklist:
-- [ ] Integrate prometheus_client and expose /metrics
-- [ ] Instrument run creation/completion and node execution durations
-- [ ] Add trace id propagation and basic OpenTelemetry support (optional)
-- [ ] Add sample dashboard queries documented
-
-Feature: Versioning & Rollback
-Purpose: Save and view workflow versions; revert to older snapshots.
-Estimate: 1–2 days
-Acceptance criteria:
-- Version history available; rollback restores workflow to prior version.
-
-Checklist:
-- [ ] DB: workflows_versions table
-- [ ] On-save, persist snapshot as new version (optionally diff)
-- [ ] UI: Version history and rollback action
-- [ ] Tests: save multiple versions and rollback
-
-Feature: Plugin API / Marketplace (MVP)
-Purpose: Let third-party node authors add nodes without core code deployments (MVP)
-Estimate: 2–4 days
-Acceptance criteria:
-- Install a plugin and see new node in palette; plugin execution handled by adapter or sandbox.
-
-Checklist:
-- [ ] Plugin manifest schema and loader in frontend
-- [ ] Backend registration mechanism for plugin adapters (simple dir or entrypoints)
-- [ ] Security constraints and plugin review notes
-- [ ] Tests installing a sample plugin that exposes a simple node
-
-Feature: RBAC & Audit logs
-Purpose: Role-based access control per workspace and audit logs of sensitive operations.
-Estimate: 1–3 days
-Acceptance criteria:
-- Permissions enforced on endpoints; audit log entries created for mutating actions.
-
-Checklist:
-- [ ] Define roles (Owner, Admin, Editor, Viewer) and permission matrix
-- [ ] Enforce via FastAPI dependencies/middleware
-- [ ] Audit logs table and write points for create/update/delete actions
-- [ ] Tests validating enforcement and audit trail
-
-Feature: Secrets hardening & automated tests
-Purpose: Ensure secrets never leak; add tests that fail if secrets appear in persisted outputs.
-Estimate: 1 day (ongoing)
-Acceptance criteria:
-- CI includes secret-scan tests; secrets cannot be seen in run logs or exports.
-
-Checklist:
-- [x] Implement secret scanning utility used in tests
-- [x] Add tests scanning run logs and workflow exports for secret patterns
-- [ ] Integrate into CI pipeline
-- [x] Add unit test for aggregate vendor regex budget handling (ensures budget-exceeded telemetry recorded)
-
-Note: Recent changes (2025-10-11)
-- Implemented HTTP Request node execution in the worker with improved redaction:
-  - Worker supports runtime execution of HTTP nodes (method, url, headers, body) and persists responses in run output.
-  - Redaction: Authorization and Cookie headers are masked, and provider-referenced secrets (resolved at runtime, not persisted) are replaced with [REDACTED] in logs and outputs.
-  - Unit test coverage added: backend/tests/test_http_node_redaction.py validates that Authorization headers are redacted from persisted RunLog entries even when the HTTP client raises an exception containing the header value.
-  - Note: templating (Jinja) support for node fields will be added next; for now node values are used verbatim or resolved via provider secrets when configured.
+Sprint 1 — Immediate work items (I will start these now)
 
 1.14 (2025-10-10)
 - Extended in-process redaction telemetry to record vendor-specific diagnostics:
   - vendor_timeouts: counts of vendor patterns that were skipped due to timeout when applying regexes (requires 'regex' package to exercise timeouts).
   - vendor_errors: counts of vendor patterns that failed to compile or raised errors during application.
   - Exposed on the existing /internal/redaction_metrics endpoint and reset by /internal/redaction_metrics/reset. These additions are intended to aid CI and operational diagnostics without changing previous behavior.
+
+...
 
 1.13 (2025-10-10)
 - Hardened vendor-supplied redaction regex handling in backend/utils.py:
@@ -313,7 +113,7 @@ Note: Recent changes (2025-10-11)
   - backend/tests/test_vendor_regex_timeouts.py: asserts pathological patterns are skipped quickly; test skips if 'regex' package not available in the environment.
   - backend/tests/test_vendor_regex_budget.py: new unit test that asserts aggregate vendor regex budget exceeding records telemetry and short-circuits pattern application.
 
-... (previous changelog entries unchanged)
+... (older entries retained)
 
 Last updated: 2025-10-11
 
@@ -326,6 +126,9 @@ N8N Compatibility (authoritative checklist)
 
 Change log (merged)
 
+1.16 (2025-10-11)
+- Implemented ENABLE_LIVE_LLM opt-in guard across LLM adapters (OpenAI, Ollama). Live LLM calls are disabled by default; adapters return deterministic mock responses preserving response shape when disabled. Tests updated to opt-in to live behavior where necessary.
+
 1.15 (2025-10-11)
 - Implemented HTTP Request node execution in the worker with redaction and unit test coverage for Authorization header redaction.
 - Marked HTTP Request node checklist items as implemented in the combined spec.
@@ -334,3 +137,5 @@ Change log (merged)
 - Extended in-process redaction telemetry to record vendor-specific diagnostics (see above).
 
 ... (older entries retained)
+
+Last updated: 2025-10-11
