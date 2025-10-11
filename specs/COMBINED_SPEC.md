@@ -51,6 +51,7 @@ P2 — Advanced / long-term
 Non-functional & security requirements (applies to P0+)
 - [ ] Secrets encrypted at rest (Fernet/KMS) and never logged in plaintext.
 - [ ] Live LLM calls disabled by default (ENABLE_LIVE_LLM=false). Live calls require explicit flag + provider.secret_id.
+ - [x] Live outbound HTTP disabled by default (LIVE_HTTP=false). Outbound HTTP from workers requires LIVE_HTTP=true to opt-in. Tests that exercise HTTP behavior should set LIVE_HTTP accordingly.
 - [ ] Use strong password hashing (argon2 / bcrypt) and HTTPS in production.
 - [ ] Sanitize and validate all node inputs and template execution to prevent injection.
 - [ ] Audit logs for credential changes and run lifecycle events.

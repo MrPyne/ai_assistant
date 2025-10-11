@@ -8,6 +8,8 @@ import requests
 
 
 def test_http_node_redacts_authorization_header(monkeypatch):
+    # enable real HTTP calls for this test (the test monkeypatches requests)
+    monkeypatch.setenv('LIVE_HTTP', 'true')
     # Setup in-memory DB objects
     db = SessionLocal()
     try:

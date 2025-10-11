@@ -247,10 +247,30 @@ def _execute_node(db, run, node):
                 return [_replace_known_secrets(v) for v in obj]
             return obj
         try:
-            if method == 'GET':
-                r = requests.get(url, headers=headers, params=body, timeout=10)
+            # By default, outbound HTTP is disabled unless LIVE_HTTP=true is
+            # present in the environment. This is a safety measure for tests
+            # and CI to avoid surprising external network calls. Tests that
+            # need real HTTP behavior should explicitly set LIVE_HTTP=true
+            # (see backend/tests/test_http_node_redaction.py).
+            live_http = os.getenv('LIVE_HTTP', 'false').lower() == 'true'
+            if not live_http:
+                # Return a lightweight mock-like response object so the
+                # rest of the code can continue to redact and log without
+                # performing network IO.
+                class _DummyResp:
+                    def __init__(self):
+                        self.status_code = 200
+                        self.text = '[mock] http blocked by LIVE_HTTP'
+
+                    def json(self):
+                        raise ValueError('No JSON')
+
+                r = _DummyResp()
             else:
-                r = requests.post(url, headers=headers, json=body, timeout=10)
+                if method == 'GET':
+                    r = requests.get(url, headers=headers, params=body, timeout=10)
+                else:
+                    r = requests.post(url, headers=headers, json=body, timeout=10)
             # redact known secrets from logs
             info_msg = f"HTTP {method} {url} -> status {r.status_code}"
             info_msg = _replace_known_secrets_in_str(info_msg)
