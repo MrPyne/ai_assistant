@@ -76,3 +76,58 @@ def get_run_logs(run_id: int):
         return {'logs': []}
     except Exception:
         return {'logs': []}
+
+
+@app.get('/api/runs/{run_id}')
+def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+
+    try:
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                r = db.query(models.Run).filter(models.Run.id == run_id).first()
+                if not r:
+                    raise HTTPException(status_code=404, detail='run not found')
+                out = {
+                    'id': r.id,
+                    'workflow_id': r.workflow_id,
+                    'status': r.status,
+                    'input_payload': r.input_payload,
+                    'output_payload': r.output_payload,
+                    'started_at': r.started_at,
+                    'finished_at': r.finished_at,
+                    'attempts': getattr(r, 'attempts', None),
+                }
+                # attach logs
+                rows = db.query(models.RunLog).filter(models.RunLog.run_id == run_id).order_by(models.RunLog.timestamp.asc()).all()
+                out_logs = []
+                for rr in rows:
+                    out_logs.append({'id': rr.id, 'run_id': rr.run_id, 'node_id': rr.node_id, 'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None, 'level': rr.level, 'message': rr.message})
+                out['logs'] = out_logs
+                return out
+            except HTTPException:
+                raise
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+        # fallback to in-memory run
+        r = _runs.get(run_id)
+        if not r:
+            raise HTTPException(status_code=404, detail='run not found')
+        out = {'id': run_id, 'workflow_id': r.get('workflow_id'), 'status': r.get('status'), 'input_payload': None, 'output_payload': None, 'started_at': None, 'finished_at': None, 'attempts': None, 'logs': []}
+        return out
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail='internal error')
