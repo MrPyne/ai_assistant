@@ -1,4 +1,24 @@
-from fastapi import FastAPI, Request, Header, HTTPException
+try:
+    from fastapi import FastAPI, Request, Header, HTTPException
+except Exception:
+    # Allow importing backend.app in lightweight test environments where
+    # FastAPI may not be installed. Provide minimal stand-ins so modules
+    # that import symbols from this file (e.g., tests) can still load.
+    class FastAPI:  # pragma: no cover - only used in lightweight imports
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class Request:  # pragma: no cover
+        pass
+
+    def Header(default=None):  # pragma: no cover
+        return None
+
+    class HTTPException(Exception):  # pragma: no cover
+        def __init__(self, status_code: int = 500, detail: str = None):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import threading
