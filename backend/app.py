@@ -11,6 +11,22 @@ except Exception:
             def _decor(fn):
                 return fn
             return _decor
+        def post(self, path):
+            def _decor(fn):
+                return fn
+            return _decor
+        def get(self, path):
+            def _decor(fn):
+                return fn
+            return _decor
+        def put(self, path):
+            def _decor(fn):
+                return fn
+            return _decor
+        def delete(self, path):
+            def _decor(fn):
+                return fn
+            return _decor
 
     class Request:  # pragma: no cover
         pass
