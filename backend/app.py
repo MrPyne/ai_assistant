@@ -7,6 +7,10 @@ except Exception:
     class FastAPI:  # pragma: no cover - only used in lightweight imports
         def __init__(self, *args, **kwargs):
             pass
+        def on_event(self, name):
+            def _decor(fn):
+                return fn
+            return _decor
 
     class Request:  # pragma: no cover
         pass
