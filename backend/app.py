@@ -1,31 +1,124 @@
 try:
     from fastapi import FastAPI, Request, Header, HTTPException
+    from fastapi.responses import JSONResponse, Response
+    import smtplib
 except Exception:
     # Allow importing backend.app in lightweight test environments where
     # FastAPI may not be installed. Provide minimal stand-ins so modules
     # that import symbols from this file (e.g., tests) can still load.
     class FastAPI:  # pragma: no cover - only used in lightweight imports
         def __init__(self, *args, **kwargs):
-            pass
+            # simple registry mapping (METHOD, path) -> handler callable
+            self._routes = {}
+            # store event handlers for startup/shutdown so tests can call if needed
+            self._events = {'startup': [], 'shutdown': []}
+
         def on_event(self, name):
             def _decor(fn):
+                if name not in self._events:
+                    self._events[name] = []
+                self._events[name].append(fn)
                 return fn
+
             return _decor
-        def post(self, path):
+
+        # Decorators register handlers in the simple route registry. We accept
+        # arbitrary kwargs (e.g., status_code) and ignore them.
+        def post(self, path, **kwargs):
             def _decor(fn):
-                return fn
+                import inspect
+
+                if inspect.iscoroutinefunction(fn):
+                    async def _wrapped(*args, **kws):
+                        try:
+                            res = await fn(*args, **kws)
+                        except TypeError:
+                            res = await fn()
+                        return _apply_redaction(res)
+
+                else:
+                    def _wrapped(*args, **kws):
+                        try:
+                            res = fn(*args, **kws)
+                        except TypeError:
+                            res = fn()
+                        return _apply_redaction(res)
+
+                self._routes[('POST', path)] = _wrapped
+                return _wrapped
+
             return _decor
-        def get(self, path):
+
+        def get(self, path, **kwargs):
             def _decor(fn):
-                return fn
+                import inspect
+
+                if inspect.iscoroutinefunction(fn):
+                    async def _wrapped(*args, **kws):
+                        try:
+                            res = await fn(*args, **kws)
+                        except TypeError:
+                            res = await fn()
+                        return _apply_redaction(res)
+                else:
+                    def _wrapped(*args, **kws):
+                        try:
+                            res = fn(*args, **kws)
+                        except TypeError:
+                            res = fn()
+                        return _apply_redaction(res)
+
+                self._routes[('GET', path)] = _wrapped
+                return _wrapped
+
             return _decor
-        def put(self, path):
+
+        def put(self, path, **kwargs):
             def _decor(fn):
-                return fn
+                import inspect
+
+                if inspect.iscoroutinefunction(fn):
+                    async def _wrapped(*args, **kws):
+                        try:
+                            res = await fn(*args, **kws)
+                        except TypeError:
+                            res = await fn()
+                        return _apply_redaction(res)
+                else:
+                    def _wrapped(*args, **kws):
+                        try:
+                            res = fn(*args, **kws)
+                        except TypeError:
+                            res = fn()
+                        return _apply_redaction(res)
+
+                self._routes[('PUT', path)] = _wrapped
+                return _wrapped
+
             return _decor
-        def delete(self, path):
+
+        def delete(self, path, **kwargs):
             def _decor(fn):
-                return fn
+                import inspect
+
+                if inspect.iscoroutinefunction(fn):
+                    async def _wrapped(*args, **kws):
+                        try:
+                            res = await fn(*args, **kws)
+                        except TypeError:
+                            res = await fn()
+                        return _apply_redaction(res)
+                else:
+                    def _wrapped(*args, **kws):
+                        try:
+                            res = fn(*args, **kws)
+                        except TypeError:
+                            res = fn()
+                        return _apply_redaction(res)
+
+                self._routes[('DELETE', path)] = _wrapped
+                return _wrapped
+
             return _decor
 
     class Request:  # pragma: no cover
@@ -39,11 +132,132 @@ except Exception:
             super().__init__(detail)
             self.status_code = status_code
             self.detail = detail
+    # ensure smtplib is available for tests that patch backend.app.smtplib
+    try:
+        import smtplib  # type: ignore
+    except Exception:
+        smtplib = None
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import threading
 import time
 import os
+
+# Lightweight response redaction helper used by the fallback FastAPI above.
+def _apply_redaction(res):
+    # If response is a dict, attempt to redact values using redact_secrets
+    try:
+        from .utils import redact_secrets
+    except Exception:
+        try:
+            # relative import fallback
+            import backend.utils as _bu
+            redact_secrets = _bu.redact_secrets
+        except Exception:
+            redact_secrets = None
+
+    # dicts -> redact structure
+    if isinstance(res, dict) and redact_secrets:
+        try:
+            return redact_secrets(res)
+        except Exception:
+            return res
+
+    # Handle StreamingResponse-like objects (from lightweight test shim).
+    # The test shim defines a StreamingResponse with 'iterator' and
+    # 'media_type' attributes. Avoid calling __str__ on it to prevent
+    # accidentally creating coroutines that aren't awaited; instead
+    # iterate the iterator directly (async or sync) and collect bytes.
+    try:
+        if hasattr(res, 'iterator') and hasattr(res, 'media_type'):
+            it = getattr(res, 'iterator')
+            text = ''
+            try:
+                # Async iterator
+                if hasattr(it, '__aiter__'):
+                    import asyncio
+                    import threading
+                    import queue
+
+                    async def _collect_async(it):
+                        acc = b''
+                        async for chunk in it:
+                            if isinstance(chunk, (bytes, bytearray)):
+                                acc += chunk
+                            else:
+                                acc += str(chunk).encode('utf-8')
+                        return acc
+
+                    try:
+                        loop = None
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except Exception:
+                            loop = None
+
+                        if loop is not None and loop.is_running():
+                            # Running inside an existing event loop (e.g., pytest anyio).
+                            # Run the coroutine in a new thread to avoid interfering
+                            # with the current loop and to ensure the coroutine is
+                            # properly awaited.
+                            q = queue.Queue()
+
+                            def _thread_run():
+                                try:
+                                    res = asyncio.run(_collect_async(it))
+                                except Exception:
+                                    res = b''
+                                q.put(res)
+
+                            t = threading.Thread(target=_thread_run)
+                            t.start()
+                            t.join()
+                            acc = q.get() if not q.empty() else b''
+                        else:
+                            acc = asyncio.run(_collect_async(it))
+                        try:
+                            text = acc.decode('utf-8')
+                        except Exception:
+                            text = ''
+                    except Exception:
+                        text = ''
+                else:
+                    # Sync iterable
+                    acc = b''
+                    for chunk in it:
+                        if isinstance(chunk, (bytes, bytearray)):
+                            acc += chunk
+                        else:
+                            acc += str(chunk).encode('utf-8')
+                    try:
+                        text = acc.decode('utf-8')
+                    except Exception:
+                        text = ''
+            except Exception:
+                text = ''
+
+            # apply redact for JSON/text where possible
+            if redact_secrets:
+                try:
+                    # Attempt to parse JSON first
+                    import json as _json
+
+                    parsed = None
+                    try:
+                        parsed = _json.loads(text)
+                    except Exception:
+                        parsed = None
+                    if parsed is not None:
+                        return redact_secrets(parsed)
+                    # fallback: redact plain text
+                    return redact_secrets(text)
+                except Exception:
+                    return text
+            return text
+    except Exception:
+        pass
+
+    return res
 
 # Try to import DB helpers when available (tests run with and without DB)
 try:
@@ -55,7 +269,398 @@ except Exception:
     models = None
     _DB_AVAILABLE = False
 
+# instantiate app
 app = FastAPI()
+
+# Auth endpoints backed by DB when available. We intentionally prefer the
+# Postgres-backed models (SessionLocal + models.User / models.Workspace) so
+# running containers and tests that exercise the real app use persistent
+# storage. When a DB isn't available (lightweight test shim) we fall back to
+# the minimal in-memory behaviour retained for compatibility with the dummy
+# TestClient used in some developer environments.
+
+
+@app.post('/api/auth/register')
+def _auth_register(body: dict):
+    email = body.get('email') if isinstance(body, dict) else None
+    password = body.get('password') if isinstance(body, dict) else None
+    role = body.get('role') if isinstance(body, dict) else 'user'
+    if not email or not password:
+        return JSONResponse(status_code=400, content={'detail': 'email and password required'})
+
+    # DB-backed flow
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            # ensure unique email
+            existing = db.query(models.User).filter(models.User.email == email).first()
+            if existing:
+                return JSONResponse(status_code=400, content={'detail': 'email already registered'})
+
+            hashed = hash_password(password)
+            user = models.User(email=email, hashed_password=hashed, role=role)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+            ws = models.Workspace(name=f'{email}-workspace', owner_id=user.id)
+            db.add(ws)
+            db.commit()
+
+            token = f'token-{user.id}'
+            return {'access_token': token}
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return JSONResponse(status_code=500, content={'detail': 'internal error'})
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    # Fallback: in-memory behaviour for lightweight test shim
+    uid = _next.get('user', 1)
+    _next['user'] = uid + 1
+    _users[uid] = {'email': email, 'password': password, 'role': role}
+
+    wsid = _next.get('ws', 1)
+    _next['ws'] = wsid + 1
+    _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
+
+    token = f'token-{uid}'
+    return {'access_token': token}
+
+
+
+@app.post('/api/auth/login')
+def _auth_login(body: dict):
+    email = body.get('email') if isinstance(body, dict) else None
+    password = body.get('password') if isinstance(body, dict) else None
+    if not email or not password:
+        raise HTTPException(status_code=401)
+
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            user = db.query(models.User).filter(models.User.email == email).first()
+            if not user:
+                raise HTTPException(status_code=401)
+            try:
+                if verify_password(password, user.hashed_password):
+                    return {'access_token': f'token-{user.id}'}
+            except Exception:
+                pass
+            raise HTTPException(status_code=401)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    # Fallback: in-memory login used by lightweight tests
+    uid = None
+    stored = None
+    for i, u in _users.items():
+        if u.get('email') == email:
+            uid = i
+            stored = u
+            break
+    if uid is None:
+        raise HTTPException(status_code=401)
+    try:
+        if stored.get('password') == password or verify_password(password, stored.get('password')):
+            return {'access_token': f'token-{uid}'}
+    except Exception:
+        pass
+    raise HTTPException(status_code=401)
+
+
+
+@app.post('/api/auth/resend')
+def _auth_resend(body: dict):
+    email = body.get('email') if isinstance(body, dict) else None
+    if not email:
+        return JSONResponse(status_code=400, content={'detail': 'email required'})
+
+    # Lookup via DB when available; do not call SMTP for nonexistent users
+    user_exists = False
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            u = db.query(models.User).filter(models.User.email == email).first()
+            if u:
+                user_exists = True
+        except Exception:
+            # on DB error, be conservative and avoid sending email
+            user_exists = False
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    else:
+        for u in _users.values():
+            if u.get('email') == email:
+                user_exists = True
+                break
+
+    if not user_exists:
+        return {'status': 'ok'}
+
+    host = os.environ.get('SMTP_HOST', 'localhost')
+    try:
+        port = int(os.environ.get('SMTP_PORT', '25'))
+    except Exception:
+        port = 25
+    try:
+        with smtplib.SMTP(host, port) as s:
+            msg = f"Subject: Resend\n\nResend to {email}"
+            s.sendmail('noreply@example.com', [email], msg)
+    except Exception:
+        # best-effort: don't fail the request if SMTP is misconfigured
+        pass
+    return {'status': 'ok'}
+
+# Normalize HTTPException details for real FastAPI so tests can expect a
+# friendly top-level 'message' when detail is a simple string, but preserve
+# structured dict details when provided by our validation code.
+try:
+    if hasattr(app, 'exception_handler'):
+        from fastapi.responses import JSONResponse as _JSONResponse
+
+        @app.exception_handler(HTTPException)
+        async def _http_exception_handler(request, exc):
+            detail = getattr(exc, 'detail', None)
+            try:
+                if isinstance(detail, dict):
+                    return _JSONResponse(status_code=exc.status_code, content=detail)
+                return _JSONResponse(status_code=exc.status_code, content={'message': str(detail)})
+            except Exception:
+                return _JSONResponse(status_code=getattr(exc, 'status_code', 500), content={'message': 'internal error'})
+except Exception:
+    pass
+
+# Redaction middleware (applies when running with real FastAPI). This will
+# attempt to buffer JSON and text responses and apply redact_secrets to avoid
+# leaking secret-like values in API responses. It's conservative and falls
+# back to returning the original response on error.
+try:
+    # Only register middleware when using the real FastAPI implementation
+    if hasattr(app, 'middleware'):
+        from fastapi import Request as _FastAPIRequest
+        import inspect as _inspect
+
+        async def _collect_bytes_from_candidate(it_candidate) -> tuple[bytes, bool]:
+            """Given a candidate attribute from a Response that may be:
+            - bytes/str
+            - a sync iterable
+            - an async iterable
+            - a callable that returns any of the above (sync or async)
+            Attempt to normalise and collect bytes. Return (bytes, consumed)
+            where consumed indicates whether we iterated/awaited the candidate
+            which may drain the underlying iterator.
+            """
+            try:
+                it = it_candidate
+                # If callable, call it. If it returns awaitable, await it.
+                if callable(it):
+                    try:
+                        res = it()
+                    except TypeError:
+                        # Some callables may expect args; give up
+                        return b'', False
+                    if _inspect.isawaitable(res):
+                        res = await res  # type: ignore
+                    it = res
+
+                # Direct bytes/str
+                if isinstance(it, (bytes, bytearray)):
+                    return bytes(it), False
+                if isinstance(it, str):
+                    return it.encode('utf-8'), False
+
+                # Async iterable
+                if hasattr(it, '__aiter__'):
+                    acc = b''
+                    async for chunk in it:  # type: ignore
+                        if isinstance(chunk, (bytes, bytearray)):
+                            acc += chunk
+                        else:
+                            acc += str(chunk).encode('utf-8')
+                    return acc, True
+
+                # Sync iterable
+                try:
+                    iterator = iter(it)
+                except TypeError:
+                    return b'', False
+                acc = b''
+                for chunk in iterator:
+                    if isinstance(chunk, (bytes, bytearray)):
+                        acc += chunk
+                    else:
+                        acc += str(chunk).encode('utf-8')
+                return acc, True
+            except Exception:
+                # defensive: avoid raising from middleware collection errors
+                return b'', False
+
+        @app.middleware('http')
+        async def _response_redaction_middleware(request: _FastAPIRequest, call_next):
+            try:
+                resp = await call_next(request)
+            except Exception:
+                # let FastAPI handle exceptions
+                raise
+
+            try:
+                try:
+                    from starlette.responses import StreamingResponse as _SR
+                except Exception:
+                    _SR = None
+
+                # Prefer media_type when available; fallback to headers
+                def _get_content_type(r):
+                    try:
+                        if getattr(r, 'headers', None) is not None:
+                            ct = r.headers.get('content-type', '')
+                        else:
+                            ct = ''
+                        if not ct:
+                            ct = getattr(r, 'media_type', '') or ''
+                        return ct
+                    except Exception:
+                        return ''
+
+                # Helper: copy headers from original response to new response
+                def _copy_headers(src, dst):
+                    try:
+                        for k, v in getattr(src, 'headers', {}).items():
+                            dst.headers[k] = v
+                    except Exception:
+                        pass
+
+                # Conservative collection strategy:
+                # 1) Prefer resp.body() when available
+                # 2) Try common iterator attributes (body_iterator, iterator, etc.)
+                # 3) As a last resort, invoke the response as an ASGI app
+                async def _collect_response_bytes(resp_obj) -> tuple[bytes, bool]:
+                    consumed = False
+                    body_bytes = b''
+                    # 1) body() callable
+                    try:
+                        body_fn = getattr(resp_obj, 'body', None)
+                        if callable(body_fn):
+                            res = body_fn()
+                            if _inspect.isawaitable(res):
+                                res = await res  # type: ignore
+                            if isinstance(res, (bytes, bytearray)):
+                                return bytes(res), False
+                            if isinstance(res, str):
+                                return res.encode('utf-8'), False
+                            body_bytes, c = await _collect_bytes_from_candidate(res)
+                            consumed = consumed or c
+                            if body_bytes:
+                                return body_bytes, consumed
+                    except Exception:
+                        body_bytes = b''
+
+                    # 2) common iterator attributes
+                    candidate_attrs = (
+                        'body_iterator', 'iterator', 'iterable', 'body_iter',
+                        '_body_iterator', '_iterator', '_iterable', 'content',
+                    )
+                    for attr in candidate_attrs:
+                        try:
+                            val = getattr(resp_obj, attr, None)
+                        except Exception:
+                            val = None
+                        if not val:
+                            continue
+                        try:
+                            body_bytes, c = await _collect_bytes_from_candidate(val)
+                        except Exception:
+                            body_bytes, c = b'', False
+                        consumed = consumed or c
+                        if body_bytes:
+                            return body_bytes, consumed
+
+                    # 3) last resort: try calling as ASGI app
+                    if _SR is not None and isinstance(resp_obj, _SR):
+                        try:
+                            collected = []
+
+                            async def _send(msg):
+                                typ = msg.get('type')
+                                if typ == 'http.response.body':
+                                    b = msg.get('body', b'') or b''
+                                    collected.append(b)
+
+                            async def _receive():
+                                return {'type': 'http.request', 'body': b'', 'more_body': False}
+
+                            scope = getattr(request, 'scope', {})
+                            await resp_obj(scope, _receive, _send)
+                            return b''.join(collected), True
+                        except Exception:
+                            return b'', False
+
+                    return b'', consumed
+
+                # Only attempt to collect for likely JSON/text responses.
+                ct = _get_content_type(resp)
+                wants_json = 'application/json' in ct
+                wants_text = ct.startswith('text/') or 'csv' in ct
+
+                if wants_json or wants_text:
+                    try:
+                        body_bytes, consumed = await _collect_response_bytes(resp)
+                        if not body_bytes and not consumed:
+                            # nothing collected and we didn't consume iterator; preserve streaming behaviour
+                            return resp
+
+                        # If consumed is True, iterator may be drained; fall through and construct
+                        # a new Response from collected bytes (possibly empty) so the client still
+                        # receives a body.
+
+                        if wants_json:
+                            try:
+                                import json as _json
+
+                                parsed = _json.loads(body_bytes.decode('utf-8'))
+                                from .utils import redact_secrets
+
+                                red = redact_secrets(parsed)
+                                new = JSONResponse(content=red, status_code=resp.status_code)
+                                _copy_headers(resp, new)
+                                return new
+                            except Exception:
+                                # fallback: return raw bytes as Response
+                                return Response(content=body_bytes, status_code=resp.status_code, media_type=resp.media_type)
+
+                        if wants_text:
+                            try:
+                                text = body_bytes.decode('utf-8')
+                            except Exception:
+                                text = ''
+                            from .utils import redact_secrets
+
+                            red = redact_secrets(text)
+                            new = Response(content=red, status_code=resp.status_code, media_type=resp.media_type)
+                            _copy_headers(resp, new)
+                            return new
+                    except Exception:
+                        return resp
+
+            except Exception:
+                return resp
+            return resp
+except Exception:
+    # If anything goes wrong registering middleware, avoid crashing import.
+    pass
 
 # Simple in-memory run store used when a DB is not available.
 _runs: Dict[int, Dict[str, Any]] = {}
@@ -158,7 +763,6 @@ def hash_password(password) -> str:
 
 def verify_password(password, hashed: str) -> bool:
     return hash_password(password) == hashed
-    return
 
 
 def _poll_schedulers(poll_interval: float = 1.0):
@@ -408,614 +1012,57 @@ def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
     if not user_id:
         raise HTTPException(status_code=401)
 
-    try:
-        if _DB_AVAILABLE:
+    # Try DB-backed detail first when available, otherwise fallback to in-memory
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            r = db.query(models.Run).filter(models.Run.id == run_id).first()
+            if not r:
+                raise HTTPException(status_code=404, detail='run not found')
+            out = {
+                'id': r.id,
+                'workflow_id': r.workflow_id,
+                'status': r.status,
+                'input_payload': getattr(r, 'input_payload', None),
+                'output_payload': getattr(r, 'output_payload', None),
+                'started_at': getattr(r, 'started_at', None),
+                'finished_at': getattr(r, 'finished_at', None),
+                'attempts': getattr(r, 'attempts', None),
+            }
+            # attach logs if available
             try:
-                db = SessionLocal()
-                r = db.query(models.Run).filter(models.Run.id == run_id).first()
-                if not r:
-                    raise HTTPException(status_code=404, detail='run not found')
-                out = {
-                    'id': r.id,
-                    'workflow_id': r.workflow_id,
-                    'status': r.status,
-                    'input_payload': r.input_payload,
-                    'output_payload': r.output_payload,
-                    'started_at': r.started_at,
-                    'finished_at': r.finished_at,
-                    'attempts': getattr(r, 'attempts', None),
-                }
-                # attach logs
                 rows = db.query(models.RunLog).filter(models.RunLog.run_id == run_id).order_by(models.RunLog.timestamp.asc()).all()
                 out_logs = []
                 for rr in rows:
                     out_logs.append({'id': rr.id, 'run_id': rr.run_id, 'node_id': rr.node_id, 'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None, 'level': rr.level, 'message': rr.message})
                 out['logs'] = out_logs
-                return out
-            except HTTPException:
-                raise
             except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-            finally:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-
-        # fallback to in-memory run
-        r = _runs.get(run_id)
-        if not r:
-            raise HTTPException(status_code=404, detail='run not found')
-        out = {'id': run_id, 'workflow_id': r.get('workflow_id'), 'status': r.get('status'), 'input_payload': None, 'output_payload': None, 'started_at': None, 'finished_at': None, 'attempts': None, 'logs': []}
-        return out
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail='internal error')
-
-
-@app.post('/api/providers')
-def create_provider(body: dict, authorization: Optional[str] = Header(None)):
-    # require authentication for provider creation
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-
-    secret_id = body.get('secret_id')
-    # validate secret exists in workspace if provided
-    if secret_id is not None:
-        ok = False
-        # prefer DB when available
-        if _DB_AVAILABLE:
-            try:
-                db = SessionLocal()
-                s = db.query(models.Secret).filter(models.Secret.id == secret_id, models.Secret.workspace_id == wsid).first()
-                if s:
-                    ok = True
-            except Exception:
-                pass
-            finally:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-        else:
-            s = None
-            if isinstance(secret_id, int):
-                s = _secrets.get(secret_id)
-            if s and s.get('workspace_id') == wsid:
-                ok = True
-        if not ok:
-            raise HTTPException(status_code=400, detail='secret_id not found in workspace')
-
-    # create in-memory provider
-    pid = _next.get('provider', 1)
-    _next['provider'] = pid + 1
-    _providers[pid] = {'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id, 'config': body.get('config')}
-
-    # attempt to persist to DB if available
-    created_db_id = None
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            p = models.Provider(workspace_id=wsid, secret_id=secret_id, type=body.get('type'), config=body.get('config') or {})
-            db.add(p)
-            db.commit()
-            created_db_id = p.id
+                out['logs'] = []
+            return out
+        except HTTPException:
+            raise
         except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    _add_audit(wsid, user_id, 'create_provider', object_type='provider', object_id=pid, detail=str(body.get('type')))
-    resp = {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
-    if created_db_id:
-        resp['db_id'] = created_db_id
-    return resp
-
-
-@app.get('/api/providers')
-def list_providers(authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        # require authentication for listing providers
-        raise HTTPException(status_code=401)
-
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-
-    items = []
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            rows = db.query(models.Provider).filter(models.Provider.workspace_id == wsid).all()
-            for r in rows:
-                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'type': r.type, 'secret_id': r.secret_id})
-            return items
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    for pid, p in _providers.items():
-        if p.get('workspace_id') == wsid:
-            items.append({'id': pid, 'workspace_id': p.get('workspace_id'), 'type': p.get('type'), 'secret_id': p.get('secret_id')})
-    return items
-
-
-# --- Missing endpoints expected by the frontend ---
-@app.post('/api/auth/register')
-def register(body: dict):
-    # Minimal register endpoint used by frontend/tests to obtain a token.
-    # Create a user and workspace and return a simple token of form 'token-{id}'.
-    email = body.get('email')
-    password = body.get('password')
-    role = body.get('role') or 'user'
-    if not email or not password:
-        raise HTTPException(status_code=400, detail='email and password required')
-    # prefer persisting to DB when available
-    created_user_id = None
-    hashed = hash_password(password)
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            u = models.User(email=email, hashed_password=hashed, role=role)
-            db.add(u)
-            db.commit()
-            created_user_id = u.id
-            # create workspace
-            ws = models.Workspace(owner_id=created_user_id, name=f'{email}-workspace')
-            db.add(ws)
-            db.commit()
-            wsid = ws.id
-            # mirror in-memory ids where possible
-            uid = _next['user']; _next['user'] += 1
-            _users[uid] = {'email': email, 'hashed_password': hashed, 'role': role}
-            _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    if not created_user_id:
-        # in-memory fallback
-        uid = _next['user']; _next['user'] += 1
-        _users[uid] = {'email': email, 'hashed_password': hashed, 'role': role}
-        wsid = _next['ws']; _next['ws'] += 1
-        _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
-        created_user_id = uid
-
-    token = f'token-{created_user_id}'
-    return {'access_token': token}
-
-
-@app.post('/api/auth/login')
-def login(body: dict):
-    email = body.get('email')
-    password = body.get('password')
-    if not email or not password:
-        raise HTTPException(status_code=400, detail='email and password required')
-
-    # try DB lookup first
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            u = db.query(models.User).filter(models.User.email == email).first()
-            if u and verify_password(password, u.hashed_password):
-                return {'access_token': f'token-{u.id}'}
-            raise HTTPException(status_code=401, detail='invalid credentials')
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    # in-memory fallback
-    for uid, u in _users.items():
-        if u.get('email') == email:
-            # support both hashed_password and legacy plaintext 'password' if present
-            stored_hashed = u.get('hashed_password')
-            if stored_hashed:
-                if verify_password(password, stored_hashed):
-                    return {'access_token': f'token-{uid}'}
-            else:
-                if u.get('password') == password:
-                    return {'access_token': f'token-{uid}'}
-            break
-    raise HTTPException(status_code=401, detail='invalid credentials')
-
-
-@app.post('/api/secrets')
-def create_secret(body: dict, authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-    name = body.get('name')
-    value = body.get('value')
-    sid = _next['secret']; _next['secret'] += 1
-    _secrets[sid] = {'workspace_id': wsid, 'name': name, 'value': value}
-    _add_audit(wsid, user_id, 'create_secret', object_type='secret', object_id=sid, detail=name)
-    # attempt to persist
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            s = models.Secret(workspace_id=wsid, name=name, encrypted_value=str(value), created_by=user_id)
-            db.add(s)
-            db.commit()
-            _secrets[sid]['db_id'] = s.id
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-    return {'id': sid}
-
-
-@app.get('/api/secrets')
-def list_secrets(authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        # require authentication for listing secrets
-        raise HTTPException(status_code=401)
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-    items = []
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            rows = db.query(models.Secret).filter(models.Secret.workspace_id == wsid).all()
-            for r in rows:
-                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'created_at': r.created_at})
-            return items
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    for sid, s in _secrets.items():
-        if s.get('workspace_id') == wsid:
-            items.append({'id': sid, 'workspace_id': s.get('workspace_id'), 'name': s.get('name')})
-    return items
-
-
-@app.post('/api/workflows')
-def create_workflow(body: dict, authorization: Optional[str] = Header(None)):
-    # require authentication for workflow creation
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-
-    # Basic graph validation similar to tests (keep minimal)
-    def _validate_graph(graph):
-        if graph is None:
-            return None
-        nodes = None
-        if isinstance(graph, dict):
-            nodes = graph.get('nodes')
-        elif isinstance(graph, list):
-            nodes = graph
-        else:
-            return ({'message': 'graph must be an object with "nodes" or an array of nodes'}, None)
-        if nodes is None:
-            return None
-        errors = []
-        for idx, el in enumerate(nodes):
-            node_type = None
-            cfg = None
-            node_id = None
-            if isinstance(el, dict) and 'data' in el:
-                data_field = el.get('data') or {}
-                label = (data_field.get('label') or '').lower()
-                cfg = data_field.get('config') or {}
-                node_id = el.get('id')
-                if 'http' in label:
-                    node_type = 'http'
-                elif 'llm' in label or label.startswith('llm'):
-                    node_type = 'llm'
-                elif 'webhook' in label:
-                    node_type = 'webhook'
-                else:
-                    node_type = label or None
-            elif isinstance(el, dict) and el.get('type'):
-                node_type = el.get('type')
-                cfg = el
-                node_id = el.get('id')
-            else:
-                errors.append(f'node at index {idx} has invalid shape')
-                continue
-            if not node_id:
-                errors.append(f'node at index {idx} missing id')
-            if node_type in ('http', 'http_request'):
-                url = None
-                if isinstance(cfg, dict):
-                    url = cfg.get('url') or (cfg.get('config') or {}).get('url')
-                if not url:
-                    errors.append(f'http node {node_id or idx} missing url')
-            if node_type == 'llm':
-                prompt = None
-                if isinstance(cfg, dict):
-                    prompt = cfg.get('prompt') if 'prompt' in cfg else (cfg.get('config') or {}).get('prompt')
-                if prompt is None:
-                    errors.append(f'llm node {node_id or idx} missing prompt')
-        if errors:
-            first = errors[0]
-            node_id = None
-            return ({'message': first, 'node_id': node_id}, node_id)
-        return None
-
-    # Primitive graph error handling: if graph provided but not dict/list return plain detail
-    if 'graph' in body:
-        g = body.get('graph')
-        if g is not None and not isinstance(g, (dict, list)):
-            msg = 'graph must be an object with "nodes" or an array of nodes'
-            raise HTTPException(status_code=400, detail=msg)
-
-    v = _validate_graph(body.get('graph'))
-    if v is not None:
-        detail = v[0]
-        if isinstance(detail, dict):
-            body_out = dict(detail)
-            body_out['detail'] = detail
-            return body_out
-        else:
-            return {'detail': str(detail)}
-
-    # persist workflow
-    wid = _next['workflow']; _next['workflow'] += 1
-    _workflows[wid] = {'workspace_id': wsid, 'name': body.get('name'), 'description': body.get('description'), 'graph': body.get('graph')}
-    # also try to persist to DB
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            w = models.Workflow(workspace_id=wsid, name=body.get('name') or 'Untitled', description=body.get('description'), graph=body.get('graph'))
-            db.add(w)
-            db.commit()
-            _workflows[wid]['db_id'] = w.id
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    return {'id': wid, 'workspace_id': wsid, 'name': body.get('name')}
-
-
-@app.get('/api/workflows')
-def list_workflows(authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        # require authentication for listing workflows
-        raise HTTPException(status_code=401)
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-    items = []
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
-            for r in rows:
-                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'graph': r.graph})
-            return items
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-    for wid, w in _workflows.items():
-        if w.get('workspace_id') == wsid:
-            items.append({'id': wid, 'workspace_id': w.get('workspace_id'), 'name': w.get('name'), 'graph': w.get('graph')})
-    return items
-
-
-# Scheduler endpoints expected by the frontend
-@app.post('/api/scheduler', status_code=201)
-def create_scheduler(body: dict, authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-
-    wid = body.get('workflow_id')
-    if not wid:
-        raise HTTPException(status_code=400, detail='workflow_id required')
-
-    # ensure workflow belongs to workspace
-    wf_ok = False
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            wf = db.query(models.Workflow).filter(models.Workflow.id == wid, models.Workflow.workspace_id == wsid).first()
-            if wf:
-                wf_ok = True
-        except Exception:
+            # on any DB error, fall through to in-memory
             pass
         finally:
             try:
                 db.close()
             except Exception:
                 pass
-    else:
-        w = _workflows.get(wid)
-        if w and w.get('workspace_id') == wsid:
-            wf_ok = True
-    if not wf_ok:
-        raise HTTPException(status_code=400, detail='workflow not found in workspace')
 
-    sid = _next.get('scheduler', 1)
-    _next['scheduler'] = sid + 1
-    entry = {'id': sid, 'workspace_id': wsid, 'workflow_id': wid, 'schedule': body.get('schedule'), 'description': body.get('description'), 'active': 1}
-    _schedulers[sid] = entry
-
-    _add_audit(wsid, user_id, 'create_scheduler', object_type='scheduler', object_id=sid, detail=str(body.get('description')))
-    return {'id': sid, 'workflow_id': wid, 'schedule': body.get('schedule')}
-
-
-@app.get('/api/scheduler')
-def list_scheduler(authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        raise HTTPException(status_code=400, detail='Workspace not found')
-    items = []
-    # prefer DB when available
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            rows = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.workspace_id == wsid).all()
-            for r in rows:
-                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'workflow_id': r.workflow_id, 'schedule': r.schedule, 'active': r.active, 'last_run_at': r.last_run_at})
-            return items
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    for sid, s in _schedulers.items():
-        if s.get('workspace_id') == wsid:
-            items.append(s)
-    return items
-
-
-@app.put('/api/scheduler/{sid}')
-def update_scheduler(sid: int, body: dict, authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-    s = _schedulers.get(sid)
-    if not s:
-        # if DB-backed, attempt to update there (best-effort)
-        if _DB_AVAILABLE:
-            try:
-                db = SessionLocal()
-                row = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.id == sid).first()
-                if not row:
-                    raise HTTPException(status_code=404)
-                if 'schedule' in body:
-                    row.schedule = body.get('schedule')
-                if 'description' in body:
-                    row.description = body.get('description')
-                if 'active' in body:
-                    row.active = 1 if body.get('active') else 0
-                db.add(row)
-                db.commit()
-                return {'id': row.id, 'workspace_id': row.workspace_id, 'workflow_id': row.workflow_id, 'schedule': row.schedule, 'active': row.active}
-            except HTTPException:
-                raise
-            except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-            finally:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-        raise HTTPException(status_code=404)
-    if 'schedule' in body:
-        s['schedule'] = body.get('schedule')
-    if 'description' in body:
-        s['description'] = body.get('description')
-    if 'active' in body:
-        s['active'] = 1 if body.get('active') else 0
-    return s
-
-
-@app.delete('/api/scheduler/{sid}')
-def delete_scheduler(sid: int, authorization: Optional[str] = Header(None)):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401)
-    if sid not in _schedulers:
-        # try DB fallback
-        if _DB_AVAILABLE:
-            try:
-                db = SessionLocal()
-                row = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.id == sid).first()
-                if not row:
-                    raise HTTPException(status_code=404)
-                db.delete(row)
-                db.commit()
-                return {'status': 'deleted'}
-            except HTTPException:
-                raise
-            except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-            finally:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-        raise HTTPException(status_code=404)
-    del _schedulers[sid]
-    return {'status': 'deleted'}
+    # In-memory fallback
+    r = _runs.get(run_id)
+    if not r:
+        raise HTTPException(status_code=404, detail='run not found')
+    out = {
+        'id': run_id,
+        'workflow_id': r.get('workflow_id'),
+        'status': r.get('status'),
+        'input_payload': r.get('input_payload'),
+        'output_payload': r.get('output_payload'),
+        'started_at': r.get('created_at'),
+        'finished_at': r.get('finished_at'),
+        'attempts': r.get('attempts'),
+        'logs': []
+    }
+    return out
