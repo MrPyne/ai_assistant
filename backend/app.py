@@ -1,12 +1,94 @@
 from fastapi import FastAPI, Request, Header, HTTPException
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import threading
+import time
+import os
+
+# Try to import DB helpers when available (tests run with and without DB)
+try:
+    from .database import SessionLocal
+    from . import models
+    _DB_AVAILABLE = True
+except Exception:
+    SessionLocal = None
+    models = None
+    _DB_AVAILABLE = False
 
 app = FastAPI()
 
 # Simple in-memory run store used when a DB is not available.
 _runs: Dict[int, Dict[str, Any]] = {}
 _run_counter = 0
+
+# Minimal in-memory user/workspace/provider/secret/scheduler stores used by
+# lightweight tests and by the DummyClient fallback in tests/conftest.py.
+_users: Dict[int, Dict[str, Any]] = {}
+_workspaces: Dict[int, Dict[str, Any]] = {}
+_schedulers: Dict[int, Dict[str, Any]] = {}
+_next = {'user': 1, 'ws': 1, 'scheduler': 1, 'run': 1}
+
+# Scheduler thread controls
+_scheduler_stop_event = threading.Event()
+_scheduler_thread = None
+
+
+def _user_from_token(authorization: Optional[str]) -> Optional[int]:
+    # Accept tokens of the form 'token-{id}' or 'Bearer token-{id}' for tests
+    if not authorization:
+        return None
+    parts = authorization.split()
+    token = parts[1] if len(parts) == 2 else parts[0]
+    if token.startswith('token-'):
+        try:
+            return int(token.split('-', 1)[1])
+        except Exception:
+            return None
+    return None
+
+
+def _workspace_for_user(user_id: int) -> Optional[int]:
+    # prefer DB lookup when available
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            ws = db.query(models.Workspace).filter(models.Workspace.owner_id == user_id).first()
+            if ws:
+                return ws.id
+        except Exception:
+            pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    for wid, w in _workspaces.items():
+        if w.get('owner_id') == user_id:
+            return wid
+    return None
+
+
+def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, detail=None):
+    # best-effort audit insertion to DB when available; otherwise no-op for now
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            al = models.AuditLog(workspace_id=workspace_id, user_id=user_id, action=action, object_type=object_type, object_id=object_id, detail=detail)
+            db.add(al)
+            db.commit()
+            return
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    return
 
 # Feature flag indicating whether a DB is present. Keep False to avoid
 # external DB dependencies in tests unless a real DB is wired up.
@@ -41,6 +123,26 @@ def manual_run(wf_id: int, request: Request, authorization: Optional[str] = Head
         'created_by': user_id,
         'created_at': datetime.utcnow().isoformat(),
     }
+    # attempt to persist Run to DB when available
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            r = models.Run(workflow_id=wf_id, status='queued')
+            db.add(r)
+            db.commit()
+            # mirror in-memory id mapping for consistency where possible
+            _runs[run_id]['db_id'] = r.id
+            _add_audit(_workspace_for_user(user_id), user_id, 'create_run', object_type='run', object_id=r.id, detail='manual')
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
     return {'run_id': run_id, 'status': 'queued'}
 
 
@@ -55,6 +157,30 @@ def list_runs(workflow_id: Optional[int] = None, limit: Optional[int] = 50, offs
     # If DB is available this implementation would query it. For now, use
     # the in-memory store so the endpoint works reliably in tests.
     try:
+        # prefer DB-backed listing when available
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                q = db.query(models.Run)
+                if workflow_id is not None:
+                    q = q.filter(models.Run.workflow_id == workflow_id)
+                total = q.count()
+                rows = q.order_by(models.Run.id.desc()).offset(offset).limit(limit).all()
+                items = []
+                for r in rows:
+                    items.append({'id': r.id, 'workflow_id': r.workflow_id, 'status': r.status, 'started_at': r.started_at, 'finished_at': r.finished_at, 'attempts': getattr(r, 'attempts', None)})
+                return {'items': items, 'total': total, 'limit': limit, 'offset': offset}
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
         runs: List[Dict[str, Any]] = []
         for rid, r in _runs.items():
             if workflow_id is None or r.get('workflow_id') == workflow_id:
