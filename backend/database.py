@@ -8,18 +8,25 @@ from sqlalchemy.orm import sessionmaker as async_sessionmaker
 
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/postgres')
 
-# Synchronous engine & session (used by sync workers / tasks)
-engine = create_engine(DATABASE_URL, echo=False)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Async engine & session (used by FastAPI endpoints)
-# Convert a typical postgresql:// URL to asyncpg driver if needed
-if DATABASE_URL.startswith('postgresql://'):
+# Determine safe sync and async URLs.
+# If DATABASE_URL explicitly uses the asyncpg dialect (postgresql+asyncpg://) we must not
+# pass that to the synchronous create_engine() — instead convert it to a sync URL.
+if DATABASE_URL.startswith('postgresql+asyncpg://'):
+    ASYNC_DATABASE_URL = DATABASE_URL
+    SYNC_DATABASE_URL = DATABASE_URL.replace('postgresql+asyncpg://', 'postgresql://', 1)
+elif DATABASE_URL.startswith('postgresql://'):
+    SYNC_DATABASE_URL = DATABASE_URL
     ASYNC_DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://', 1)
 else:
-    # Fallback: assume the URL is already an async-capable URL or sqlite — try to use as-is
+    # For other schemes (e.g., sqlite or custom) try to use the same URL for both
+    SYNC_DATABASE_URL = DATABASE_URL
     ASYNC_DATABASE_URL = DATABASE_URL
 
+# Synchronous engine & session (used by sync workers / tasks / existing sync code)
+engine = create_engine(SYNC_DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Async engine & session (used by FastAPI endpoints when using async DB access)
 async_engine = create_async_engine(ASYNC_DATABASE_URL, echo=False, future=True)
 AsyncSessionLocal = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 

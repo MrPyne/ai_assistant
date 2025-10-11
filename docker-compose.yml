@@ -7,9 +7,6 @@ services:
       - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - appnet
-    depends_on:
-      - web
-      - frontend
 
   web:
     build:
@@ -21,7 +18,11 @@ services:
     environment:
       DEBUG: "${DEBUG:-0}"
       PORT: "${PORT:-8000}"
-      DATABASE_URL: "${DATABASE_URL}"
+      # Provide a sensible default that points at the `db` service when
+      # DATABASE_URL is not set in the host environment. If you prefer to
+      # override this (for e.g. remote DBs), set DATABASE_URL in your
+      # environment or a .env file used by docker-compose.
+      DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}"
       CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
       CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
       ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
@@ -40,7 +41,7 @@ services:
       - appnet
     environment:
       DEBUG: "${DEBUG:-0}"
-      DATABASE_URL: "${DATABASE_URL}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}"
       CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
       CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
       ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
@@ -76,6 +77,11 @@ services:
       retries: 5
     networks:
       - appnet
+    # Persist Postgres data to a named volume so stopping/restarting the
+    # compose stack doesn't lose the database files. Avoid using anonymous
+    # volumes or storing DB files only inside the container filesystem.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
 
   redis:
     image: redis:6
@@ -91,3 +97,7 @@ services:
 networks:
   appnet:
     driver: bridge
+
+volumes:
+  pgdata:
+    driver: local

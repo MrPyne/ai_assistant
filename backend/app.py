@@ -66,7 +66,11 @@ _run_counter = 0
 _users: Dict[int, Dict[str, Any]] = {}
 _workspaces: Dict[int, Dict[str, Any]] = {}
 _schedulers: Dict[int, Dict[str, Any]] = {}
-_next = {'user': 1, 'ws': 1, 'scheduler': 1, 'run': 1}
+_providers: Dict[int, Dict[str, Any]] = {}
+_secrets: Dict[int, Dict[str, Any]] = {}
+_workflows: Dict[int, Dict[str, Any]] = {}
+_webhooks: Dict[int, Dict[str, Any]] = {}
+_next = {'user': 1, 'ws': 1, 'scheduler': 1, 'run': 1, 'provider': 1, 'secret': 1, 'workflow': 1, 'webhook': 1}
 
 # Scheduler thread controls
 _scheduler_stop_event = threading.Event()
@@ -455,19 +459,10 @@ def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
 
 @app.post('/api/providers')
 def create_provider(body: dict, authorization: Optional[str] = Header(None)):
-    # allow creating a provider without explicit auth in lightweight tests;
-    # create a default user/workspace if none exist to mirror TestClient
+    # require authentication for provider creation
     user_id = _user_from_token(authorization)
     if not user_id:
-        if not _users:
-            uid = _next['user']; _next['user'] += 1
-            _users[uid] = {'email': 'default@example.com', 'password': 'pass', 'role': 'user'}
-            wsid = _next['ws']; _next['ws'] += 1
-            _workspaces[wsid] = {'owner_id': uid, 'name': f'default-workspace'}
-            user_id = uid
-        else:
-            # fall back to the first user
-            user_id = list(_users.keys())[0]
+        raise HTTPException(status_code=401)
 
     wsid = _workspace_for_user(user_id)
     if not wsid:
@@ -494,7 +489,7 @@ def create_provider(body: dict, authorization: Optional[str] = Header(None)):
         else:
             s = None
             if isinstance(secret_id, int):
-                s = _runs.get(secret_id)
+                s = _secrets.get(secret_id)
             if s and s.get('workspace_id') == wsid:
                 ok = True
         if not ok:
@@ -529,14 +524,16 @@ def create_provider(body: dict, authorization: Optional[str] = Header(None)):
     resp = {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
     if created_db_id:
         resp['db_id'] = created_db_id
-    return {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
+    return resp
 
 
 @app.get('/api/providers')
 def list_providers(authorization: Optional[str] = Header(None)):
     user_id = _user_from_token(authorization)
     if not user_id:
+        # require authentication for listing providers
         raise HTTPException(status_code=401)
+
     wsid = _workspace_for_user(user_id)
     if not wsid:
         raise HTTPException(status_code=400, detail='Workspace not found')
@@ -564,3 +561,461 @@ def list_providers(authorization: Optional[str] = Header(None)):
         if p.get('workspace_id') == wsid:
             items.append({'id': pid, 'workspace_id': p.get('workspace_id'), 'type': p.get('type'), 'secret_id': p.get('secret_id')})
     return items
+
+
+# --- Missing endpoints expected by the frontend ---
+@app.post('/api/auth/register')
+def register(body: dict):
+    # Minimal register endpoint used by frontend/tests to obtain a token.
+    # Create a user and workspace and return a simple token of form 'token-{id}'.
+    email = body.get('email')
+    password = body.get('password')
+    role = body.get('role') or 'user'
+    if not email or not password:
+        raise HTTPException(status_code=400, detail='email and password required')
+    # prefer persisting to DB when available
+    created_user_id = None
+    hashed = hash_password(password)
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            u = models.User(email=email, hashed_password=hashed, role=role)
+            db.add(u)
+            db.commit()
+            created_user_id = u.id
+            # create workspace
+            ws = models.Workspace(owner_id=created_user_id, name=f'{email}-workspace')
+            db.add(ws)
+            db.commit()
+            wsid = ws.id
+            # mirror in-memory ids where possible
+            uid = _next['user']; _next['user'] += 1
+            _users[uid] = {'email': email, 'hashed_password': hashed, 'role': role}
+            _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    if not created_user_id:
+        # in-memory fallback
+        uid = _next['user']; _next['user'] += 1
+        _users[uid] = {'email': email, 'hashed_password': hashed, 'role': role}
+        wsid = _next['ws']; _next['ws'] += 1
+        _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
+        created_user_id = uid
+
+    token = f'token-{created_user_id}'
+    return {'access_token': token}
+
+
+@app.post('/api/auth/login')
+def login(body: dict):
+    email = body.get('email')
+    password = body.get('password')
+    if not email or not password:
+        raise HTTPException(status_code=400, detail='email and password required')
+
+    # try DB lookup first
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            u = db.query(models.User).filter(models.User.email == email).first()
+            if u and verify_password(password, u.hashed_password):
+                return {'access_token': f'token-{u.id}'}
+            raise HTTPException(status_code=401, detail='invalid credentials')
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    # in-memory fallback
+    for uid, u in _users.items():
+        if u.get('email') == email:
+            # support both hashed_password and legacy plaintext 'password' if present
+            stored_hashed = u.get('hashed_password')
+            if stored_hashed:
+                if verify_password(password, stored_hashed):
+                    return {'access_token': f'token-{uid}'}
+            else:
+                if u.get('password') == password:
+                    return {'access_token': f'token-{uid}'}
+            break
+    raise HTTPException(status_code=401, detail='invalid credentials')
+
+
+@app.post('/api/secrets')
+def create_secret(body: dict, authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+    name = body.get('name')
+    value = body.get('value')
+    sid = _next['secret']; _next['secret'] += 1
+    _secrets[sid] = {'workspace_id': wsid, 'name': name, 'value': value}
+    _add_audit(wsid, user_id, 'create_secret', object_type='secret', object_id=sid, detail=name)
+    # attempt to persist
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            s = models.Secret(workspace_id=wsid, name=name, encrypted_value=str(value), created_by=user_id)
+            db.add(s)
+            db.commit()
+            _secrets[sid]['db_id'] = s.id
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    return {'id': sid}
+
+
+@app.get('/api/secrets')
+def list_secrets(authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        # require authentication for listing secrets
+        raise HTTPException(status_code=401)
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+    items = []
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            rows = db.query(models.Secret).filter(models.Secret.workspace_id == wsid).all()
+            for r in rows:
+                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'created_at': r.created_at})
+            return items
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    for sid, s in _secrets.items():
+        if s.get('workspace_id') == wsid:
+            items.append({'id': sid, 'workspace_id': s.get('workspace_id'), 'name': s.get('name')})
+    return items
+
+
+@app.post('/api/workflows')
+def create_workflow(body: dict, authorization: Optional[str] = Header(None)):
+    # require authentication for workflow creation
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+
+    # Basic graph validation similar to tests (keep minimal)
+    def _validate_graph(graph):
+        if graph is None:
+            return None
+        nodes = None
+        if isinstance(graph, dict):
+            nodes = graph.get('nodes')
+        elif isinstance(graph, list):
+            nodes = graph
+        else:
+            return ({'message': 'graph must be an object with "nodes" or an array of nodes'}, None)
+        if nodes is None:
+            return None
+        errors = []
+        for idx, el in enumerate(nodes):
+            node_type = None
+            cfg = None
+            node_id = None
+            if isinstance(el, dict) and 'data' in el:
+                data_field = el.get('data') or {}
+                label = (data_field.get('label') or '').lower()
+                cfg = data_field.get('config') or {}
+                node_id = el.get('id')
+                if 'http' in label:
+                    node_type = 'http'
+                elif 'llm' in label or label.startswith('llm'):
+                    node_type = 'llm'
+                elif 'webhook' in label:
+                    node_type = 'webhook'
+                else:
+                    node_type = label or None
+            elif isinstance(el, dict) and el.get('type'):
+                node_type = el.get('type')
+                cfg = el
+                node_id = el.get('id')
+            else:
+                errors.append(f'node at index {idx} has invalid shape')
+                continue
+            if not node_id:
+                errors.append(f'node at index {idx} missing id')
+            if node_type in ('http', 'http_request'):
+                url = None
+                if isinstance(cfg, dict):
+                    url = cfg.get('url') or (cfg.get('config') or {}).get('url')
+                if not url:
+                    errors.append(f'http node {node_id or idx} missing url')
+            if node_type == 'llm':
+                prompt = None
+                if isinstance(cfg, dict):
+                    prompt = cfg.get('prompt') if 'prompt' in cfg else (cfg.get('config') or {}).get('prompt')
+                if prompt is None:
+                    errors.append(f'llm node {node_id or idx} missing prompt')
+        if errors:
+            first = errors[0]
+            node_id = None
+            return ({'message': first, 'node_id': node_id}, node_id)
+        return None
+
+    # Primitive graph error handling: if graph provided but not dict/list return plain detail
+    if 'graph' in body:
+        g = body.get('graph')
+        if g is not None and not isinstance(g, (dict, list)):
+            msg = 'graph must be an object with "nodes" or an array of nodes'
+            raise HTTPException(status_code=400, detail=msg)
+
+    v = _validate_graph(body.get('graph'))
+    if v is not None:
+        detail = v[0]
+        if isinstance(detail, dict):
+            body_out = dict(detail)
+            body_out['detail'] = detail
+            return body_out
+        else:
+            return {'detail': str(detail)}
+
+    # persist workflow
+    wid = _next['workflow']; _next['workflow'] += 1
+    _workflows[wid] = {'workspace_id': wsid, 'name': body.get('name'), 'description': body.get('description'), 'graph': body.get('graph')}
+    # also try to persist to DB
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            w = models.Workflow(workspace_id=wsid, name=body.get('name') or 'Untitled', description=body.get('description'), graph=body.get('graph'))
+            db.add(w)
+            db.commit()
+            _workflows[wid]['db_id'] = w.id
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    return {'id': wid, 'workspace_id': wsid, 'name': body.get('name')}
+
+
+@app.get('/api/workflows')
+def list_workflows(authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        # require authentication for listing workflows
+        raise HTTPException(status_code=401)
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+    items = []
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
+            for r in rows:
+                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'graph': r.graph})
+            return items
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    for wid, w in _workflows.items():
+        if w.get('workspace_id') == wsid:
+            items.append({'id': wid, 'workspace_id': w.get('workspace_id'), 'name': w.get('name'), 'graph': w.get('graph')})
+    return items
+
+
+# Scheduler endpoints expected by the frontend
+@app.post('/api/scheduler', status_code=201)
+def create_scheduler(body: dict, authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+
+    wid = body.get('workflow_id')
+    if not wid:
+        raise HTTPException(status_code=400, detail='workflow_id required')
+
+    # ensure workflow belongs to workspace
+    wf_ok = False
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            wf = db.query(models.Workflow).filter(models.Workflow.id == wid, models.Workflow.workspace_id == wsid).first()
+            if wf:
+                wf_ok = True
+        except Exception:
+            pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    else:
+        w = _workflows.get(wid)
+        if w and w.get('workspace_id') == wsid:
+            wf_ok = True
+    if not wf_ok:
+        raise HTTPException(status_code=400, detail='workflow not found in workspace')
+
+    sid = _next.get('scheduler', 1)
+    _next['scheduler'] = sid + 1
+    entry = {'id': sid, 'workspace_id': wsid, 'workflow_id': wid, 'schedule': body.get('schedule'), 'description': body.get('description'), 'active': 1}
+    _schedulers[sid] = entry
+
+    _add_audit(wsid, user_id, 'create_scheduler', object_type='scheduler', object_id=sid, detail=str(body.get('description')))
+    return {'id': sid, 'workflow_id': wid, 'schedule': body.get('schedule')}
+
+
+@app.get('/api/scheduler')
+def list_scheduler(authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+    wsid = _workspace_for_user(user_id)
+    if not wsid:
+        raise HTTPException(status_code=400, detail='Workspace not found')
+    items = []
+    # prefer DB when available
+    if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            rows = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.workspace_id == wsid).all()
+            for r in rows:
+                items.append({'id': r.id, 'workspace_id': r.workspace_id, 'workflow_id': r.workflow_id, 'schedule': r.schedule, 'active': r.active, 'last_run_at': r.last_run_at})
+            return items
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    for sid, s in _schedulers.items():
+        if s.get('workspace_id') == wsid:
+            items.append(s)
+    return items
+
+
+@app.put('/api/scheduler/{sid}')
+def update_scheduler(sid: int, body: dict, authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+    s = _schedulers.get(sid)
+    if not s:
+        # if DB-backed, attempt to update there (best-effort)
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                row = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.id == sid).first()
+                if not row:
+                    raise HTTPException(status_code=404)
+                if 'schedule' in body:
+                    row.schedule = body.get('schedule')
+                if 'description' in body:
+                    row.description = body.get('description')
+                if 'active' in body:
+                    row.active = 1 if body.get('active') else 0
+                db.add(row)
+                db.commit()
+                return {'id': row.id, 'workspace_id': row.workspace_id, 'workflow_id': row.workflow_id, 'schedule': row.schedule, 'active': row.active}
+            except HTTPException:
+                raise
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        raise HTTPException(status_code=404)
+    if 'schedule' in body:
+        s['schedule'] = body.get('schedule')
+    if 'description' in body:
+        s['description'] = body.get('description')
+    if 'active' in body:
+        s['active'] = 1 if body.get('active') else 0
+    return s
+
+
+@app.delete('/api/scheduler/{sid}')
+def delete_scheduler(sid: int, authorization: Optional[str] = Header(None)):
+    user_id = _user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401)
+    if sid not in _schedulers:
+        # try DB fallback
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                row = db.query(models.SchedulerEntry).filter(models.SchedulerEntry.id == sid).first()
+                if not row:
+                    raise HTTPException(status_code=404)
+                db.delete(row)
+                db.commit()
+                return {'status': 'deleted'}
+            except HTTPException:
+                raise
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        raise HTTPException(status_code=404)
+    del _schedulers[sid]
+    return {'status': 'deleted'}

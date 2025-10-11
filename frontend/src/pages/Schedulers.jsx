@@ -11,8 +11,21 @@ export default function Schedulers(){
     if (!token) return
     setLoading(true)
     fetch('/api/scheduler', { headers: { Authorization: `Bearer ${token}` }})
-      .then(r=>r.json())
-      .then(data=>{ setEntries(data || []); setLoading(false) })
+      .then(async r=>{
+        let data
+        try {
+          data = await r.json()
+        } catch (e) {
+          data = null
+        }
+        if (!r.ok) {
+          const msg = (data && (data.detail || data.message)) || `Request failed with status ${r.status}`
+          throw new Error(msg)
+        }
+        // ensure we always set an array for entries
+        setEntries(Array.isArray(data) ? data : [])
+        setLoading(false)
+      })
       .catch(err=>{ setError(err.message || 'Failed'); setLoading(false) })
   },[token])
 
