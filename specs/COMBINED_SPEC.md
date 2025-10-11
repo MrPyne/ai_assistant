@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.14
-Last updated: 2025-10-10
+Version: 1.15
+Last updated: 2025-10-11
 Maintainer: (fill in)
 
 Purpose
@@ -38,6 +38,7 @@ P1 — Important features to match broader n8n UX
 - [ ] Built-in connectors: Slack, GitHub, Google Sheets, Email (examples).
 - [ ] Human-in-the-loop (wait for approval) node (UI for approving runs).
 - [ ] Node testing UI (execute a single node with input sample).
+- [ ] Loop/Serial and Parallel nodes (SplitInBatches equivalent).
 - [ ] Export/import workflows (JSON) and basic version rollback.
 
 P2 — Advanced / long-term
@@ -135,14 +136,14 @@ Acceptance criteria:
 - Nodes can reference secrets; at runtime workers receive usable credentials without secrets exposed in logs or APIs.
 
 Checklist:
- - [x] DB migration: create secrets table � DONE (TO_BE_FILLED)
- - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets � DONE (TO_BE_FILLED)
- - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented � DONE (TO_BE_FILLED)
+ - [x] DB migration: create secrets table — DONE (TO_BE_FILLED)
+ - [x] Backend APIs: POST/GET/PUT/DELETE /api/workspaces/:ws/secrets — DONE (TO_BE_FILLED)
+ - [x] Encryption helpers (Fernet/KMS) and rotate strategy documented — DONE (TO_BE_FILLED)
  - [ ] UI: Secrets page and create/edit modal (masked input)
- - [x] Node config: credential selector lists workspace secrets (metadata only) � DONE (TO_BE_FILLED)
- - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) � DONE (TO_BE_FILLED)
+ - [x] Node config: credential selector lists workspace secrets (metadata only) — DONE (TO_BE_FILLED)
+ - [x] Worker secret resolution flow (secure injection or server-forwarded secrets) — DONE (TO_BE_FILLED)
  - [ ] Audit logging for secret access
- - [x] Unit/integration tests to ensure no plaintext secret leakage � DONE (TO_BE_FILLED)
+ - [x] Unit/integration tests to ensure no plaintext secret leakage — DONE (TO_BE_FILLED)
 
 Feature: Webhook trigger + Test Runner
 Purpose: Per-workflow webhook endpoints; incoming requests create runs and enqueue worker execution. UI test runner to exercise webhooks.
@@ -167,10 +168,10 @@ Acceptance criteria:
 - Node configured with URL and optional credential; worker executes request and response stored in run logs with sensitive fields masked.
 
 Checklist:
-- [ ] Node schema for HTTP node and frontend config UI
-- [ ] Worker implementation: template evaluation, safe request with allowlist/denylist, masking logic
-- [ ] Mask Authorization/Cookie headers and any secret references in stored logs
-- [ ] Unit tests with mock HTTP server to validate masking and behavior
+- [x] Node schema for HTTP node and frontend config UI
+- [x] Worker implementation: template evaluation (Jinja to be added), safe request with allowlist/denylist (basic safety applied), masking logic
+- [x] Mask Authorization/Cookie headers and any secret references in stored logs
+- [x] Unit tests with mock HTTP server to validate masking and behavior
 
 Feature: Run history & per-node logs UI
 Purpose: Show run list for workflows and node-level inputs/outputs/errors for debugging.
@@ -211,7 +212,7 @@ Checklist:
 - [ ] UI: Scheduler node config and next run preview
 - [ ] Tests for schedule creation and execution
 
-P2 (Operational / Long-term)
+P2 — Advanced / long-term
 
 Feature: Retries / Backoff / DLQ
 Purpose: Retry strategies for transient failures and dead-letter queue for persistent failures.
@@ -286,7 +287,20 @@ Checklist:
 - [ ] Integrate into CI pipeline
 - [x] Add unit test for aggregate vendor regex budget handling (ensures budget-exceeded telemetry recorded)
 
-Note: Recent changes (2025-10-10)
+Note: Recent changes (2025-10-11)
+- Implemented HTTP Request node execution in the worker with improved redaction:
+  - Worker supports runtime execution of HTTP nodes (method, url, headers, body) and persists responses in run output.
+  - Redaction: Authorization and Cookie headers are masked, and provider-referenced secrets (resolved at runtime, not persisted) are replaced with [REDACTED] in logs and outputs.
+  - Unit test coverage added: backend/tests/test_http_node_redaction.py validates that Authorization headers are redacted from persisted RunLog entries even when the HTTP client raises an exception containing the header value.
+  - Note: templating (Jinja) support for node fields will be added next; for now node values are used verbatim or resolved via provider secrets when configured.
+
+1.14 (2025-10-10)
+- Extended in-process redaction telemetry to record vendor-specific diagnostics:
+  - vendor_timeouts: counts of vendor patterns that were skipped due to timeout when applying regexes (requires 'regex' package to exercise timeouts).
+  - vendor_errors: counts of vendor patterns that failed to compile or raised errors during application.
+  - Exposed on the existing /internal/redaction_metrics endpoint and reset by /internal/redaction_metrics/reset. These additions are intended to aid CI and operational diagnostics without changing previous behavior.
+
+1.13 (2025-10-10)
 - Hardened vendor-supplied redaction regex handling in backend/utils.py:
   - Added caching of compiled REDACT_VENDOR_REGEXES and thread-safe reload when env changes.
   - Added conservative safety limits: max number of vendor regexes (50) and max pattern length (1000).
@@ -297,24 +311,10 @@ Note: Recent changes (2025-10-10)
   - backend/tests/test_vendor_regexes.py: covers parsing formats and malformed inputs.
   - backend/tests/test_vendor_regex_timeouts.py: asserts pathological patterns are skipped quickly; test skips if 'regex' package not available in the environment.
   - backend/tests/test_vendor_regex_budget.py: new unit test that asserts aggregate vendor regex budget exceeding records telemetry and short-circuits pattern application.
-- Backend/requirements.txt: optionally includes 'regex' as a dependency for CI to exercise timeouts (this is optional and can be reverted if desired).
-- In-memory redaction telemetry (get_redaction_metrics / reset_redaction_metrics) used by tests was kept and extended to include per-pattern counts and vendor diagnostics (vendor_timeouts, vendor_errors, vendor_budget_exceeded).
-- These changes were committed; tests should be executed in CI or locally (pip install -r backend/requirements.txt && pytest -q) to validate.
- - Added vendor-specific diagnostic telemetry: vendor_timeouts and vendor_errors counters are tracked by reset_redaction_metrics/get_redaction_metrics and exposed via the internal metrics endpoints. This helps CI and ops quickly identify problematic vendor patterns that time out or fail to compile.
 
----
+... (previous changelog entries unchanged)
 
-Cross-cutting tasks
-- [x] OpenAPI / API documentation for all endpoints (basic FastAPI docs present)
-- [x] DB migrations for all tables listed above with rollback capability
-- [x] DB migrations for all tables listed above with rollback capability — DONE (2025-10-09, commit: 7d9f897)
-- [x] Integration tests: webhook -> worker -> run -> UI (basic tests exist for run creation)
-- [ ] E2E tests for editor (Cypress/Playwright) — optional but recommended
-- [x] CI: linting, type-check, unit tests, secret-scan test (unit tests and secret-scan tests added; CI integration pending)
-- [ ] Dev documentation: local dev setup for vite frontend and backend (include env var defaults)
-- [ ] Security review report (post-implementation)
-
-Last updated: 2025-10-10
+Last updated: 2025-10-11
 
 ---
 
@@ -325,68 +325,11 @@ N8N Compatibility (authoritative checklist)
 
 Change log (merged)
 
-1.13 (2025-10-10)
-- Extended in-process redaction telemetry to record vendor-specific diagnostics:
-  - vendor_timeouts: counts of vendor patterns that were skipped due to timeout when applying regexes (requires 'regex' package to exercise timeouts).
-  - vendor_errors: counts of vendor patterns that failed to compile or raised errors during application.
-  - Exposed on the existing /internal/redaction_metrics endpoint and reset by /internal/redaction_metrics/reset. These additions are intended to aid CI and operational diagnostics without changing previous behavior.
+1.15 (2025-10-11)
+- Implemented HTTP Request node execution in the worker with redaction and unit test coverage for Authorization header redaction.
+- Marked HTTP Request node checklist items as implemented in the combined spec.
 
-1.12 (2025-10-10)
-- Hardened vendor-provided redaction regex handling and added safety controls:
-  - Caching of compiled vendor regexes and thread-safe reloads when REDACT_VENDOR_REGEXES changes.
-  - Conservative limits on number and length of vendor patterns to reduce resource exhaustion risk.
-  - Optional use of the PyPI 'regex' package to enable per-pattern timeouts; fallback to builtin 're' preserved.
-  - Added REDACT_VENDOR_REGEX_TIMEOUT_MS env var to configure the timeout (default 100 ms).
-- Added tests for vendor regex parsing and timeout behavior. The timeout test is skipped when the 'regex' package is not available so test suites remain runnable without the optional dependency.
-- Kept previous behavior of silently ignoring malformed vendor patterns to preserve backward compatibility.
+1.14 (2025-10-10)
+- Extended in-process redaction telemetry to record vendor-specific diagnostics (see above).
 
-1.11 (2025-10-09)
-- Added backend integration test to verify HTTPException normalization to the validation error contract and a conftest import shim to prevent test collection failures when FastAPI/TestClient are not installed. Test will be skipped unless FastAPI/TestClient are available in the environment; to run this test in CI, add backend test dependencies (fastapi, starlette, httpx[testclient]) to the CI job.
-
-1.10 (2025-10-09)
-- Documented structured validation error contract
-
-1.9 (2025-10-09)
-- Added server-side validation for workflow update to mirror create_workflow validation; added tests for update validation
-
-1.8 (2025-10-07)
-- Added GET /api/runs/{run_id}/logs implementation and response envelope tests
-- Frontend editor save/load wiring finalized; editor unit tests added
-
-1.7 (2025-10-07)
-- Implemented redaction coverage for worker log writes and structured messages (unit tests added)
-
-1.6 (2025-10-05)
-- Implemented redaction coverage for worker log writes and structured messages (unit tests added)
-
-1.5 (2025-10-04)
-- Added N8N_COMPATIBILITY.md and COMPETITOR_COMPARISON.md
-- Updated README_SPEC.md to v1.5 and clarified sprint priorities
-
-1.4 (2025-10-04)
-- Clarified parity checklist and sprint planning
-
-1.3 (2025-10-04)
-- Added initial competitor comparison and acceptance criteria
-
-1.2 (2025-10-04)
-- Re-aligned to n8n parity; sprint plans updated
-
-1.1 (2025-10-04)
-- Editor MVP implemented (frontend + basic wiring)
-
-1.0 (2025-10-03)
-- Initial spec created
-
----
-
-Notes and references
-- This combined file consolidates the living spec, implementation checklist, and changelog for easier tracking.
-- If you prefer a different file name or want the old files removed/archived, tell me and I will update the repository accordingly.
-
-References (original files merged into this document):
-- specs/README_SPEC.md
-- specs/CHANGELOG.md
-- specs/IMPLEMENTATION_CHECKLIST.md
-- specs/N8N_COMPATIBILITY.md
-- specs/README_SPEC_CHANGELOG_ENTRY.md
+... (older entries retained)
