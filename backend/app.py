@@ -129,6 +129,31 @@ def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, 
             except Exception:
                 pass
     return
+
+
+# Password helpers used by tests
+import hashlib as _hashlib
+
+
+def hash_password(password) -> str:
+    """Simple pbkdf2-hmac-sha256 based helper used by tests. Accepts str or bytes.
+    Not intended for production use; kept minimal to satisfy unit tests.
+    """
+    if isinstance(password, bytes):
+        try:
+            password = password.decode('utf-8')
+        except Exception:
+            # latin-1 fallback for arbitrary bytes
+            password = password.decode('latin-1')
+    if not isinstance(password, str):
+        password = str(password)
+    salt = os.environ.get('PASSWORD_SALT', 'testsalt').encode()
+    dk = _hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return dk.hex()
+
+
+def verify_password(password, hashed: str) -> bool:
+    return hash_password(password) == hashed
     return
 
 
