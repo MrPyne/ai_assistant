@@ -142,6 +142,7 @@ from datetime import datetime
 import threading
 import time
 import os
+from .utils import redact_secrets
 
 # Lightweight response redaction helper used by the fallback FastAPI above.
 def _apply_redaction(res):
@@ -1293,6 +1294,220 @@ def manual_run(wf_id: int, request: Request, authorization: Optional[str] = Head
             except Exception:
                 pass
     return {'run_id': run_id, 'status': 'queued'}
+
+
+@app.post('/api/node_test')
+def node_test(body: dict):
+    """Execute a single node in-memory for testing. Accepts JSON body with:
+      {"node": {...}, "sample_input": {...}}
+
+    This runs without persisting logs or runs to the DB. It will still read
+    provider/secret information when a DB is available to resolve secrets,
+    but it will not write any rows.
+    """
+    node = body.get('node') if isinstance(body, dict) else None
+    sample_input = body.get('sample_input') if isinstance(body, dict) else {}
+    warnings: List[str] = []
+
+    if not node or not isinstance(node, dict):
+        return {'error': 'node is required and must be an object'}
+
+    # Helper: safe Jinja rendering like tasks._safe_render when available
+    try:
+        from jinja2.sandbox import SandboxedEnvironment as JinjaEnv
+    except Exception:
+        JinjaEnv = None
+
+    def _safe_render(obj):
+        if JinjaEnv is None:
+            return obj
+        env = JinjaEnv()
+        ctx = {
+            'input': sample_input or {},
+            'run': {'id': None, 'workflow_id': None},
+            'now': datetime.utcnow().isoformat(),
+        }
+
+        def _render_str(s):
+            try:
+                if not isinstance(s, str):
+                    return s
+                tpl = env.from_string(s)
+                return tpl.render(**ctx)
+            except Exception:
+                return s
+
+        if isinstance(obj, str):
+            return _render_str(obj)
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                out[k] = _safe_render(v)
+            return out
+        if isinstance(obj, list):
+            return [_safe_render(v) for v in obj]
+        return obj
+
+    # DB access only for lookup; don't commit or write
+    db = None
+    provider = None
+    if '_DB_AVAILABLE' in globals() and _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            prov_id = node.get('provider_id') or node.get('provider')
+            if prov_id is not None:
+                try:
+                    provider = db.query(models.Provider).filter(models.Provider.id == prov_id).first()
+                except Exception:
+                    provider = None
+        except Exception:
+            provider = None
+
+    # LLM node
+    ntype = node.get('type')
+    if ntype == 'llm':
+        prompt = node.get('prompt', '')
+        try:
+            prompt = _safe_render(prompt)
+        except Exception:
+            pass
+
+        if provider is None:
+            warnings.append('No provider configured for node; returning mock response')
+            return {'result': {'text': '[mock] no provider configured'}, 'warnings': warnings}
+
+        # Delegate to adapter which itself respects is_live_llm_enabled
+        try:
+            from .adapters.openai_adapter import OpenAIAdapter
+            from .adapters.ollama_adapter import OllamaAdapter
+        except Exception:
+            OpenAIAdapter = None
+            OllamaAdapter = None
+
+        try:
+            if provider.type == 'openai' and OpenAIAdapter is not None:
+                adapter = OpenAIAdapter(provider, db=db)
+                resp = adapter.generate(prompt)
+            elif provider.type == 'ollama' and OllamaAdapter is not None:
+                adapter = OllamaAdapter(provider, db=db)
+                resp = adapter.generate(prompt)
+            else:
+                warnings.append(f'Unknown provider type: {getattr(provider, "type", None)}')
+                resp = {'text': '[mock] unknown provider'}
+        except Exception as e:
+            resp = {'error': str(e)}
+
+        try:
+            out = redact_secrets(resp)
+        except Exception:
+            out = resp
+        return {'result': out, 'warnings': warnings}
+
+    # HTTP node
+    if ntype in ('http', 'http_request'):
+        method = node.get('method', 'GET').upper()
+        url = node.get('url')
+        body_obj = node.get('body')
+        headers = node.get('headers') or {}
+
+        try:
+            url = _safe_render(url)
+            headers = _safe_render(headers) or {}
+            body_obj = _safe_render(body_obj)
+        except Exception:
+            pass
+
+        # Resolve provider secret to allow redaction of literal occurrences
+        known_secrets = []
+        prov_id = node.get('provider_id') or node.get('provider')
+        if prov_id and db is not None:
+            try:
+                from .models import Secret
+
+                prov = provider or db.query(models.Provider).filter(models.Provider.id == prov_id).first()
+                if prov and getattr(prov, 'secret_id', None):
+                    s = db.query(Secret).filter(Secret.id == prov.secret_id, Secret.workspace_id == prov.workspace_id).first()
+                    if s:
+                        try:
+                            val = __import__('backend.crypto', fromlist=['decrypt_value']).decrypt_value(s.encrypted_value)
+                            if val:
+                                known_secrets.append(val)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        def _replace_known_secrets_in_str(s: str) -> str:
+            if not s or not known_secrets:
+                return s
+            out = s
+            for ks in known_secrets:
+                try:
+                    if ks and ks in out:
+                        out = out.replace(ks, '[REDACTED]')
+                except Exception:
+                    continue
+            return out
+
+        def _replace_known_secrets(obj):
+            if isinstance(obj, str):
+                return _replace_known_secrets_in_str(obj)
+            if isinstance(obj, dict):
+                return {k: _replace_known_secrets(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_replace_known_secrets(v) for v in obj]
+            return obj
+
+        try:
+            live_http = os.getenv('LIVE_HTTP', 'false').lower() == 'true'
+            if not live_http:
+                class _DummyResp:
+                    def __init__(self):
+                        self.status_code = 200
+                        self.text = '[mock] http blocked by LIVE_HTTP'
+
+                    def json(self):
+                        raise ValueError('No JSON')
+
+                r = _DummyResp()
+            else:
+                import requests as _req
+
+                if method == 'GET':
+                    r = _req.get(url, headers=headers, params=body_obj, timeout=10)
+                else:
+                    r = _req.post(url, headers=headers, json=body_obj, timeout=10)
+
+            info_msg = f"HTTP {method} {url} -> status {getattr(r, 'status_code', None)}"
+            info_msg = _replace_known_secrets_in_str(info_msg)
+            try:
+                data = r.json()
+                result_data = _replace_known_secrets(data)
+            except Exception:
+                result_data = {'text': _replace_known_secrets(getattr(r, 'text', ''))}
+
+            try:
+                out = redact_secrets(result_data)
+            except Exception:
+                out = result_data
+            # include a best-effort info field (redacted)
+            return {'result': out, 'info': info_msg, 'warnings': warnings}
+        except Exception as e:
+            err = str(e)
+            err = _replace_known_secrets_in_str(err)
+            try:
+                out = redact_secrets({'error': err})
+            except Exception:
+                out = {'error': err}
+            return {'result': out, 'warnings': warnings}
+
+    # fallback/mock
+    res = {'text': f"[mock] node {node.get('id')}"}
+    try:
+        res = redact_secrets(res)
+    except Exception:
+        pass
+    return {'result': res, 'warnings': warnings}
 
 
 @app.get('/api/runs')
