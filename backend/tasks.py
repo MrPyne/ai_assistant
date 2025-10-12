@@ -423,6 +423,28 @@ def _convert_elements_to_runtime_nodes(elements):
     return runtime
 
 
+def _build_graph_struct(runtime_nodes, raw_edges=None):
+    """Build helper structures for traversal: node_map, adjacency (outgoing), incoming counts."""
+    node_map = {n.get('id'): n for n in runtime_nodes}
+    adjacency = {nid: [] for nid in node_map.keys()}
+    incoming = {nid: 0 for nid in node_map.keys()}
+
+    # edges may be provided as a list of react-flow edge objects
+    if raw_edges:
+        for e in raw_edges:
+            try:
+                src = str(e.get('source'))
+                tgt = str(e.get('target'))
+            except Exception:
+                continue
+            if src in adjacency:
+                adjacency[src].append(tgt)
+            if tgt in incoming:
+                incoming[tgt] = incoming.get(tgt, 0) + 1
+
+    return node_map, adjacency, incoming
+
+
 def process_run(run_id):
     """Process a run by id: record logs and update status. This function is
     intentionally simple and defensive to avoid introducing indentation or
@@ -464,9 +486,67 @@ def process_run(run_id):
 
         results = {}
         if nodes:
-            for n in nodes:
-                res = _execute_node(db, run, n)
-                results[n.get('id')] = res
+    # Build traversal structures. If the workflow graph provided
+    # a nodes/edges shape use edges to follow execution; otherwise
+    # fall back to sequential execution preserving existing
+    # behaviour for legacy flows.
+            raw_graph = wf.graph or {}
+            raw_edges = None
+            if isinstance(raw_graph, dict):
+                raw_edges = raw_graph.get('edges')
+
+            node_map, adjacency, incoming = _build_graph_struct(nodes, raw_edges)
+
+            # Start from nodes with no incoming edges to approximate
+            # entry points (webhook triggers etc.). If none found, fall
+            # back to the original order.
+            start_nodes = [nid for nid, cnt in incoming.items() if cnt == 0]
+            if not start_nodes:
+                start_nodes = [n.get('id') for n in nodes]
+
+            visited = set()
+            # We'll use a simple queue to process nodes in BFS order; when
+            # an executed node returns a 'routed_to' value attempt to map
+            # that to a node id and enqueue the target(s). This keeps
+            # traversal deterministic and easy to reason about.
+            from collections import deque
+            q = deque(start_nodes)
+            while q:
+                nid = q.popleft()
+                if nid in visited:
+                    continue
+                node = node_map.get(nid)
+                if not node:
+                    visited.add(nid)
+                    continue
+
+                res = _execute_node(db, run, node)
+                results[nid] = res
+                visited.add(nid)
+
+                # If node returned a routed_to target, prefer following
+                # that explicit routing. Otherwise follow adjacency list.
+                try:
+                    target = None
+                    if isinstance(res, dict):
+                        target = res.get('routed_to')
+                    if target:
+                        # target may be a single id or a list; coerce to list
+                        tlist = target if isinstance(target, list) else [target]
+                        for t in tlist:
+                            if t is None:
+                                continue
+                            t = str(t)
+                            if t in node_map and t not in visited:
+                                q.append(t)
+                    else:
+                        # enqueue outgoing edges
+                        for out in adjacency.get(nid, []) or []:
+                            if out and out not in visited:
+                                q.append(out)
+                except Exception:
+                    # non-fatal traversal error
+                    pass
         else:
             _write_log(db, run.id, None, 'warning', 'No nodes defined in workflow graph; finishing')
 

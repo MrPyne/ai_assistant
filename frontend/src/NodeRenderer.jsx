@@ -1,4 +1,5 @@
 import React from 'react'
+import { Handle, Position } from 'react-flow-renderer'
 
 function Icon({ type, size = 18 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
@@ -33,26 +34,59 @@ function Icon({ type, size = 18 }) {
   )
 }
 
-
-export default function NodeRenderer({ data }) {
-  const label = data && data.label ? data.label : ''
-  const config = data && data.config ? data.config : {}
+export default function NodeRenderer(props) {
+  // Be defensive: react-flow may pass different shapes depending on version.
+  const { data = {}, id, type: nodeType } = props || {}
+  const config = data && data.config && typeof data.config === 'object' ? data.config : {}
   const isInvalid = data && (data.validation_error || data.__validation_error)
 
-  let type = 'generic'
-  if (label && label.toLowerCase().includes('webhook')) type = 'webhook'
-  else if (label && (label.toLowerCase().includes('http') || label.toLowerCase().includes('request'))) type = 'http'
-  else if (label && (label.toLowerCase().includes('llm') || label.toLowerCase().includes('ai') || label.toLowerCase().includes('model'))) type = 'llm'
+  // Compute a human-friendly label with several fallbacks so nodes never render empty
+  const rawLabel = (typeof data.label === 'string' && data.label.trim()) ? data.label.trim() : null
+  const label = rawLabel || (nodeType === 'input' ? 'Webhook Trigger' : null) || nodeType || id || 'Node'
+
+  // infer icon type from label OR node type
+  let kind = 'generic'
+  const l = (label || '').toLowerCase()
+  if (l.includes('webhook')) kind = 'webhook'
+  else if (l.includes('http') || l.includes('request')) kind = 'http'
+  else if (l.includes('llm') || l.includes('ai') || l.includes('model')) kind = 'llm'
+
+  const isIf = l === 'if' || l === 'condition'
+  const isSwitch = l === 'switch'
 
   return (
-    <div className="node-card" tabIndex={0} style={isInvalid ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)' } : {}}>
+    <div
+      className="node-card"
+      tabIndex={0}
+      style={isInvalid ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)' } : {}}
+      data-node-id={id}
+    >
+      {/* Target / input handle on the left */}
+      <Handle type="target" id="in" position={Position.Left} className="rf-handle-left" />
+
       <div className="node-header">
-        <span className={`node-icon node-icon-${type}`} aria-hidden>
-          <Icon type={type} />
+        <span className={`node-icon node-icon-${kind}`} aria-hidden>
+          <Icon type={kind} />
         </span>
         <div className="label">{label}</div>
       </div>
-      <div className="node-meta">{Object.keys(config).length ? JSON.stringify(config) : ''}</div>
+
+      {/* show a minimal config preview so node isn't an empty box */}
+      <div className="node-meta">{Object.keys(config || {}).length ? JSON.stringify(config) : ''}</div>
+
+      {/* Outputs */}
+      {isIf ? (
+        <>
+          <Handle type="source" id="true" position={Position.Right} style={{ top: 18 }} className="rf-handle-true" />
+          <div className="handle-label handle-label-true">T</div>
+          <Handle type="source" id="false" position={Position.Right} style={{ bottom: 18 }} className="rf-handle-false" />
+          <div className="handle-label handle-label-false">F</div>
+        </>
+      ) : isSwitch ? (
+        <Handle type="source" id="out" position={Position.Right} className="rf-handle-right" />
+      ) : (
+        <Handle type="source" id="out" position={Position.Right} className="rf-handle-right" />
+      )}
     </div>
   )
 }

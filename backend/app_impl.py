@@ -545,6 +545,23 @@ try:
                 def _copy_headers(src, dst):
                     try:
                         for k, v in getattr(src, 'headers', {}).items():
+                            # Don't blindly copy certain hop-by-hop or length/encoding
+                            # headers from the original response. The middleware may
+                            # construct a new Response with a different body (and
+                            # therefore a different Content-Length). Copying the
+                            # original Content-Length, Transfer-Encoding or
+                            # Content-Encoding can produce a mismatch between the
+                            # declared length and actual bytes sent which leads to
+                            # h11 LocalProtocolError: "Too much data for declared
+                            # Content-Length". Skip those to allow Starlette/Uvicorn
+                            # to set correct values for the new response.
+                            try:
+                                if k and k.lower() in ('content-length', 'transfer-encoding', 'content-encoding'):
+                                    continue
+                            except Exception:
+                                # on any header key processing error, be conservative
+                                # and skip copying that header
+                                continue
                             dst.headers[k] = v
                     except Exception:
                         pass

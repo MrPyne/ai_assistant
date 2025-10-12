@@ -74,6 +74,20 @@ export default function Editor(){
     return headers
   }
 
+  const nodeOptions = (excludeId = null) => {
+    return nodes.filter(n => n && n.id && n.id !== excludeId).map(n => ({ id: n.id, label: (n.data && n.data.label) || n.id }))
+  }
+
+  const autoWireTarget = (fromId, toId) => {
+    if (!fromId || !toId) return
+    const edgeId = `${fromId}-${toId}`
+    setEdges((eds) => {
+      // avoid duplicates
+      if (eds.some(e => e.source === fromId && e.target === toId)) return eds
+      return eds.concat({ id: edgeId, source: String(fromId), target: String(toId) })
+    })
+  }
+
   const loadSecrets = async () => {
     try {
       const resp = await fetch('/api/secrets', { headers: authHeaders() })
@@ -532,6 +546,24 @@ export default function Editor(){
     setSelectedNodeId(null)
   }
 
+  // Keep selectedNodeId in sync with react-flow's node.selected property.
+  // Some interactions (or programmatic node updates) may update the nodes
+  // array and set a node's selected flag without emitting an onNodeClick
+  // event; ensure the right panel reflects the current selection.
+  useEffect(() => {
+    try {
+      const sel = nodes.find(n => n && (n.selected === true || String(n.id) === String(selectedNodeId)))
+      if (sel) {
+        if (String(sel.id) !== String(selectedNodeId)) setSelectedNodeId(String(sel.id))
+      } else {
+        if (selectedNodeId) setSelectedNodeId(null)
+      }
+    } catch (e) {
+      // defensive: don't break UI
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes])
+
   useEffect(() => {
     // initial load of providers and secrets only when token present
     if (token) {
@@ -556,7 +588,7 @@ export default function Editor(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logEventSource])
 
-  const selectedNode = selectedNodeId ? nodes.find(n => n.id === selectedNodeId) : null
+  const selectedNode = selectedNodeId ? nodes.find(n => String(n.id) === String(selectedNodeId)) : null
 
   const copyWebhookUrl = () => {
     if (!workflowId || !selectedNodeId) return alert('Save the workflow and select the webhook node to get a URL')
@@ -711,7 +743,7 @@ export default function Editor(){
                 onConnect={onConnect}
                 onNodeClick={onNodeClick}
                 onPaneClick={onPaneClick}
-                nodeTypes={{ default: NodeRenderer }}
+                nodeTypes={{ default: NodeRenderer, input: NodeRenderer }}
                 onInit={(instance) => { reactFlowInstance.current = instance }}
               >
                 <Background />
@@ -816,6 +848,26 @@ export default function Editor(){
                       // ignore
                     }
                   }} />
+                  {/* If/ Switch quick-config UI: allow wiring targets from canvas */}
+                  {selectedNode.data && ['If', 'Switch', 'Condition'].includes(selectedNode.data.label) && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ marginBottom: 6 }}><strong>Auto-wire targets</strong></div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <select onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), true_target: e.target.value || null })} value={(selectedNode.data.config && selectedNode.data.config.true_target) || ''}>
+                          <option value=''>-- true target --</option>
+                          {nodeOptions(selectedNodeId).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                        </select>
+                        <button onClick={() => { const t = (selectedNode.data.config && selectedNode.data.config.true_target); autoWireTarget(selectedNodeId, t) }} className="secondary">Wire</button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                        <select onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), false_target: e.target.value || null })} value={(selectedNode.data.config && selectedNode.data.config.false_target) || ''}>
+                          <option value=''>-- false target --</option>
+                          {nodeOptions(selectedNodeId).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                        </select>
+                        <button onClick={() => { const t = (selectedNode.data.config && selectedNode.data.config.false_target); autoWireTarget(selectedNodeId, t) }} className="secondary">Wire</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

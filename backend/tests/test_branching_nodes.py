@@ -27,6 +27,15 @@ def test_if_node_routing():
                 }
             ]
         }
+        # Add target nodes and explicit edges so traversal follows the branch
+        graph['nodes'].extend([
+            {'id': 't1', 'data': {'label': 'HTTP Request', 'config': {'url': 'http://example.com'}}},
+            {'id': 'f1', 'data': {'label': 'HTTP Request', 'config': {'url': 'http://example.com'}}},
+        ])
+        graph['edges'] = [
+            {'id': 'e1', 'source': 'n_if', 'target': 't1'},
+            {'id': 'e2', 'source': 'n_if', 'target': 'f1'},
+        ]
         wf = Workflow(workspace_id=ws.id, name='wf', graph=graph)
         db.add(wf)
         db.commit()
@@ -43,6 +52,10 @@ def test_if_node_routing():
         assert out is not None
         # Expect routed_to recorded for the if node
         assert out.get('n_if') and out['n_if'].get('routed_to') == 't1'
+        # Ensure the chosen branch node executed and the other did not
+        assert out.get('t1') is not None
+        # f1 should not have been executed because routing chose t1
+        assert out.get('f1') is None
 
     finally:
         db.close()
@@ -68,6 +81,17 @@ def test_switch_node_routing():
                 }
             ]
         }
+        # add target nodes and edges
+        graph['nodes'].extend([
+            {'id': 'tA', 'data': {'label': 'HTTP Request', 'config': {'url': 'http://example.com'}}},
+            {'id': 'tB', 'data': {'label': 'HTTP Request', 'config': {'url': 'http://example.com'}}},
+            {'id': 'tDefault', 'data': {'label': 'HTTP Request', 'config': {'url': 'http://example.com'}}},
+        ])
+        graph['edges'] = [
+            {'id': 'e1', 'source': 'n_sw', 'target': 'tA'},
+            {'id': 'e2', 'source': 'n_sw', 'target': 'tB'},
+            {'id': 'e3', 'source': 'n_sw', 'target': 'tDefault'},
+        ]
         wf = Workflow(workspace_id=ws.id, name='wf2', graph=graph)
         db.add(wf)
         db.commit()
@@ -82,6 +106,8 @@ def test_switch_node_routing():
         assert res['status'] == 'success'
         out = res['output']
         assert out.get('n_sw') and out['n_sw'].get('routed_to') == 'tB'
+        assert out.get('tB') is not None
+        assert out.get('tA') is None
 
     finally:
         db.close()

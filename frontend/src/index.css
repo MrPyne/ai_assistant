@@ -57,8 +57,8 @@ textarea{resize:vertical}
 .palette-buttons{display:flex;gap:8px;margin-bottom:10px}
 .list-scroll{max-height:160px;overflow:auto;border-radius:8px;padding:6px;border:1px solid rgba(255,255,255,0.02);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
 
-.node-card{padding:8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);min-width:160px}
-.node-card .label{font-weight:700;color:var(--accent)}
+.node-card{position:relative;padding:8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);min-width:160px;min-height:44px;display:flex;flex-direction:column;justify-content:center}
+.node-card .label{font-weight:700;color:var(--accent);font-size:13px}
 .node-card:focus{outline:2px solid rgba(124,92,255,0.12);box-shadow:0 6px 24px rgba(124,92,255,0.08)}
 .node-header{display:flex;align-items:center;gap:8px}
 .node-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));color:var(--accent);} 
@@ -67,6 +67,24 @@ textarea{resize:vertical}
 .node-icon-llm{color:var(--accent)}
 
 .node-meta{font-size:12px;color:var(--muted);margin-top:6px}
+
+/* React Flow handle styles to make ports visible */
+.rf-handle-left, .rf-handle-right, .rf-handle-true, .rf-handle-false { 
+  width: 12px !important; 
+  height: 12px !important; 
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.8));
+  border: 2px solid rgba(0,0,0,0.2);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  border-radius: 4px;
+}
+.rf-handle-left{left: -6px}
+.rf-handle-right{right: -6px}
+.rf-handle-true{right: -6px}
+.rf-handle-false{right: -6px}
+
+.handle-label{position:absolute;color:var(--muted);font-weight:700;font-size:12px}
+.handle-label-true{right: 10px; top: 8px}
+.handle-label-false{right: 10px; bottom: 8px}
 
 .topbar-left{display:flex;align-items:center;gap:12px}
 .brand-link{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit}
