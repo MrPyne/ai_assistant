@@ -6,6 +6,11 @@ import React, { useCallback, useState, useEffect, useRef } from 'react'
 // can resolve the module during the build.
 import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider, applyNodeChanges, applyEdgeChanges } from 'react-flow-renderer'
 import NodeRenderer from './NodeRenderer'
+
+// Define nodeTypes at module scope so the object identity is stable across
+// renders. React Flow warns when nodeTypes/edgeTypes are recreated every
+// render because it forces internal remounts and can cause visual issues.
+const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
 import RunDetail from './components/RunDetail'
 
 const initialNodes = [
@@ -743,7 +748,7 @@ export default function Editor(){
                 onConnect={onConnect}
                 onNodeClick={onNodeClick}
                 onPaneClick={onPaneClick}
-                nodeTypes={{ default: NodeRenderer, input: NodeRenderer }}
+                nodeTypes={NODE_TYPES}
                 onInit={(instance) => { reactFlowInstance.current = instance }}
               >
                 <Background />

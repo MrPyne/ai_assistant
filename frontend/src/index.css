@@ -133,5 +133,20 @@ textarea{resize:vertical}
 /* React Flow container tweaks */
 .reactflow-wrapper{height:100%;background:transparent}
 
+/* Ensure react-flow nodes and handles sit above SVG edge layers and are visible
+   across different browsers / stacking contexts. Some users reported blank
+   white rectangles caused by CSS stacking issues; these overrides increase
+   specificity and force nodes/handles to be visible. */
+.react-flow__node { display: block !important; position: relative !important; z-index: 1000 !important; opacity: 1 !important; }
+.react-flow__node .node-card { background: linear-gradient(180deg, rgba(7,17,36,0.94), rgba(7,17,36,0.90)) !important; color: #e6eef6 !important; min-height:44px !important; }
+.react-flow__node .node-card .label { color: var(--accent) !important; }
+.react-flow__node .node-card .node-meta { color: var(--muted) !important; }
+.react-flow__handle { z-index: 1100 !important; }
+.react-flow__handle-left, .react-flow__handle-right { pointer-events: auto !important; }
+
+/* If nodes are being hidden by a parent stacking context, force the node
+   content to render on top via a small elevation shadow and visible border. */
+.react-flow__node .node-card { box-shadow: 0 6px 20px rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.04); }
+
 /* small screens */
 @media(max-width:900px){.sidebar{display:none}.rightpanel{display:none}}
