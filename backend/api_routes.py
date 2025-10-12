@@ -18,6 +18,22 @@ def register(app, ctx):
     _workspace_for_user = ctx.get('_workspace_for_user')
     import os
 
+    # Normalize HTTPException/JSONResponse for lightweight imports
+    try:
+        from fastapi import HTTPException  # type: ignore
+        from fastapi.responses import JSONResponse  # type: ignore
+    except Exception:
+        class HTTPException(Exception):
+            def __init__(self, status_code: int = 500, detail: str = None):
+                super().__init__(detail)
+                self.status_code = status_code
+                self.detail = detail
+
+        class JSONResponse:  # very small stand-in used by tests
+            def __init__(self, content=None, status_code: int = 200):
+                self.content = content
+                self.status_code = status_code
+
     # Helper: minimal encrypt/decrypt when DB-backed
     try:
         from .crypto import encrypt_value, decrypt_value
@@ -37,7 +53,6 @@ def register(app, ctx):
             uid = None
         if not uid:
             # FastAPI usually returns 401; keep simple behaviour
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
 
         if _DB_AVAILABLE:
@@ -45,7 +60,6 @@ def register(app, ctx):
                 db = SessionLocal()
                 u = db.query(models.User).filter(models.User.id == uid).first()
                 if not u:
-                    from .app_impl import HTTPException
                     raise HTTPException(status_code=404)
                 # find workspace
                 ws = db.query(models.Workspace).filter(models.Workspace.owner_id == u.id).first()
@@ -74,7 +88,6 @@ def register(app, ctx):
     def create_secret(body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         # find workspace
         wsid = _workspace_for_user(user_id)
@@ -85,7 +98,6 @@ def register(app, ctx):
         name = body.get('name')
         value = body.get('value')
         if not name or value is None:
-            from .app_impl import JSONResponse
             return JSONResponse(status_code=400, content={'detail': 'name and value required'})
 
         if _DB_AVAILABLE:
@@ -112,7 +124,6 @@ def register(app, ctx):
                     db.rollback()
                 except Exception:
                     pass
-                from .app_impl import JSONResponse
                 return JSONResponse(status_code=500, content={'detail': 'failed to create secret'})
             finally:
                 try:
@@ -133,7 +144,6 @@ def register(app, ctx):
     def list_secrets(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
@@ -167,11 +177,9 @@ def register(app, ctx):
     def delete_secret(sid: int, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=400)
 
         if _DB_AVAILABLE:
@@ -203,7 +211,6 @@ def register(app, ctx):
 
         s = _secrets.get(sid)
         if not s or s.get('workspace_id') != wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=404)
         del _secrets[sid]
         try:
@@ -263,7 +270,6 @@ def register(app, ctx):
                     db.rollback()
                 except Exception:
                     pass
-                from .app_impl import JSONResponse
                 return JSONResponse(status_code=500, content={'detail': 'failed to create provider'})
             finally:
                 try:
@@ -280,7 +286,6 @@ def register(app, ctx):
     def list_providers(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
@@ -448,7 +453,6 @@ def register(app, ctx):
             g = body.get('graph')
             if g is not None and not isinstance(g, (dict, list)):
                 msg = 'graph must be an object with "nodes" or an array of nodes'
-                from .app_impl import JSONResponse
                 return JSONResponse(status_code=400, content={'detail': msg, 'message': msg})
 
         v = _validate_graph(body.get('graph'))
@@ -459,8 +463,7 @@ def register(app, ctx):
                 body_out['detail'] = detail
             else:
                 body_out = {'message': str(detail), 'detail': detail}
-            from .app_impl import JSONResponse
-            return JSONResponse(status_code=400, content=body_out)
+                return JSONResponse(status_code=400, content=body_out)
 
         if _DB_AVAILABLE:
             try:
@@ -475,7 +478,6 @@ def register(app, ctx):
                     db.rollback()
                 except Exception:
                     pass
-                from .app_impl import JSONResponse
                 return JSONResponse(status_code=500, content={'detail': 'failed to create workflow'})
             finally:
                 try:
@@ -492,7 +494,6 @@ def register(app, ctx):
     def update_workflow(wid: int, body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
@@ -544,7 +545,6 @@ def register(app, ctx):
     def create_webhook(wf_id: int, body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
@@ -565,7 +565,6 @@ def register(app, ctx):
         else:
             wf = _workflows.get(wf_id)
             if not wf or wf.get('workspace_id') != wsid:
-                from .app_impl import HTTPException
                 raise HTTPException(status_code=400, detail='workflow not found in workspace')
 
         hid = _next.get('webhook', 1)
@@ -586,14 +585,12 @@ def register(app, ctx):
     def delete_webhook(wf_id: int, hid: int, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
             raise HTTPException(status_code=400)
         row = _webhooks.get(hid)
         if not row or row.get('workflow_id') != wf_id:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=404)
         del _webhooks[hid]
         return {'status': 'deleted'}

@@ -66,18 +66,11 @@ export default function NodeRenderer(props) {
       data-node-id={id}
     >
       {/* Target / input handle on the left */}
-      {/*
-        Use explicit styles to ensure handles align to the visual edge of the
-        node regardless of padding. We center vertically with top: '50%'
-        and translate to get an exact center point. This avoids relying on
-        global CSS offsets which can drift when padding/size changes.
-      */}
       <Handle
         type="target"
         id="in"
         position={Position.Left}
         className="rf-handle-left"
-        style={{ top: '50%', transform: 'translate(-50%, -50%)' }}
       />
 
       <div className="node-header">
@@ -97,7 +90,6 @@ export default function NodeRenderer(props) {
             type="source"
             id="true"
             position={Position.Right}
-            style={{ top: 28, transform: 'translate(50%, -50%)' }}
             className="rf-handle-true"
           />
           <div className="handle-label handle-label-true">T</div>
@@ -105,7 +97,6 @@ export default function NodeRenderer(props) {
             type="source"
             id="false"
             position={Position.Right}
-            style={{ bottom: 28, transform: 'translate(50%, 50%)' }}
             className="rf-handle-false"
           />
           <div className="handle-label handle-label-false">F</div>
@@ -116,7 +107,6 @@ export default function NodeRenderer(props) {
           id="out"
           position={Position.Right}
           className="rf-handle-right"
-          style={{ top: '50%', transform: 'translate(50%, -50%)' }}
         />
       ) : (
         <Handle type="source" id="out" position={Position.Right} className="rf-handle-right" />
