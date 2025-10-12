@@ -406,7 +406,7 @@ export default function Editor(){
         if (data && data.length > 0) {
           const wf = data[0]
           // preserve legacy behaviour: auto-load the first workflow
-          if (!workflowId) loadWorkflowGraph(wf)
+          if (!workflowId) selectWorkflow(wf.id)
         }
       } else {
         const txt = await resp.text()
@@ -417,10 +417,20 @@ export default function Editor(){
     }
   }
 
-  const selectWorkflow = (id) => {
+  const selectWorkflow = async (id) => {
     if (!id) return
-    const wf = workflows.find(w => String(w.id) === String(id))
-    if (wf) loadWorkflowGraph(wf)
+    try {
+      const resp = await fetch(`/api/workflows/${id}`, { headers: authHeaders() })
+      if (resp.ok) {
+        const data = await resp.json()
+        loadWorkflowGraph(data)
+      } else {
+        const txt = await resp.text()
+        alert('Failed to load workflow: ' + txt)
+      }
+    } catch (err) {
+      alert('Failed to load workflow: ' + String(err))
+    }
   }
 
   const newWorkflow = () => {
@@ -680,11 +690,12 @@ export default function Editor(){
     <div className="editor-root">
       <div className="editor-main">
         <div className="sidebar">
-          <div style={{ position: 'sticky', top: 0, background: 'var(--panel-bg, #fff)', paddingBottom: 8, zIndex: 5 }}>
+          {/* Use the shared card styles so the header matches the rest of the app */}
+          <div className="card" style={{ position: 'sticky', top: 0, paddingBottom: 8, zIndex: 5 }}>
             <h3>Palette</h3>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-              <input value={workflowName} onChange={(e) => { setWorkflowName(e.target.value); markDirty() }} style={{ flex: 1, fontSize: 16, padding: '6px 8px' }} />
-              <button onClick={() => saveWorkflow({ silent: false })} style={{ padding: '10px 16px', fontSize: 16, background: 'var(--primary, #007bff)', color: '#fff', border: 'none', borderRadius: 4 }}>Save</button>
+              <input className="input" value={workflowName} onChange={(e) => { setWorkflowName(e.target.value); markDirty() }} style={{ flex: 1 }} />
+              <button onClick={() => saveWorkflow({ silent: false })} className="btn btn-primary" style={{ padding: '10px 16px', fontSize: 16 }}>Save</button>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={autoSaveEnabled} onChange={(e) => setAutoSaveEnabled(e.target.checked)} /> Autosave</label>

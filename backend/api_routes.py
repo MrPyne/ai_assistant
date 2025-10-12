@@ -374,6 +374,44 @@ def register(app, ctx):
         def list_workflows(authorization: str = None):
             return list_workflows_impl(authorization)
 
+    # GET single workflow (returns full workflow including graph)
+    if _FASTAPI_HEADERS:
+        @app.get('/api/workflows/{wid}')
+        def get_workflow(wid: int, authorization: str = Header(None)):
+            return get_workflow_impl(wid, authorization)
+    else:
+        @app.get('/api/workflows/{wid}')
+        def get_workflow(wid: int, authorization: str = None):
+            return get_workflow_impl(wid, authorization)
+
+    def get_workflow_impl(wid: int, authorization: str = None):
+        user_id = ctx.get('_user_from_token')(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401)
+        wsid = _workspace_for_user(user_id)
+        if not wsid:
+            raise HTTPException(status_code=400)
+
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
+                if not wf or wf.workspace_id != wsid:
+                    raise HTTPException(status_code=404)
+                return {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name, 'description': wf.description, 'graph': getattr(wf, 'graph', None)}
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+        wf = _workflows.get(wid)
+        if not wf or wf.get('workspace_id') != wsid:
+            raise HTTPException(status_code=404)
+        out = dict(wf)
+        out['id'] = wid
+        return out
+
     def list_workflows_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         # allow unauthenticated list to return empty
