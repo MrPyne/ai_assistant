@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
+import { useForm } from 'react-hook-form'
 
 export default function NodeInspector({
   selectedNode,
@@ -18,7 +19,72 @@ export default function NodeInspector({
   setNodes,
   markDirty,
 }) {
+  const syncTimer = useRef(null)
+
+  const { register, handleSubmit, reset, watch, setValue } = useForm({ mode: 'onChange' })
+
+  useEffect(() => {
+    if (!selectedNode) return
+    // initialize form values based on node type/config
+    const cfg = (selectedNode.data && selectedNode.data.config) || {}
+    if (selectedNode.data && selectedNode.data.label === 'HTTP Request') {
+      reset({ method: cfg.method || 'GET', url: cfg.url || '', headersText: JSON.stringify(cfg.headers || {}, null, 2), body: cfg.body || '' })
+    } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
+      reset({ prompt: cfg.prompt || '', provider_id: cfg.provider_id || '' })
+    } else if (selectedNode.data && selectedNode.data.label === 'Webhook Trigger') {
+      // webhook doesn't edit node config here, but keep form in sync
+      reset({})
+    } else {
+      // raw config editing handled separately below
+      reset({ rawJsonText: JSON.stringify(selectedNode.data || {}, null, 2) })
+    }
+  }, [selectedNode, reset])
+
+  // watch all fields and debounce syncing to parent updateNodeConfig
+  const watched = watch()
+  useEffect(() => {
+    if (!selectedNode) return
+    if (syncTimer.current) clearTimeout(syncTimer.current)
+    syncTimer.current = setTimeout(() => {
+      try {
+        if (selectedNode.data && selectedNode.data.label === 'HTTP Request') {
+          const method = watched.method || 'GET'
+          const url = watched.url || ''
+          let headers = {}
+          try { headers = JSON.parse(watched.headersText || '{}') } catch (e) { headers = (selectedNode.data.config && selectedNode.data.config.headers) || {} }
+          const body = watched.body || ''
+          updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), method, url, headers, body })
+          markDirty()
+        } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
+          const prompt = watched.prompt || ''
+          const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
+          updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt, provider_id })
+          markDirty()
+        } else {
+          // for raw JSON edits we don't use this path
+        }
+      } catch (e) {
+        // ignore sync errors
+      }
+    }, 300)
+    return () => { if (syncTimer.current) clearTimeout(syncTimer.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watched, selectedNodeId, selectedNode])
+
   if (!selectedNode) return <div className="muted">No node selected. Click a node to view/edit its config.</div>
+
+  const onRawChange = (e) => {
+    const v = e.target.value
+    try {
+      const parsed = JSON.parse(v)
+      setNodes((nds) => nds.map(n => n.id === selectedNodeId ? { ...n, data: parsed } : n))
+      markDirty()
+      // also update form raw text so reset doesn't stomp
+      setValue('rawJsonText', v)
+    } catch (err) {
+      // ignore invalid JSON while typing
+    }
+  }
 
   return (
     <div>
@@ -50,7 +116,7 @@ export default function NodeInspector({
       {selectedNode.data && selectedNode.data.label === 'HTTP Request' && (
         <div>
           <label>Method</label>
-          <select value={(selectedNode.data.config && selectedNode.data.config.method) || 'GET'} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), method: e.target.value })} style={{ width: '100%', marginBottom: 8 }}>
+          <select {...register('method')} style={{ width: '100%', marginBottom: 8 }}>
             <option>GET</option>
             <option>POST</option>
             <option>PUT</option>
@@ -59,30 +125,23 @@ export default function NodeInspector({
           </select>
 
           <label>URL</label>
-          <input style={{ width: '100%', marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.url) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), url: e.target.value })} />
+          <input {...register('url')} style={{ width: '100%', marginBottom: 8 }} />
 
           <label>Headers (JSON)</label>
-          <textarea style={{ width: '100%', height: 80, marginBottom: 8 }} value={JSON.stringify((selectedNode.data.config && selectedNode.data.config.headers) || {}, null, 2)} onChange={(e) => {
-            try {
-              const parsed = JSON.parse(e.target.value || '{}')
-              updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), headers: parsed })
-            } catch (err) {
-            }
-          }} />
+          <textarea {...register('headersText')} style={{ width: '100%', height: 80, marginBottom: 8 }} />
 
           <label>Body</label>
-          <textarea style={{ width: '100%', height: 80 }} value={(selectedNode.data.config && selectedNode.data.config.body) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), body: e.target.value })} />
-
+          <textarea {...register('body')} style={{ width: '100%', height: 80 }} />
         </div>
       )}
 
       {selectedNode.data && selectedNode.data.label === 'LLM' && (
         <div>
           <label>Prompt</label>
-          <textarea style={{ width: '100%', height: 140, marginBottom: 8 }} value={(selectedNode.data.config && selectedNode.data.config.prompt) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt: e.target.value })} />
+          <textarea {...register('prompt')} style={{ width: '100%', height: 140, marginBottom: 8 }} />
 
           <label>Provider</label>
-          <select value={(selectedNode.data.config && selectedNode.data.config.provider_id) || ''} onChange={(e) => updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), provider_id: e.target.value ? Number(e.target.value) : null })} style={{ width: '100%', marginBottom: 8 }}>
+          <select {...register('provider_id')} style={{ width: '100%', marginBottom: 8 }}>
             <option value=''>-- Select provider --</option>
             {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
           </select>
@@ -94,14 +153,7 @@ export default function NodeInspector({
       {(!selectedNode.data || (selectedNode.data && !['HTTP Request', 'LLM', 'Webhook Trigger'].includes(selectedNode.data.label))) && (
         <div>
           <label>Raw node config (JSON)</label>
-          <textarea style={{ width: '100%', height: 240 }} value={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={(e) => {
-            try {
-              const parsed = JSON.parse(e.target.value)
-              setNodes((nds) => nds.map(n => n.id === selectedNodeId ? { ...n, data: parsed } : n))
-              markDirty()
-            } catch (err) {
-            }
-          }} />
+          <textarea name="rawJsonText" defaultValue={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={onRawChange} style={{ width: '100%', height: 240 }} />
           {selectedNode.data && ['If', 'Switch', 'Condition'].includes(selectedNode.data.label) && (
             <div style={{ marginTop: 8 }}>
               <div style={{ marginBottom: 6 }}><strong>Auto-wire targets</strong></div>
