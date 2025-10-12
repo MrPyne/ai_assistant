@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.16
-Last updated: 2025-10-11
+Version: 1.17
+Last updated: 2025-10-12
 Maintainer: (fill in)
 
 Purpose
@@ -51,14 +51,38 @@ P2 — Advanced / long-term
 Non-functional & security requirements (applies to P0+)
 - [ ] Secrets encrypted at rest (Fernet/KMS) and never logged in plaintext.
 - [x] Live LLM calls disabled by default (ENABLE_LIVE_LLM=false). Live calls require explicit flag + provider.secret_id.
- - [x] Live outbound HTTP disabled by default (LIVE_HTTP=false). Outbound HTTP from workers requires LIVE_HTTP=true to opt-in. Tests that exercise HTTP behavior should set LIVE_HTTP accordingly.
+  - Note: the project now centralizes live-LLM enablement logic in backend/llm_utils.py via the helper is_live_llm_enabled(provider_name: Optional[str]) -> bool. Adapters should call this helper to determine whether to perform real network calls or return deterministic mock responses.
+  - Semantic details (backward-compatible):
+    - Live LLMs are disabled by default.
+    - Global opt-in: set ENABLE_LIVE_LLM=true or LIVE_LLM=true to allow live calls for all providers.
+    - Provider-specific opt-in: set provider-specific env vars (e.g., ENABLE_OPENAI=true, ENABLE_OLLAMA=true) to enable a particular adapter without the global flag.
+    - Even when enabled, adapters must still have valid provider credentials (provider.secret_id / API key) to make a real call; otherwise they remain in mock/deterministic response mode.
+    - When disabled, adapters must return deterministic mock responses that preserve the minimal meta fields used by redaction/logging/persistence (for example: usage/model in OpenAI-style responses) and the overall response shape expected by upstream code.
+- [x] Live outbound HTTP disabled by default (LIVE_HTTP=false). Outbound HTTP from workers requires LIVE_HTTP=true to opt-in. Tests that exercise HTTP behavior should set LIVE_HTTP accordingly.
 - [ ] Use strong password hashing (argon2 / bcrypt) and HTTPS in production.
 - [ ] Sanitize and validate all node inputs and template execution to prevent injection.
 - [ ] Audit logs for credential changes and run lifecycle events.
 - [ ] KMS-ready design for secret rotation (design note: store key reference for KMS integration later).
 
----
+- New CI safety check: add scripts/check_live_llm_usage.py to detect direct adapter-level env toggles or LIVE_LLM checks in backend/adapters. Recommended to run this script as part of CI to prevent accidental live-LLM guards outside backend/llm_utils.py.
 
+- Developer guidance (must-follow when adding adapters):
+  - Use backend.llm_utils.is_live_llm_enabled("provider_name") to gate real network calls.
+  - Resolve provider API key via provider.secret_id / inline encrypted / secret_name as adapters already do.
+  - If NOT enabled or no API key, return deterministic mock response containing minimal meta matching the live shape (for redaction/logging).
+
+  Example guard:
+  enable_live = is_live_llm_enabled("myprovider")
+  api_key = self._get_api_key()
+  if not enable_live or not api_key:
+      return {"text": f"[mock] MyProvider would respond to: {prompt[:100]}", "meta": {"model": cfg.get("model", "default")}}
+
+- Suggested test checklist for any adapter migration:
+  - Unit test that environment defaults to disabled and adapter returns mock with expected meta shape.
+  - Test that setting ENABLE_LIVE_LLM or LIVE_LLM='true' + valid provider secret triggers live path (for integration tests only — requires secrets and therefore should be gated/integration-only).
+  - Test that provider secret_id resolution uses workspace scoping and does not persist decrypted value.
+
+---
 Architecture & tech stack (confirmed)
 - Frontend: React + TypeScript + react-flow for the editor; Material-UI or Tailwind (TBD).
 - Backend: FastAPI (Python) with Pydantic for schemas.
@@ -69,7 +93,6 @@ Architecture & tech stack (confirmed)
 - Secrets encryption: Fernet with SECRETS_KEY env variable (KMS-ready design).
 
 ---
-
 MVP prioritization & sprint plan (re-aligned to n8n parity)
 - Sprint 1 (P0 core): Editor MVP + Workflows CRUD + Webhook trigger + Execution engine basic runner + Run history/logs + Credentials API + Webhook trigger sample workflow. (High priority)
 - Sprint 2 (P1): Scheduler, Condition nodes, built-in connectors (one or two), node testing UI, export/import, versioning improvements.
@@ -115,7 +138,7 @@ Sprint 1 — Immediate work items (I will start these now)
 
 ... (older entries retained)
 
-Last updated: 2025-10-11
+Last updated: 2025-10-12
 
 ---
 
@@ -126,8 +149,15 @@ N8N Compatibility (authoritative checklist)
 
 Change log (merged)
 
+1.17 (2025-10-12)
+- Added a lightweight repository safety check script (scripts/check_live_llm_usage.py) to detect adapter files under backend/adapters that use direct env toggles (ENABLE_* or LIVE_LLM) instead of the centralized backend/llm_utils.is_live_llm_enabled. Recommended to run this check in CI to prevent accidental live-LLM guards outside the centralized helper.
+
 1.16 (2025-10-11)
 - Implemented ENABLE_LIVE_LLM opt-in guard across LLM adapters (OpenAI, Ollama). Live LLM calls are disabled by default; adapters return deterministic mock responses preserving response shape when disabled. Tests updated to opt-in to live behavior where necessary.
+- Centralized helper: added backend/llm_utils.py with is_live_llm_enabled(provider_name: Optional[str]) -> bool to consolidate enablement checks and ensure consistent behavior across adapters. Adapters should call this helper instead of checking env vars directly. The helper preserves backward-compatible semantics: global opt-in via ENABLE_LIVE_LLM or LIVE_LLM=true, provider-specific flags (e.g., ENABLE_OPENAI), and defaults to disabled.
+- Adapters updated: OpenAI and Ollama adapters were updated to use the centralized helper and to return deterministic mock responses when live mode is disabled. Mock responses preserve minimal meta fields (e.g., usage/model) and response shape to maintain compatibility with redaction, logging, and persistence code and tests.
+- Tests: added backend/tests/test_llm_utils_and_adapter_mocks.py to exercise helper behavior and assert mock response meta shapes. These unit tests avoid network calls and verify safety-by-default.
+- Risks & next steps: only OpenAI and Ollama adapters were migrated in this change; other adapters/providers must adopt is_live_llm_enabled to preserve safety-by-default. Integration tests and CI that expect live behavior will need ENABLE_LIVE_LLM/LIVE_LLM and provider secrets configured.
 
 1.15 (2025-10-11)
 - Implemented HTTP Request node execution in the worker with redaction and unit test coverage for Authorization header redaction.
@@ -138,4 +168,4 @@ Change log (merged)
 
 ... (older entries retained)
 
-Last updated: 2025-10-11
+Last updated: 2025-10-12

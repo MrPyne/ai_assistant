@@ -278,11 +278,11 @@ def _maybe_response(obj: dict, status: int = 200):
     so TestClient receives proper headers/body; return raw dict for the
     lightweight fallback app used by DummyClient.
     """
-    try:
-        if hasattr(app, 'middleware') and JSONResponse is not None:
-            return JSONResponse(status_code=status, content=obj)
-    except Exception:
-        pass
+    # For test reliability across environments (real FastAPI TestClient and
+    # the lightweight DummyClient) return the raw dict. The TestClient will
+    # serialize this into a JSON response. Returning the dict avoids edge
+    # cases where a Response object might not carry a parseable body when
+    # invoked by different client shims.
     return obj
 
 
@@ -359,11 +359,15 @@ if _CAN_USE_DEPENDS:
                 session.commit()
 
                 token = f'token-{user.id}'
-                # When running under the real FastAPI (middleware present) return
-                # a JSONResponse so the TestClient receives proper headers/body.
-                if hasattr(app, 'middleware'):
-                    return JSONResponse(status_code=200, content={'access_token': token})
-                return {'access_token': token}
+                # Use helper to return a JSONResponse when appropriate for the
+                # running environment (real FastAPI with middleware) or a plain
+                # dict for lightweight test shims / DummyClient.
+                out = _maybe_response({'access_token': token}, status=200)
+                try:
+                    print('DEBUG: _auth_register returning', type(out), getattr(out, 'status_code', None))
+                except Exception:
+                    pass
+                return out
             except Exception:
                 try:
                     session.rollback()
@@ -387,7 +391,12 @@ if _CAN_USE_DEPENDS:
         _workspaces[wsid] = {'owner_id': uid, 'name': f'{email}-workspace'}
 
         token = f'token-{uid}'
-        return {'access_token': token}
+        out = _maybe_response({'access_token': token}, status=200)
+        try:
+            print('DEBUG: _auth_register(fallback) returning', type(out), getattr(out, 'status_code', None))
+        except Exception:
+            pass
+        return out
 
 else:
     @app.post('/api/auth/register')
@@ -432,9 +441,7 @@ def _auth_login(body: dict):
                 raise HTTPException(status_code=401)
             try:
                 if verify_password(password, user.hashed_password):
-                    if hasattr(app, 'middleware'):
-                        return JSONResponse(status_code=200, content={'access_token': f'token-{user.id}'})
-                    return {'access_token': f'token-{user.id}'}
+                    return _maybe_response({'access_token': f'token-{user.id}'}, status=200)
             except Exception:
                 pass
             raise HTTPException(status_code=401)
@@ -456,9 +463,7 @@ def _auth_login(body: dict):
         raise HTTPException(status_code=401)
     try:
         if stored.get('password') == password or verify_password(password, stored.get('password')):
-            if hasattr(app, 'middleware'):
-                return JSONResponse(status_code=200, content={'access_token': f'token-{uid}'})
-            return {'access_token': f'token-{uid}'}
+            return _maybe_response({'access_token': f'token-{uid}'}, status=200)
     except Exception:
         pass
     raise HTTPException(status_code=401)
