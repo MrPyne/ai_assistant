@@ -45,7 +45,8 @@ function InnerEditor() {
   const [providers, setProviders] = useState([])
   const [newSecretName, setNewSecretName] = useState('')
   const [newSecretValue, setNewSecretValue] = useState('')
-  const [selectedNodeId, setSelectedNodeId] = useState(null)
+  // selectedNodeId moved into EditorContext
+  // local state removed; read/write selection via editorState/editorDispatch
   const editorState = useEditorState()
   const editorDispatch = useEditorDispatch()
   const workflowName = editorState.workflowName
@@ -165,7 +166,7 @@ function InnerEditor() {
     editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: template.name || 'Template' })
     setNodes(mappedNodes)
     setEdges(mappedEdges)
-    setSelectedNodeId(null)
+    editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
     editorDispatch({ type: 'MARK_DIRTY' })
     editorDispatch({ type: 'SET_LAST_SAVED_AT', payload: null })
     markDirty()
@@ -291,7 +292,7 @@ function InnerEditor() {
       console.debug('editor:add_node', { type: label.toLowerCase(), id })
 
       const cleared = prevNodes.map((n) => (n.selected ? { ...n, selected: false } : n))
-      setTimeout(() => setSelectedNodeId(id), 0)
+      setTimeout(() => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: id }), 0)
       markDirty()
       return cleared.concat(node)
     })
@@ -345,7 +346,7 @@ function InnerEditor() {
         })
         setNodes(nodesLoaded.map(sanitize))
         setEdges((edgesLoaded || []).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
-        setSelectedNodeId(null)
+        editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
       } else if (wf.graph.nodes) {
         const sanitize = (n) => ({
           id: String(n.id),
@@ -358,9 +359,9 @@ function InnerEditor() {
         setEdges(((wf.graph.edges || [])).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
         if (wf.graph.selected_node_id) {
           const exists = ((wf.graph.nodes || []).map(n => String(n.id))).includes(String(wf.graph.selected_node_id))
-          setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
+          editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: exists ? String(wf.graph.selected_node_id) : null })
         } else {
-          setSelectedNodeId(null)
+          editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
         }
       }
     }
@@ -372,7 +373,7 @@ function InnerEditor() {
   const saveWorkflow = async ({ silent = false } = {}) => {
     const payload = {
       name: workflowName || 'Untitled',
-      graph: { nodes, edges, selected_node_id: selectedNodeId },
+      graph: { nodes, edges, selected_node_id: editorState.selectedNodeId },
     }
 
     editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saving' })
@@ -438,7 +439,7 @@ function InnerEditor() {
         setValidationError(detail)
         editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'error' })
         if (nodeToSelect) {
-          setSelectedNodeId(String(nodeToSelect))
+          editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(nodeToSelect) })
           setNodes((nds) => nds.map(n => (String(n.id) === String(nodeToSelect) ? { ...n, data: { ...(n.data || {}), __validation_error: true } } : n)))
         }
         if (!silent) alert('Save failed: ' + (detail || 'Unknown error'))
@@ -491,8 +492,8 @@ function InnerEditor() {
     editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: 'New Workflow' })
     setNodes(initialNodes)
     setEdges(initialEdges)
-    setSelectedNodeId(null)
-    setSaveStatus('idle')
+    editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
+    editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'idle' })
   }
 
   const runWorkflow = async () => {
@@ -615,24 +616,25 @@ function InnerEditor() {
 
   const onNodeClick = (event, node) => {
     if (!node || !node.id) return
-    setSelectedNodeId(node.id)
-    // also mirror selection into EditorContext to reduce prop drilling
+    // mirror selection into EditorContext
     editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: node.id })
   }
 
   const onPaneClick = () => {
-    setSelectedNodeId(null)
+    editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
   }
 
   useEffect(() => {
     try {
-      const sel = nodes.find(n => n && (n.selected === true || String(n.id) === String(selectedNodeId)))
+      // If nodes carry a selected flag, mirror that into the EditorContext selectedNodeId.
+      const sel = nodes.find(n => n && n.selected === true)
       if (sel) {
-        if (String(sel.id) !== String(selectedNodeId)) setSelectedNodeId(String(sel.id))
+        if (String(sel.id) !== String(editorState.selectedNodeId)) editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(sel.id) })
       } else {
-        if (selectedNodeId) setSelectedNodeId(null)
+        if (editorState.selectedNodeId) editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: null })
       }
     } catch (e) {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes])
 
   useEffect(() => {
@@ -656,17 +658,17 @@ function InnerEditor() {
     }
   }, [logEventSource])
 
-  const selectedNode = selectedNodeId ? nodes.find(n => String(n.id) === String(selectedNodeId)) : null
+  const selectedNode = editorState.selectedNodeId ? nodes.find(n => String(n.id) === String(editorState.selectedNodeId)) : null
 
   const copyWebhookUrl = () => {
-    if (!workflowId || !selectedNodeId) return alert('Save the workflow and select the webhook node to get a URL')
-    const url = `${window.location.origin}/api/webhook/${workflowId}/${selectedNodeId}`
+    if (!workflowId || !editorState.selectedNodeId) return alert('Save the workflow and select the webhook node to get a URL')
+    const url = `${window.location.origin}/api/webhook/${workflowId}/${editorState.selectedNodeId}`
     navigator.clipboard && navigator.clipboard.writeText(url)
     alert('Webhook URL copied to clipboard: ' + url)
   }
 
   const testWebhook = async () => {
-    if (!workflowId || !selectedNodeId) return alert('Save the workflow and select the webhook node to test')
+    if (!workflowId || !editorState.selectedNodeId) return alert('Save the workflow and select the webhook node to test')
     let payload = {}
     try {
       payload = JSON.parse(webhookTestPayload || '{}')
@@ -674,7 +676,7 @@ function InnerEditor() {
       return alert('Invalid JSON payload')
     }
     try {
-      const resp = await fetch(`/api/webhook/${workflowId}/${selectedNodeId}`, {
+      const resp = await fetch(`/api/webhook/${workflowId}/${editorState.selectedNodeId}`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(payload),

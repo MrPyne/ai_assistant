@@ -1,7 +1,6 @@
 import React from 'react'
 import NodeInspector from './NodeInspector'
 import RunDetail from './RunDetail'
-import { useEditorState } from '../state/EditorContext'
 
 export default function RightPanel(props) {
   const {
@@ -28,9 +27,7 @@ export default function RightPanel(props) {
     selectedRunLogs,
   } = props
 
-  // Read selectedNodeId from EditorContext to reduce prop drilling
-  const editorState = useEditorState()
-  const selectedNodeId = editorState.selectedNodeId
+  // NodeInspector reads selectedNodeId from EditorContext itself; no need to pass it here
 
   return (
     <div className="rightpanel">
@@ -43,7 +40,6 @@ export default function RightPanel(props) {
 
       <NodeInspector
         selectedNode={selectedNode}
-        selectedNodeId={selectedNodeId}
         setShowNodeTest={setShowNodeTest}
         setNodeTestToken={setNodeTestToken}
         token={token}
