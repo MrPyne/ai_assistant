@@ -208,6 +208,14 @@ export default function Editor(){
     addNode({ label: 'Webhook Trigger', config: {}, preferY: 20 })
   }
 
+  const addIfNode = () => {
+    addNode({ label: 'If', config: { expression: '{{ input.value }}', true_target: null, false_target: null }, preferY: 160 })
+  }
+
+  const addSwitchNode = () => {
+    addNode({ label: 'Switch', config: { expression: '{{ input.key }}', mapping: {}, default: null }, preferY: 160 })
+  }
+
   const updateNodeConfig = (nodeId, newConfig) => {
     // be defensive: node data may be missing or malformed; find node and
     // merge/replace its config safely
@@ -605,6 +613,8 @@ export default function Editor(){
             <button onClick={addHttpNode}>Add HTTP Node</button>
             <button onClick={addLlmNode}>Add LLM Node</button>
             <button onClick={addWebhookTrigger}>Add Webhook</button>
+            <button onClick={addIfNode}>Add If/Condition</button>
+            <button onClick={addSwitchNode}>Add Switch</button>
           </div>
           <hr />
           <div>

@@ -129,6 +129,23 @@ def _execute_node(db, run, node):
     ntype = node.get('type')
     _write_log(db, run.id, node_id, 'info', f"Executing node {node_id} type={ntype}")
 
+    def _eval_expression(expr):
+        """Evaluate a Jinja expression in a safe sandbox and return the
+        rendered result. On error return None."""
+        if not expr or JinjaEnv is None:
+            return None
+        try:
+            env = JinjaEnv()
+            ctx = {
+                'input': getattr(run, 'input_payload', {}) or {},
+                'run': {'id': run.id, 'workflow_id': run.workflow_id},
+                'now': datetime.utcnow().isoformat(),
+            }
+            tpl = env.from_string(expr)
+            return tpl.render(**ctx)
+        except Exception:
+            return None
+
     if ntype == 'llm':
         provider_id = node.get('provider_id')
         prompt = node.get('prompt', '')
@@ -152,6 +169,55 @@ def _execute_node(db, run, node):
         else:
             _write_log(db, run.id, node_id, 'warning', f"Unknown provider type: {provider.type}")
             return {'text': '[mock] unknown provider'}
+
+    # Branching nodes: If/Condition and Switch
+    if ntype in ('if', 'condition'):
+        # config: expression (Jinja template), true_target, false_target, default_target
+        cfg = node.get('config') or node
+        expr = cfg.get('expression') or cfg.get('expr') or cfg.get('condition')
+        rendered = _eval_expression(expr)
+        choice = None
+        try:
+            # Jinja renders strings; interpret common boolean string values
+            if isinstance(rendered, str):
+                low = rendered.strip().lower()
+                if low in ('', 'false', '0', 'none', 'null'):
+                    choice = False
+                else:
+                    choice = True
+            else:
+                choice = bool(rendered)
+        except Exception:
+            choice = False
+
+        # determine target
+        target = cfg.get('true_target') if choice else cfg.get('false_target')
+        if not target:
+            target = cfg.get('default')
+        _write_log(db, run.id, node_id, 'info', f"If node evaluated expression -> {rendered!r}, routed to {target}")
+        return {'routed_to': target}
+
+    if ntype == 'switch':
+        # config: expression, mapping: {key: target}, default
+        cfg = node.get('config') or node
+        expr = cfg.get('expression') or cfg.get('expr')
+        rendered = _eval_expression(expr)
+        key = rendered
+        # try to coerce numbers
+        try:
+            if isinstance(rendered, str) and rendered.isdigit():
+                key = int(rendered)
+        except Exception:
+            pass
+        mapping = cfg.get('mapping') or cfg.get('cases') or {}
+        target = mapping.get(key)
+        if target is None:
+            # also try string keys
+            target = mapping.get(str(key))
+        if target is None:
+            target = cfg.get('default')
+        _write_log(db, run.id, node_id, 'info', f"Switch node evaluated -> {rendered!r}, routed to {target}")
+        return {'routed_to': target}
 
     if ntype in ('http', 'http_request'):
         method = node.get('method', 'GET').upper()

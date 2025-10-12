@@ -33,6 +33,7 @@ function Icon({ type, size = 18 }) {
   )
 }
 
+
 export default function NodeRenderer({ data }) {
   const label = data && data.label ? data.label : ''
   const config = data && data.config ? data.config : {}
