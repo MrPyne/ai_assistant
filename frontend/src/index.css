@@ -108,12 +108,15 @@ textarea { resize: vertical }
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.192), rgba(255,255,255,0.01));
   border: 1px solid rgba(255,255,255,0.03);
-  min-width: 160px;
+  min-width: 140px;
+  max-width: 320px; /* prevent runaway width */
   min-height: 44px;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   justify-content: center;
-  overflow: visible;
+  overflow: hidden; /* keep internal overflow from expanding node wrapper */
+  word-wrap: break-word;
+  white-space: normal;
   transform-origin: center;
   animation: node-appear 360ms ease both;
 }
@@ -185,7 +188,7 @@ textarea { resize: vertical }
 .node-icon-http { color: var(--accent-2) }
 .node-icon-webhook { color: #ffd166 }
 .node-icon-llm { color: var(--accent) }
-.node-meta { font-size: 12px; color: var(--muted); margin-top: 6px }
+.node-meta { font-size: 12px; color: var(--muted); margin-top: 6px; max-height: 5.2rem; overflow: auto; }
 
 /* -------------------- Layout around the canvas -------------------- */
 .topbar-left { display: flex; align-items: center; gap: 12px }
@@ -225,6 +228,18 @@ textarea { resize: vertical }
 .reactflow-wrapper { height: 100%; background: transparent; position: relative }
 .reactflow-wrapper .react-flow { height: 100% }
 .reactflow-wrapper .react-flow__viewport { height: 100% }
+
+/* Templates modal (above topbar) */
+.templates-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.98); z-index: 2000; display: flex; align-items: center; justify-content: center;
+}
+.templates-modal {
+  z-index: 2001; background: rgba(8,10,12,0.96); border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
+}
+.templates-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px }
+.template-card { padding: 12px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); border: 1px solid rgba(255,255,255,0.02); }
+.template-card h4 { margin: 0 0 6px 0 }
+.template-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px }
 
 .section-spacing { margin-top: 8px }
 .list-item { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.02) }

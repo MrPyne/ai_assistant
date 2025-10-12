@@ -1,18 +1,14 @@
 import NodeTestModal from './components/NodeTestModal'
 import React, { useCallback, useState, useEffect, useRef } from 'react'
 import { useAuth } from './contexts/AuthContext'
-// react-flow-renderer v10 exports from 'react-flow-renderer'. The project
-// depends on the v10 package (react-flow-renderer) rather than the newer
-// renamed package (reactflow). Import from the installed package so Vite/Rollup
-// can resolve the module during the build.
 import ReactFlow, { addEdge, Background, Controls, ReactFlowProvider, applyNodeChanges, applyEdgeChanges } from 'react-flow-renderer'
 import NodeRenderer from './NodeRenderer'
-
-// Define nodeTypes at module scope so the object identity is stable across
-// renders. React Flow warns when nodeTypes/edgeTypes are recreated every
-// render because it forces internal remounts and can cause visual issues.
-const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
 import RunDetail from './components/RunDetail'
+import TemplatePreview from './components/TemplatePreview'
+import Sidebar from './components/Sidebar'
+
+// Define nodeTypes at module scope so the object identity is stable across renders.
+const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
 
 const initialNodes = [
   {
@@ -33,8 +29,6 @@ export default function Editor(){
   const [runs, setRuns] = useState([])
   const [selectedRunLogs, setSelectedRunLogs] = useState([])
   const [logEventSource, setLogEventSource] = useState(null)
-  // keep a ref to the EventSource so we can always close it without
-  // relying on state being immediately updated during the same render
   const logEventSourceRef = useRef(null)
   const [secrets, setSecrets] = useState([])
   const [providers, setProviders] = useState([])
@@ -47,26 +41,16 @@ export default function Editor(){
   const [webhookTestPayload, setWebhookTestPayload] = useState('{}')
   const [showNodeTest, setShowNodeTest] = useState(false)
   const [nodeTestToken, setNodeTestToken] = useState(localStorage.getItem('authToken') || '')
-
-  // new: store validation error returned by the backend on save so we can
-  // surface it in the editor UI and optionally focus the problematic node
   const [validationError, setValidationError] = useState(null)
-
-  // Run detail state
   const [selectedRunDetail, setSelectedRunDetail] = useState(null)
   const [runDetailError, setRunDetailError] = useState(null)
   const [loadingRunDetail, setLoadingRunDetail] = useState(false)
-
-  // Save / autosave state
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
-  const [saveStatus, setSaveStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error' | 'dirty'
+  const [saveStatus, setSaveStatus] = useState('idle')
   const [lastSavedAt, setLastSavedAt] = useState(null)
   const autosaveTimer = useRef(null)
-
-  // react-flow instance ref to compute projected coords and other helpers
   const reactFlowInstance = useRef(null)
 
-  // When token becomes available, load user-scoped resources
   useEffect(() => {
     if (token) {
       loadProviders()
@@ -86,11 +70,95 @@ export default function Editor(){
     return nodes.filter(n => n && n.id && n.id !== excludeId).map(n => ({ id: n.id, label: (n.data && n.data.label) || n.id }))
   }
 
+  const TEMPLATES = [
+    {
+      id: 'tpl_webhook_http',
+      name: 'Webhook -> HTTP Request',
+      description: 'Trigger via webhook then call an external HTTP API (GET)',
+      graph: {
+        nodes: [
+          { id: 'a', type: 'input', data: { label: 'Webhook Trigger', config: {} }, position: { x: 100, y: 40 } },
+          { id: 'b', type: 'default', data: { label: 'HTTP Request', config: { method: 'GET', url: 'https://httpbin.org/get?run={{ run.id }}', headers: {}, body: '' } }, position: { x: 320, y: 40 } },
+        ],
+        edges: [ { id: 'a-b', source: 'a', target: 'b' } ],
+      },
+    },
+    {
+      id: 'tpl_webhook_llm_http',
+      name: 'Webhook -> LLM -> HTTP',
+      description: 'Webhook triggers an LLM prompt, then POSTs the output to an HTTP endpoint',
+      graph: {
+        nodes: [
+          { id: 'a', type: 'input', data: { label: 'Webhook Trigger', config: {} }, position: { x: 80, y: 20 } },
+          { id: 'b', type: 'default', data: { label: 'LLM', config: { prompt: 'Summarize the input: {{ input }}' } }, position: { x: 320, y: 20 } },
+          { id: 'c', type: 'default', data: { label: 'HTTP Request', config: { method: 'POST', url: 'https://httpbin.org/post', headers: { 'Content-Type': 'application/json' }, body: '{"summary": "{{ run.output.summary if run.output else \"\" }}"}' } }, position: { x: 560, y: 20 } },
+        ],
+        edges: [ { id: 'a-b', source: 'a', target: 'b' }, { id: 'b-c', source: 'b', target: 'c' } ],
+      },
+    },
+    {
+      id: 'tpl_webhook_if',
+      name: 'Webhook -> If (route) -> HTTP',
+      description: 'Route based on a condition in the payload (e.g., input.value)',
+      graph: {
+        nodes: [
+          { id: 'a', type: 'input', data: { label: 'Webhook Trigger', config: {} }, position: { x: 80, y: 20 } },
+          { id: 'b', type: 'default', data: { label: 'If', config: { expression: '{{ input.value }}', true_target: null, false_target: null } }, position: { x: 320, y: 20 } },
+          { id: 'c', type: 'default', data: { label: 'HTTP Request', config: { method: 'POST', url: 'https://httpbin.org/post', headers: {}, body: '{"result":"true branch"}' } }, position: { x: 560, y: -20 } },
+          { id: 'd', type: 'default', data: { label: 'HTTP Request', config: { method: 'POST', url: 'https://httpbin.org/post', headers: {}, body: '{"result":"false branch"}' } }, position: { x: 560, y: 60 } },
+        ],
+        edges: [ { id: 'a-b', source: 'a', target: 'b' }, { id: 'b-c', source: 'b', target: 'c' }, { id: 'b-d', source: 'b', target: 'd' } ],
+      },
+    },
+  ]
+
+  const [showTemplates, setShowTemplates] = useState(false)
+
+  useEffect(() => {
+    if (!showTemplates) return
+    const handler = (e) => { if (e.key === 'Escape') setShowTemplates(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showTemplates])
+
+  const loadTemplate = (template) => {
+    if (!template || !template.graph) return
+    const idMap = {}
+    const makeId = (old) => {
+      const now = Date.now()
+      const id = `${old}-${now.toString(36)}-${Math.random().toString(36).slice(2,8)}`
+      return id
+    }
+    ;(template.graph.nodes || []).forEach(n => { idMap[n.id] = makeId(n.id) })
+
+    const mappedNodes = (template.graph.nodes || []).map(n => ({
+      id: idMap[n.id],
+      type: n.type === 'input' ? 'input' : 'default',
+      position: n.position || { x: 0, y: 0 },
+      data: n.data ? { ...n.data, config: { ...(n.data.config || {}) } } : { label: 'Node', config: {} },
+      selected: false,
+    }))
+
+    const mappedEdges = (template.graph.edges || []).map(e => ({
+      id: e.id ? `${e.id}-${Math.random().toString(36).slice(2,8)}` : `${idMap[e.source]}-${idMap[e.target]}`,
+      source: idMap[e.source],
+      target: idMap[e.target],
+    }))
+
+    setWorkflowId(null)
+    setWorkflowName(template.name || 'Template')
+    setNodes(mappedNodes)
+    setEdges(mappedEdges)
+    setSelectedNodeId(null)
+    setSaveStatus('dirty')
+    setLastSavedAt(null)
+    markDirty()
+  }
+
   const autoWireTarget = (fromId, toId) => {
     if (!fromId || !toId) return
     const edgeId = `${fromId}-${toId}`
     setEdges((eds) => {
-      // avoid duplicates
       if (eds.some(e => e.source === fromId && e.target === toId)) return eds
       return eds.concat({ id: edgeId, source: String(fromId), target: String(toId) })
     })
@@ -104,7 +172,6 @@ export default function Editor(){
         setSecrets(data || [])
       }
     } catch (err) {
-      // network error — keep UI responsive
       console.warn('Failed to load secrets', err)
     }
   }
@@ -179,13 +246,8 @@ export default function Editor(){
 
   const onConnect = useCallback((params) => { setEdges((eds) => addEdge(params, eds)); markDirty() }, [])
 
-  // Generic addNode helper tries to compute a sensible position using the reactflow instance when available.
-  // Also marks the newly created node as selected and clears selection on other nodes so the UI reflects
-  // the selection immediately.
   const addNode = ({ label = 'Node', config = {}, preferY = 120 }) => {
-    // Use functional update to avoid closure issues and ensure id uniqueness
     setNodes((prevNodes) => {
-      // generate a compact, mostly-unique id suitable for the canvas
       const now = Date.now()
       let id = `node-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
       while (prevNodes.some((n) => String(n.id) === String(id))) {
@@ -200,15 +262,11 @@ export default function Editor(){
           const p = reactFlowInstance.current.project({ x: screenX, y: screenY })
           position = { x: p.x + (prevNodes.length * 20), y: p.y + preferY }
         }
-      } catch (err) {
-        // ignore and fall back to grid
-      }
+      } catch (err) {}
 
       const node = {
         id,
         type: label === 'Webhook Trigger' ? 'input' : 'default',
-        // ensure a well-formed data object — other parts of the editor assume
-        // data and data.config exist
         data: { label, config: config || {} },
         position,
         selected: true,
@@ -216,10 +274,7 @@ export default function Editor(){
 
       console.debug('editor:add_node', { type: label.toLowerCase(), id })
 
-      // Update nodes: clear selection on existing nodes and append the new selected node.
       const cleared = prevNodes.map((n) => (n.selected ? { ...n, selected: false } : n))
-      // schedule selectedNodeId update after state change
-      // (we still return the new array here)
       setTimeout(() => setSelectedNodeId(id), 0)
       markDirty()
       return cleared.concat(node)
@@ -248,12 +303,9 @@ export default function Editor(){
   }
 
   const updateNodeConfig = (nodeId, newConfig) => {
-    // be defensive: node data may be missing or malformed; find node and
-    // merge/replace its config safely
     setNodes((nds) => nds.map((n) => {
       if (String(n.id) !== String(nodeId)) return n
       const prevData = n.data && typeof n.data === 'object' ? n.data : {}
-      // ensure prevData.config is an object
       const prevConfig = prevData.config && typeof prevData.config === 'object' ? prevData.config : {}
       const merged = { ...prevData, config: { ...prevConfig, ...(newConfig || {}) } }
       markDirty()
@@ -261,16 +313,13 @@ export default function Editor(){
     }))
   }
 
-  // Helper to sanitize and load a workflow object's graph into the editor
   const loadWorkflowGraph = (wf) => {
     if (!wf) return
     setWorkflowId(wf.id)
     if (wf.graph) {
       if (Array.isArray(wf.graph)) {
-        // legacy: array of elements
         const nodesLoaded = wf.graph.filter(e => !e.source && !e.target)
         const edgesLoaded = wf.graph.filter(e => e.source && e.target)
-        // sanitize loaded nodes/edges
         const sanitize = (n) => ({
           id: String(n.id),
           type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
@@ -280,11 +329,8 @@ export default function Editor(){
         })
         setNodes(nodesLoaded.map(sanitize))
         setEdges((edgesLoaded || []).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
-        // clear selection for legacy flows (no persisted selection)
         setSelectedNodeId(null)
       } else if (wf.graph.nodes) {
-        // sanitize nodes/edges coming from the server so the editor
-        // does not break if fields are missing or ids are numbers
         const sanitize = (n) => ({
           id: String(n.id),
           type: n.type || (n.data && n.data.label === 'Webhook Trigger' ? 'input' : 'default'),
@@ -294,9 +340,7 @@ export default function Editor(){
         })
         setNodes((wf.graph.nodes || []).map(sanitize))
         setEdges(((wf.graph.edges || [])).map(e => ({ ...e, id: e.id ? String(e.id) : `${e.source}-${e.target}`, source: String(e.source), target: String(e.target) })))
-        // restore selected node if saved
         if (wf.graph.selected_node_id) {
-          // ensure the selected id exists in the loaded nodes
           const exists = ((wf.graph.nodes || []).map(n => String(n.id))).includes(String(wf.graph.selected_node_id))
           setSelectedNodeId(exists ? String(wf.graph.selected_node_id) : null)
         } else {
@@ -305,15 +349,11 @@ export default function Editor(){
       }
     }
     if (wf.name) setWorkflowName(wf.name)
-    // mark editor clean after loading
     setSaveStatus('saved')
     setLastSavedAt(new Date())
   }
 
-  // new: unified save function supports both create (POST) and update (PUT).
-  // options: { silent: bool } suppresses alert popups (used by autosave)
   const saveWorkflow = async ({ silent = false } = {}) => {
-    // build payload
     const payload = {
       name: workflowName || 'Untitled',
       graph: { nodes, edges, selected_node_id: selectedNodeId },
@@ -342,12 +382,10 @@ export default function Editor(){
         setValidationError(null)
         setSaveStatus('saved')
         setLastSavedAt(new Date())
-        // reload workflows so the list reflects the newly saved workflow
         await loadWorkflows()
         if (!silent) alert('Saved')
         return true
       } else {
-        // extract error detail as before
         let detail = null
         try {
           const j = await resp.json()
@@ -405,7 +443,6 @@ export default function Editor(){
         setWorkflows(data || [])
         if (data && data.length > 0) {
           const wf = data[0]
-          // preserve legacy behaviour: auto-load the first workflow
           if (!workflowId) selectWorkflow(wf.id)
         }
       } else {
@@ -454,7 +491,6 @@ export default function Editor(){
         const data = await resp.json()
         alert('Run queued: ' + data.run_id)
         await loadRuns()
-        // Automatically open streaming logs for the new run
         if (data && data.run_id) {
           viewRunLogs(data.run_id)
         }
@@ -482,12 +518,10 @@ export default function Editor(){
   }
 
   const viewRunLogs = async (runId) => {
-    // Fetch existing logs first
     try {
       const resp = await fetch(`/api/runs/${runId}/logs`, { headers: authHeaders() })
       if (resp.ok) {
         const data = await resp.json()
-        // backend returns { logs: [...] }
         setSelectedRunLogs((data && data.logs) || [])
       } else {
         const txt = await resp.text()
@@ -499,8 +533,6 @@ export default function Editor(){
       return
     }
 
-    // Close any existing EventSource and clear refs/state so multiple
-    // viewRunLogs calls don't leak event sources.
     try {
       if (logEventSourceRef.current) {
         try { logEventSourceRef.current.close() } catch (e) {}
@@ -509,10 +541,6 @@ export default function Editor(){
     logEventSourceRef.current = null
     setLogEventSource(null)
 
-    // Start SSE to stream new logs. If a token is available include it as a
-    // query param, otherwise open the stream without the token so tests and
-    // unauthenticated setups can still receive events (the backend may accept
-    // cookies or unauthenticated connections for streaming).
     try {
       const url = token ? `/api/runs/${runId}/stream?access_token=${token}` : `/api/runs/${runId}/stream`
       const es = new EventSource(url)
@@ -520,21 +548,16 @@ export default function Editor(){
         try {
           const payload = JSON.parse(e.data)
           setSelectedRunLogs((prev) => prev.concat([payload]))
-        } catch (err) {
-          // ignore parse errors
-        }
+        } catch (err) {}
       }
       es.onerror = (err) => {
-        // If the connection closes or errors, close and clear the source
         try { es.close() } catch (e) {}
         logEventSourceRef.current = null
         setLogEventSource(null)
       }
       logEventSourceRef.current = es
       setLogEventSource(es)
-    } catch (err) {
-      // EventSource may not be available in some environments; ignore
-    }
+    } catch (err) {}
   }
 
   const stopViewingLogs = () => {
@@ -583,10 +606,6 @@ export default function Editor(){
     setSelectedNodeId(null)
   }
 
-  // Keep selectedNodeId in sync with react-flow's node.selected property.
-  // Some interactions (or programmatic node updates) may update the nodes
-  // array and set a node's selected flag without emitting an onNodeClick
-  // event; ensure the right panel reflects the current selection.
   useEffect(() => {
     try {
       const sel = nodes.find(n => n && (n.selected === true || String(n.id) === String(selectedNodeId)))
@@ -595,23 +614,17 @@ export default function Editor(){
       } else {
         if (selectedNodeId) setSelectedNodeId(null)
       }
-    } catch (e) {
-      // defensive: don't break UI
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch (e) {}
   }, [nodes])
 
   useEffect(() => {
-    // initial load of providers and secrets only when token present
     if (token) {
       loadProviders()
       loadSecrets()
       loadWorkflows()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // cleanup EventSource on unmount
   useEffect(() => {
     return () => {
       try {
@@ -621,10 +634,8 @@ export default function Editor(){
       } catch (e) {}
       logEventSourceRef.current = null
       setLogEventSource(null)
-      // clear autosave timer
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logEventSource])
 
   const selectedNode = selectedNodeId ? nodes.find(n => String(n.id) === String(selectedNodeId)) : null
@@ -675,7 +686,6 @@ export default function Editor(){
     }
   }
 
-  // mark editor dirty and optionally trigger autosave
   const markDirty = () => {
     setSaveStatus('dirty')
     if (autoSaveEnabled) {
@@ -689,116 +699,46 @@ export default function Editor(){
   return (
     <div className="editor-root">
       <div className="editor-main">
-        <div className="sidebar">
-          {/* Use the shared card styles so the header matches the rest of the app */}
-          <div className="card" style={{ position: 'sticky', top: 0, paddingBottom: 8, zIndex: 5 }}>
-            <h3>Palette</h3>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-              <input className="input" value={workflowName} onChange={(e) => { setWorkflowName(e.target.value); markDirty() }} style={{ flex: 1 }} />
-              <button onClick={() => saveWorkflow({ silent: false })} className="btn btn-primary" style={{ padding: '10px 16px', fontSize: 16 }}>Save</button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={autoSaveEnabled} onChange={(e) => setAutoSaveEnabled(e.target.checked)} /> Autosave</label>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>
-                {saveStatus === 'saving' && 'Saving...'}
-                {saveStatus === 'saved' && lastSavedAt && `Saved ${new Date(lastSavedAt).toLocaleTimeString()}`}
-                {saveStatus === 'dirty' && 'Unsaved changes'}
-                {saveStatus === 'error' && 'Save error'}
-                {saveStatus === 'idle' && 'Not saved'}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <div className="palette-buttons">
-              <button onClick={addHttpNode}>Add HTTP Node</button>
-              <button onClick={addLlmNode}>Add LLM Node</button>
-              <button onClick={addWebhookTrigger}>Add Webhook</button>
-              <button onClick={addIfNode}>Add If/Condition</button>
-              <button onClick={addSwitchNode}>Add Switch</button>
-            </div>
-          </div>
-
-          <hr />
-          <div>
-            <strong>Auth Token (dev):</strong>
-            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
-          </div>
-
-          <hr />
-
-          <div className="mt-8">Selected workflow id: {workflowId || 'none'}</div>
-
-          {/* Workflow selector and list */}
-          <div style={{ marginTop: 8 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Workflows</label>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-              <select value={workflowId || ''} onChange={(e) => selectWorkflow(e.target.value)} style={{ flex: 1 }}>
-                <option value=''>-- New workflow --</option>
-                {workflows.map(w => <option key={w.id} value={w.id}>{w.name || `(id:${w.id})`}</option>)}
-              </select>
-              <button onClick={loadWorkflows}>Load</button>
-              <button onClick={newWorkflow} className="secondary">New</button>
-            </div>
-          </div>
-
-          <div className="row mt-8">
-            <button onClick={loadWorkflows}>Load</button>
-            <button onClick={runWorkflow}>Run</button>
-            <button onClick={loadRuns}>Refresh Runs</button>
-          </div>
-
-          <hr />
-          <h4>Providers</h4>
-          <div className="row" style={{ marginBottom: 6 }}>
-            <input placeholder='Type (e.g. openai)' value={newProviderType} onChange={(e) => setNewProviderType(e.target.value)} style={{ width: '60%', marginRight: 6 }} />
-            <select value={newProviderSecretId} onChange={(e) => setNewProviderSecretId(e.target.value)} style={{ width: '30%', marginRight: 6 }}>
-              <option value=''>No secret</option>
-              {secrets.map(s => <option key={s.id} value={s.id}>{s.name} (id:{s.id})</option>)}
-            </select>
-            <button onClick={createProvider}>Create Provider</button>
-          </div>
-
-          <div className="list-scroll">
-            {providers.length === 0 ? <div className="muted">No providers</div> : providers.map(p => (
-              <div key={p.id} className="list-item">
-                <div><strong>{p.type}</strong> <span className="muted">(id: {p.id})</span></div>
-              </div>
-            ))}
-          </div>
-
-          <hr />
-          <h4>Secrets</h4>
-          <div style={{ marginBottom: 8 }}>
-            <button onClick={loadSecrets}>Refresh Secrets</button>
-          </div>
-          <div className="list-scroll">
-            {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
-              <div key={s.id} className="list-item">
-                <div><strong>{s.name}</strong></div>
-                <div className="muted">id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }} className="secondary">Copy id</button></div>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <input placeholder='Secret name' value={newSecretName} onChange={(e) => setNewSecretName(e.target.value)} style={{ marginBottom: 6 }} />
-            <input placeholder='Secret value' value={newSecretValue} onChange={(e) => setNewSecretValue(e.target.value)} style={{ marginBottom: 6 }} />
-            <button onClick={createSecret}>Create Secret</button>
-          </div>
-
-          <h4 style={{ marginTop: 12 }}>Runs</h4>
-          <div className="list-scroll runs-list">
-            {runs.length === 0 ? <div className="muted">No runs</div> : runs.map(r => (
-              <div key={r.id} className="run-item">
-                <div className="run-meta">Run {r.id} — {r.status}</div>
-                <div>
-                  <button onClick={() => viewRunLogs(r.id)} className="secondary">View Logs</button>
-                  <button onClick={() => viewRunDetail(r.id)} style={{ marginLeft: 6 }} className="secondary">Details</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <Sidebar
+          workflowName={workflowName}
+          setWorkflowName={(v) => { setWorkflowName(v); markDirty() }}
+          saveWorkflow={saveWorkflow}
+          autoSaveEnabled={autoSaveEnabled}
+          setAutoSaveEnabled={setAutoSaveEnabled}
+          saveStatus={saveStatus}
+          lastSavedAt={lastSavedAt}
+          addHttpNode={addHttpNode}
+          addLlmNode={addLlmNode}
+          addWebhookTrigger={addWebhookTrigger}
+          addIfNode={addIfNode}
+          addSwitchNode={addSwitchNode}
+          setShowTemplates={setShowTemplates}
+          token={token}
+          setToken={setToken}
+          workflowId={workflowId}
+          workflows={workflows}
+          loadWorkflows={loadWorkflows}
+          selectWorkflow={selectWorkflow}
+          newWorkflow={newWorkflow}
+          runWorkflow={runWorkflow}
+          loadRuns={loadRuns}
+          providers={providers}
+          newProviderType={newProviderType}
+          setNewProviderType={setNewProviderType}
+          newProviderSecretId={newProviderSecretId}
+          setNewProviderSecretId={setNewProviderSecretId}
+          createProvider={createProvider}
+          secrets={secrets}
+          loadSecrets={loadSecrets}
+          createSecret={createSecret}
+          newSecretName={newSecretName}
+          setNewSecretName={setNewSecretName}
+          newSecretValue={newSecretValue}
+          setNewSecretValue={setNewSecretValue}
+          runs={runs}
+          viewRunLogs={viewRunLogs}
+          viewRunDetail={viewRunDetail}
+        />
 
         <div className="canvas">
           <div style={{ flex: 1 }} className="reactflow-wrapper">
@@ -835,7 +775,6 @@ export default function Editor(){
                 <button onClick={() => { setShowNodeTest(true); setNodeTestToken(token) }} className="btn btn-ghost">Test Node</button>
               </div>
 
-              {/* Webhook info */}
               {selectedNode.data && selectedNode.data.label === 'Webhook Trigger' && (
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ marginBottom: 6 }}>Webhook trigger node.</div>
@@ -856,7 +795,6 @@ export default function Editor(){
                 </div>
               )}
 
-              {/* HTTP Node Config */}
               {selectedNode.data && selectedNode.data.label === 'HTTP Request' && (
                 <div>
                   <label>Method</label>
@@ -877,7 +815,6 @@ export default function Editor(){
                       const parsed = JSON.parse(e.target.value || '{}')
                       updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), headers: parsed })
                     } catch (err) {
-                      // ignore parse errors while typing
                     }
                   }} />
 
@@ -887,7 +824,6 @@ export default function Editor(){
                 </div>
               )}
 
-              {/* LLM Node Config */}
               {selectedNode.data && selectedNode.data.label === 'LLM' && (
                 <div>
                   <label>Prompt</label>
@@ -903,21 +839,17 @@ export default function Editor(){
                 </div>
               )}
 
-              {/* Fallback raw JSON editor for other node types */}
               {(!selectedNode.data || (selectedNode.data && !['HTTP Request', 'LLM', 'Webhook Trigger'].includes(selectedNode.data.label))) && (
                 <div>
                   <label>Raw node config (JSON)</label>
                   <textarea style={{ width: '100%', height: 240 }} value={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={(e) => {
                     try {
                       const parsed = JSON.parse(e.target.value)
-                      // replace entire data
                       setNodes((nds) => nds.map(n => n.id === selectedNodeId ? { ...n, data: parsed } : n))
                       markDirty()
                     } catch (err) {
-                      // ignore
                     }
                   }} />
-                  {/* If/ Switch quick-config UI: allow wiring targets from canvas */}
                   {selectedNode.data && ['If', 'Switch', 'Condition'].includes(selectedNode.data.label) && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ marginBottom: 6 }}><strong>Auto-wire targets</strong></div>
@@ -961,6 +893,30 @@ export default function Editor(){
         </div>
       </div>
   {showNodeTest && <NodeTestModal node={selectedNode} token={nodeTestToken} providers={providers} secrets={secrets} onClose={() => setShowNodeTest(false)} />}
+    {showTemplates && (
+      <div className="templates-overlay" onClick={() => setShowTemplates(false)}>
+        <div className="templates-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+          <h3>Starter templates</h3>
+          <div className="templates-list">
+            {TEMPLATES.map(t => (
+              <div key={t.id} className="template-card">
+                <h4>{t.name}</h4>
+                <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
+                <div style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.03)', background: 'rgba(0,0,0,0.06)' }}>
+                  <div style={{ height: 160 }}>
+                    <TemplatePreview graph={t.graph} />
+                  </div>
+                </div>
+                <div className="template-actions">
+                  <button onClick={() => { loadTemplate(t); setShowTemplates(false) }}>Load</button>
+                  <button className="secondary" onClick={() => setShowTemplates(false)}>Cancel</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   )
 }
