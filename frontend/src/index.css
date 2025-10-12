@@ -85,7 +85,13 @@ input, textarea, select {
 }
 textarea { resize: vertical }
 
-.palette-buttons { display: flex; gap: 8px; margin-bottom: 10px }
+.palette-buttons { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap }
+
+/* small variant for compact toolbar buttons used in side panels */
+.btn-small { padding: 6px 8px; font-size: 13px; border-radius: 8px }
+
+/* allow palette buttons to shrink to avoid horizontal overflow */
+.sidebar .palette-buttons button { min-width: 0 }
 .list-scroll {
   max-height: 160px; overflow: auto; border-radius: 8px; padding: 6px;
   border: 1px solid rgba(255,255,255,0.02);
@@ -211,8 +217,8 @@ textarea { resize: vertical }
 }
 
 /* Editor layout: avoid 100vh (will overflow when topbar is fixed) */
-.editor-root { height: calc(100vh - var(--topbar-height)); }
-.editor-main { display: flex; height: 100%; align-items: stretch }
+.editor-root { height: calc(100vh - var(--topbar-height));}
+.editor-main { display: flex; height: 100%;  width: 100%; align-items: stretch }
 .sidebar {
   width: 320px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.03);
   background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
