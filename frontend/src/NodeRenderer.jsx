@@ -61,8 +61,8 @@ export default function NodeRenderer(props) {
       // force nodes to render above edges / overlays in case the canvas
       // stacking context is unusual in some environments
       style={isInvalid
-        ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', zIndex: 1000, position: 'relative' }
-        : { zIndex: 1000, position: 'relative' }}
+        ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', zIndex: 1000 }
+        : { zIndex: 1000 }}
       data-node-id={id}
     >
       {/* Target / input handle on the left */}

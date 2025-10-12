@@ -343,6 +343,35 @@ try:
 except Exception:
     pass
 
+# Import additional routes from a smaller module to keep this file readable.
+try:
+    from .api_routes import register as _register_api_routes
+    # Provide a small context dict exposing the in-memory stores and helpers
+    _ctx = {
+        'SessionLocal': SessionLocal,
+        'models': models,
+        '_DB_AVAILABLE': _DB_AVAILABLE,
+        '_users': _users,
+        '_workspaces': _workspaces,
+        '_schedulers': _schedulers,
+        '_providers': _providers,
+        '_secrets': _secrets,
+        '_workflows': _workflows,
+        '_webhooks': _webhooks,
+        '_runs': _runs,
+        '_next': _next,
+        '_add_audit': _add_audit,
+        '_workspace_for_user': _workspace_for_user,
+        '_user_from_token': _user_from_token,
+    }
+    try:
+        _register_api_routes(app, _ctx)
+    except Exception:
+        # non-fatal: if the module fails in constrained test envs just continue
+        pass
+except Exception:
+    pass
+
 
 @app.post('/api/auth/login')
 def _auth_login(body: dict):

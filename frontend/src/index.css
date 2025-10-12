@@ -1,172 +1,242 @@
-:root{
+:root {
   --bg-1: #0f1724; /* deep navy */
   --bg-2: #071124; /* almost black blue */
-  --panel: rgba(255,255,255,0.04);
-  --glass: rgba(255,255,255,0.03);
+  --panel: rgba(255, 255, 255, 0.04);
+  --glass: rgba(255, 255, 255, 0.03);
   --muted: #9aa6b2;
   --accent: #6ee7b7; /* teal */
   --accent-2: #7c5cff; /* purple */
-  --glass-border: rgba(255,255,255,0.06);
+  --glass-border: rgba(255, 255, 255, 0.06);
   --glass-blur: 8px;
   --card-radius: 12px;
+
+  /* keep these in sync with .node-card padding */
+  --node-pad-x: 14px;
+  --node-pad-y: 12px;
+  --handle-size: 12px;
+  --handle-border: 2px;
 }
 
-*{box-sizing:border-box}
-html,body,#root{height:100%;}
-body{
-  margin:0;
+* { box-sizing: border-box }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
-  background: radial-gradient(1200px 600px at 10% 10%, rgba(124,92,255,0.12), transparent),
-              radial-gradient(1000px 500px at 90% 90%, rgba(110,231,183,0.06), transparent),
-              linear-gradient(180deg,var(--bg-1),var(--bg-2));
+  background:
+    radial-gradient(1200px 600px at 10% 10%, rgba(124, 92, 255, 0.12), transparent),
+    radial-gradient(1000px 500px at 90% 90%, rgba(110, 231, 183, 0.06), transparent),
+    linear-gradient(180deg, var(--bg-1), var(--bg-2));
   color: #e6eef6;
-  -webkit-font-smoothing:antialiased;
-  -moz-osx-font-smoothing:grayscale;
-  padding:0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding: 0;
 }
 
-.app-shell{display:flex;flex-direction:column;height:100%;}
-.topbar{display:flex;align-items:center;gap:16px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.03);backdrop-filter: blur(var(--glass-blur));}
-.brand{font-weight:700;letter-spacing:0.6px;color:var(--accent-2);margin:0;display:inline-block;position:relative}
-/* subtle animated gradient on brand */
-.brand{background:linear-gradient(90deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent;animation:brand-glow 3s linear infinite}
-@keyframes brand-glow{0%{filter:brightness(0.95)}50%{filter:brightness(1.12)}100%{filter:brightness(0.95)}}
+.app-shell { display: flex; flex-direction: column; height: 100%; }
 
-.nav{display:flex;gap:12px;align-items:center}
-.nav a{color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:8px}
-.nav a:hover{color:var(--accent);background:rgba(255,255,255,0.02)}
-.nav .cta{color:var(--bg-2);background:linear-gradient(90deg,var(--accent),var(--accent-2));padding:6px 10px}
-
-/* global buttons used through the app */
-button{appearance:none;border:0;cursor:pointer;padding:8px 10px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));color:var(--accent);font-weight:600;transition:transform .12s ease, box-shadow .18s ease}
-button:hover{filter:brightness(1.08);box-shadow:0 4px 18px rgba(124,92,255,0.12)}
-button:active{transform:translateY(1px) scale(0.997)}
-button.secondary{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.02)}
-
-/* Button utilities matching modern styles */
-.btn { padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer; font-weight:600; display:inline-flex; align-items:center; gap:8px }
-.btn-ghost { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,0.03); padding: 6px 10px; border-radius:8px }
-
-/* subtle pulsing effect for actions in progress */
-.btn-busy{animation:busy-pulse 1200ms linear infinite;border-radius:10px}
-@keyframes busy-pulse{0%{box-shadow:0 0 0 0 rgba(110,231,183,0.06)}50%{box-shadow:0 6px 30px 6px rgba(110,231,183,0.02)}100%{box-shadow:0 0 0 0 rgba(110,231,183,0.00)}}
-
-input,textarea,select{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
-textarea{resize:vertical}
-
-.palette-buttons{display:flex;gap:8px;margin-bottom:10px}
-.list-scroll{max-height:160px;overflow:auto;border-radius:8px;padding:6px;border:1px solid rgba(255,255,255,0.02);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
-
-.node-card{position:relative;padding:12px 14px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);min-width:160px;min-height:44px;display:flex;flex-direction:column;justify-content:center}
-.node-card .label{font-weight:700;color:var(--accent);font-size:13px}
-.node-card:focus{outline:2px solid rgba(124,92,255,0.12);box-shadow:0 6px 24px rgba(124,92,255,0.08)}
-.node-header{display:flex;align-items:center;gap:8px}
-.node-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));color:var(--accent);} 
-.node-icon-http{color:var(--accent-2)}
-.node-icon-webhook{color:#ffd166}
-.node-icon-llm{color:var(--accent)}
-
-.node-meta{font-size:12px;color:var(--muted);margin-top:6px}
-
-/* React Flow handle styles to make ports visible */
-.rf-handle-left, .rf-handle-right, .rf-handle-true, .rf-handle-false { 
-  width: 12px !important; 
-  height: 12px !important; 
-  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.8));
-  border: 2px solid rgba(0,0,0,0.2);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-  border-radius: 4px;
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  backdrop-filter: blur(var(--glass-blur));
 }
-.rf-handle-left{left: -6px}
-.rf-handle-right{right: -6px}
-.rf-handle-true{right: -6px}
-.rf-handle-false{right: -6px}
 
-/* Ensure handles align exactly at the visual midline of the node */
-.react-flow__node .react-flow__handle { transform: translateY(-50%) !important }
+.brand {
+  font-weight: 700; letter-spacing: .6px; margin: 0; display: inline-block; position: relative;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: brand-glow 3s linear infinite;
+}
+@keyframes brand-glow { 0%{filter:brightness(.95)} 50%{filter:brightness(1.12)} 100%{filter:brightness(.95)} }
 
-.handle-label{position:absolute;color:var(--muted);font-weight:700;font-size:12px}
-.handle-label-true{right: 10px; top: 8px}
-.handle-label-false{right: 10px; bottom: 8px}
+.nav { display: flex; gap: 12px; align-items: center }
+.nav a { color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 8px }
+.nav a:hover { color: var(--accent); background: rgba(255,255,255,0.02) }
+.nav .cta { color: var(--bg-2); background: linear-gradient(90deg, var(--accent), var(--accent-2)); padding: 6px 10px }
 
-.topbar-left{display:flex;align-items:center;gap:12px}
-.brand-link{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit}
-.brand-title{font-weight:700}
-.brand-sub{font-size:11px;color:var(--muted)}
-.spacer{flex:1}
-.nav-inline{display:flex;gap:12px;align-items:center}
+button {
+  appearance: none; border: 0; cursor: pointer; padding: 8px 10px; border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  color: var(--accent); font-weight: 600; transition: transform .12s ease, box-shadow .18s ease;
+}
+button:hover { filter: brightness(1.08); box-shadow: 0 4px 18px rgba(124,92,255,0.12) }
+button:active { transform: translateY(1px) scale(.997) }
+button.secondary { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,0.02) }
 
-.page{padding:20px}
-.page-inner{max-width:900px}
-.form-vertical{display:flex;flex-direction:column;gap:8px;width:360px}
-.form-actions{display:flex;gap:8px}
+.btn { padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 8px }
+.btn-ghost { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 8px }
+.btn-busy { animation: busy-pulse 1200ms linear infinite; border-radius: 10px }
+@keyframes busy-pulse { 0%{box-shadow:0 0 0 0 rgba(110,231,183,0.06)} 50%{box-shadow:0 6px 30px 6px rgba(110,231,183,0.02)} 100%{box-shadow:0 0 0 0 rgba(110,231,183,0)} }
+
+input, textarea, select {
+  width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.04);
+  background: transparent; color: inherit;
+}
+textarea { resize: vertical }
+
+.palette-buttons { display: flex; gap: 8px; margin-bottom: 10px }
+.list-scroll {
+  max-height: 160px; overflow: auto; border-radius: 8px; padding: 6px;
+  border: 1px solid rgba(255,255,255,0.02);
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+}
+
+/* -------------------- React Flow: targeted node rules -------------------- */
+/* Make the RF node wrapper transparent ONLY for nodes that render .node-card.
+   Do NOT change position/display/box-sizing here (RF controls layout). */
+.react-flow__node:has(> .node-card) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* Your visual card: no positioning so handles anchor to wrapper */
+.node-card {
+  padding: var(--node-pad-y) var(--node-pad-x);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.192), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.03);
+  min-width: 160px;
+  min-height: 44px;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: visible;
+  transform-origin: center;
+  animation: node-appear 360ms ease both;
+}
+@keyframes node-appear { from { opacity:0; transform: translateY(6px) scale(.98) } to { opacity:1; transform: translateY(0) scale(1) } }
+
+/* Your existing placement can stay; just tweak the paint */
+.react-flow__node:has(> .node-card) .react-flow__handle{
+  position: absolute;
+  width: var(--handle-size);
+  height: var(--handle-size);
+  box-sizing: border-box;
+  border-radius: 999px;
+
+  /* key changes ↓ */
+  background: transparent;                /* let the edge show through */
+  border: var(--handle-border) solid rgba(255,255,255,.18);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); /* optional definition */
+}
+
+/* keep your placement rules (no transforms) */
+.react-flow__node:has(> .node-card) .rf-handle-left{
+  left:  calc(var(--node-pad-x) - var(--handle-size) / 2);
+  top:   calc(50% - var(--handle-size) / 2);
+}
+.react-flow__node:has(> .node-card) .rf-handle-right{
+  right: calc(var(--node-pad-x) - var(--handle-size) / 2);
+  top:   calc(50% - var(--handle-size) / 2);
+}
+.react-flow__node:has(> .node-card) .rf-handle-true{
+  right: calc(var(--node-pad-x) - var(--handle-size) / 2);
+  top:   calc(28px - var(--handle-size) / 2);
+}
+.react-flow__node:has(> .node-card) .rf-handle-false{
+  right:  calc(var(--node-pad-x) - var(--handle-size) / 2);
+  bottom: calc(28px - var(--handle-size) / 2);
+}
+
+/* Handle labels (relative to wrapper) */
+.react-flow__node:has(> .node-card) .handle-label {
+  position: absolute;
+  right: calc(var(--node-pad-x) - 18px);
+  font-size: 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 2px 4px;
+  pointer-events: none;
+  user-select: none;
+  color: var(--muted);
+  font-weight: 700;
+}
+.handle-label-true { top: 28px; }
+.handle-label-false { bottom: 28px; }
+
+/* Do NOT include any global ".react-flow__node { position/display/... }" overrides.
+   Do NOT include any global ".react-flow__handle { top:50% ... }" overrides. */
+
+/* ------------------------------------------------------------------------ */
+
+.node-card .label { font-weight: 700; color: var(--accent); font-size: 13px }
+.node-card:focus { outline: 2px solid rgba(124,92,255,0.12); box-shadow: 0 6px 24px rgba(124,92,255,0.08) }
+.node-header { display: flex; align-items: center; gap: 8px }
+.node-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  color: var(--accent);
+}
+.node-icon-http { color: var(--accent-2) }
+.node-icon-webhook { color: #ffd166 }
+.node-icon-llm { color: var(--accent) }
+.node-meta { font-size: 12px; color: var(--muted); margin-top: 6px }
+
+/* -------------------- Layout around the canvas -------------------- */
+.topbar-left { display: flex; align-items: center; gap: 12px }
+.brand-link { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit }
+.brand-title { font-weight: 700 }
+.brand-sub { font-size: 11px; color: var(--muted) }
+.spacer { flex: 1 }
+.nav-inline { display: flex; gap: 12px; align-items: center }
+.page { padding: 20px }
+.page-inner { max-width: 900px }
+.form-vertical { display: flex; flex-direction: column; gap: 8px; width: 360px }
+.form-actions { display: flex; gap: 8px }
 
 /* Editor layout */
-.editor-root{height:100vh}
-.editor-main{display:flex;height:100%;align-items:stretch}
-.sidebar{width:320px;padding:16px;border-right:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);overflow:auto;z-index:3}
-.canvas{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:2}
-.rightpanel{width:360px;padding:16px;border-left:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);overflow:auto;z-index:3}
+.editor-root { height: 100vh }
+.editor-main { display: flex; height: 100%; align-items: stretch }
+.sidebar {
+  width: 320px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.03);
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+  overflow: auto; z-index: 3;
+}
+.canvas { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; z-index: 2 }
+.rightpanel {
+  width: 360px; padding: 16px; border-left: 1px solid rgba(255,255,255,0.03);
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+  overflow: auto; z-index: 3;
+}
 
-.reactflow-wrapper{height:100%;background:transparent;position:relative}
-/* Ensure the React Flow viewport fills the wrapper and sits above background but below side panels where appropriate */
-.reactflow-wrapper .react-flow{height:100%}
-.reactflow-wrapper .react-flow__viewport{height:100%}
+.reactflow-wrapper { height: 100%; background: transparent; position: relative }
+.reactflow-wrapper .react-flow { height: 100% }
+.reactflow-wrapper .react-flow__viewport { height: 100% }
 
-.section-spacing{margin-top:8px}
-.list-item{padding:6px;border-bottom:1px solid rgba(255,255,255,0.02)}
-.row{display:flex;gap:12px;align-items:center}
-.col{flex:1}
-.run-meta{color:var(--muted);font-size:13px}
-.mt-6{margin-top:6px}
-.mt-8{margin-top:8px}
+.section-spacing { margin-top: 8px }
+.list-item { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.02) }
+.row { display: flex; gap: 12px; align-items: center }
+.col { flex: 1 }
+.run-meta { color: var(--muted); font-size: 13px }
+.mt-6 { margin-top: 6px }
+.mt-8 { margin-top: 8px }
 
-/* subtle entrance animation for nodes */
-.node-card{transform-origin:center;animation:node-appear 360ms ease both}
-@keyframes node-appear{from{opacity:0;transform:translateY(6px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.muted { color: var(--muted) }
+.runs-list .run-item {
+  padding: 8px; border-radius: 8px; margin-bottom: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+  border: 1px solid rgba(255,255,255,0.02);
+  animation: run-appear 260ms ease both;
+}
+@keyframes run-appear { from {opacity:0; transform:translateX(-6px)} to {opacity:1; transform:translateX(0)} }
 
-.muted{color:var(--muted)}
+.log-entry {
+  padding: 8px; border-radius: 8px; margin-bottom: 8px;
+  background: rgba(0,0,0,0.18); border: 1px solid rgba(255,255,255,0.02);
+}
+.log-entry pre { white-space: pre-wrap; margin: 0; color: #cfeff3 }
 
-.runs-list .run-item{padding:8px;border-radius:8px;margin-bottom:8px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);border:1px solid rgba(255,255,255,0.02);animation:run-appear 260ms ease both}
-@keyframes run-appear{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
-
-.log-entry{padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.02)}
-.log-entry pre{white-space:pre-wrap;margin:0;color:#cfeff3}
-
-/* React Flow container tweaks */
-.reactflow-wrapper{height:100%;background:transparent}
-
-/* Ensure react-flow nodes and handles sit above SVG edge layers and are visible
-   across different browsers / stacking contexts. Some users reported blank
-   white rectangles caused by CSS stacking issues; these overrides increase
-   specificity and force nodes/handles to be visible. */
-.react-flow__node { display: block !important; position: relative !important; z-index: 1000 !important; opacity: 1 !important; }
-.react-flow__node .node-card { background: linear-gradient(180deg, rgba(7,17,36,0.94), rgba(7,17,36,0.90)) !important; color: #e6eef6 !important; min-height:44px !important; }
-.react-flow__node .node-card .label { color: var(--accent) !important; }
-.react-flow__node .node-card .node-meta { color: var(--muted) !important; }
-.react-flow__handle { z-index: 1100 !important; }
-.react-flow__handle-left, .react-flow__handle-right { pointer-events: auto !important; }
-
-/* If nodes are being hidden by a parent stacking context, force the node
-   content to render on top via a small elevation shadow and visible border. */
-.react-flow__node .node-card { box-shadow: 0 6px 20px rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.04); }
-
-/* Minimal, high-specificity fixes for the remaining visual issues:
-   - Ensure the node element uses border-box sizing so padding increases the
-     layout box (prevents the visible card from overflowing its parent).
-   - Make sure the node container doesn't add extra padding that would
-     mis-size the card. Keep handle positioning absolute and centered.
-*/
-.react-flow__node{ box-sizing: border-box !important; padding: 0 !important; display: inline-block !important; }
-.react-flow__node .node-card{ display: block !important; box-sizing: border-box !important; padding: 12px 14px !important; min-width:160px !important; min-height:44px !important; border-radius:8px !important; background: linear-gradient(180deg, rgba(7,17,36,0.94), rgba(7,17,36,0.90)) !important; color: #e6eef6 !important; }
-
-/* Make sure handles are absolutely positioned relative to the node and centered */
-.react-flow__node .react-flow__handle{ position: absolute !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 1100 !important; }
-.react-flow__node .react-flow__handle.react-flow__handle-left{ left: -8px !important; }
-.react-flow__node .react-flow__handle.react-flow__handle-right{ right: -8px !important; }
-
-/* Re-assert pointer-events and visibility for custom handle classes used in code */
-.rf-handle-left, .rf-handle-right, .rf-handle-true, .rf-handle-false { pointer-events: auto !important; }
+/* Handles should appear above the card content slightly */
+.react-flow__handle { z-index: 1100 }
 
 /* small screens */
-@media(max-width:900px){.sidebar{display:none}.rightpanel{display:none}}
+@media (max-width:900px) {
+  .sidebar { display: none }
+  .rightpanel { display: none }
+}
