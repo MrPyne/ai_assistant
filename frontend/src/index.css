@@ -9,6 +9,7 @@
   --glass-border: rgba(255, 255, 255, 0.06);
   --glass-blur: 8px;
   --card-radius: 12px;
+  --topbar-height: 64px;
 
   /* keep these in sync with .node-card padding */
   --node-pad-x: 14px;
@@ -34,13 +35,21 @@ body {
   padding: 0;
 }
 
-.app-shell { display: flex; flex-direction: column; height: 100%; }
+/* App shell: keep full viewport height */
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
 
+/* Topbar: fixed to top so it remains visible and doesn't cause page-level scrollbars */
 .topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--topbar-height);
   display: flex; align-items: center; gap: 16px;
-  padding: 14px 18px;
+  padding: 0 18px; /* horizontal padding only; vertical centering via height */
   border-bottom: 1px solid rgba(255,255,255,0.03);
   backdrop-filter: blur(var(--glass-blur));
+  z-index: 1200;
 }
 
 .brand {
@@ -190,8 +199,16 @@ textarea { resize: vertical }
 .form-vertical { display: flex; flex-direction: column; gap: 8px; width: 360px }
 .form-actions { display: flex; gap: 8px }
 
-/* Editor layout */
-.editor-root { height: 100vh }
+/* Ensure the main content sits below the fixed topbar. This prevents double-scrollbar
+   issues where children set to 100vh produce extra overflow. */
+.main {
+  padding-top: var(--topbar-height);
+  min-height: calc(100vh - var(--topbar-height));
+  overflow: auto;
+}
+
+/* Editor layout: avoid 100vh (will overflow when topbar is fixed) */
+.editor-root { height: calc(100vh - var(--topbar-height)); }
 .editor-main { display: flex; height: 100%; align-items: stretch }
 .sidebar {
   width: 320px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.03);
