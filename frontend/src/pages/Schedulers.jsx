@@ -53,11 +53,19 @@ export default function Schedulers(){
 
   return (
     <div>
-      <h2>Schedulers</h2>
-      {message && <div className="flash">{message}</div>}
-      <div style={{marginBottom: 12}}>
-        <button className="btn" onClick={onCreate}>Create Scheduler</button>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 12}}>
+        <h2 style={{margin:0}}>Schedulers</h2>
+        <button
+          className="btn btn-primary"
+          onClick={onCreate}
+          style={{padding: '10px 16px', fontSize: 16, fontWeight: 600, borderRadius: 6}}
+          aria-label="Create Scheduler"
+        >
+          + Create Scheduler
+        </button>
       </div>
+
+      {message && <div className="flash">{message}</div>}
 
       <table className="table">
         <thead>

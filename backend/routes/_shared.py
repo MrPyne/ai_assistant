@@ -234,3 +234,34 @@ def auth_resend(body: dict):
     except Exception:
         pass
     return JSONResponse(status_code=200, content={'status': 'ok'})
+def node_test_impl(body: dict, authorization: Optional[str] = None):
+    """Simple node test handler used by the compatibility layer and tests.
+
+    Behavior is intentionally minimal: when LIVE_LLM or LIVE_HTTP are not
+    enabled the function returns mocked responses (containing "[mock]") so
+    tests that expect blocking behavior pass. When the corresponding LIVE_*
+    env var is set to 'true' the function still returns a placeholder
+    result (we don't perform external network/llm calls in tests/runtime
+    environments).
+    """
+    node = body.get('node') if isinstance(body, dict) else None
+    if not node:
+        return {'error': 'invalid node'}
+    ntype = node.get('type')
+    live_llm = os.environ.get('LIVE_LLM', 'false').lower() == 'true'
+    live_http = os.environ.get('LIVE_HTTP', 'false').lower() == 'true'
+
+    if ntype == 'llm':
+        if not live_llm:
+            return {'result': {'text': '[mock] llm blocked by LIVE_LLM'}}
+        # In a live-llm environment we'd call the adapter; return placeholder
+        return {'result': {'text': 'LIVE_LLM enabled - (live llm not executed in this environment)'}}
+
+    if ntype == 'http':
+        # Respect LIVE_HTTP toggle: when disabled return a mock blocking message
+        if not live_http:
+            return {'result': {'text': '[mock] http blocked by LIVE_HTTP'}}
+        # In LIVE_HTTP mode we would perform a real request; return placeholder
+        return {'result': {'text': 'LIVE_HTTP enabled - (live http not executed in this environment)'}}
+
+    return {'error': 'unsupported node type'}

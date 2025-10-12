@@ -1,16 +1,18 @@
 def register(app, ctx):
     from . import shared_impls as shared
-    from fastapi import HTTPException
+    from fastapi import HTTPException, Header
+    from typing import Optional
 
     @app.post('/api/scheduler')
-    def create_scheduler(body: dict, authorization: str = None):
+    def create_scheduler(body: dict, authorization: Optional[str] = Header(None)):
+        # Authorization header is provided as a header; use FastAPI Header to bind it
         user_id = shared._user_from_token(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
         return shared.create_scheduler_impl(body, user_id)
 
     @app.get('/api/scheduler')
-    def list_scheduler(authorization: str = None):
+    def list_scheduler(authorization: Optional[str] = Header(None)):
         user_id = shared._user_from_token(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -20,7 +22,7 @@ def register(app, ctx):
         return shared.list_scheduler_impl(wsid)
 
     @app.put('/api/scheduler/{sid}')
-    def update_scheduler(sid: int, body: dict, authorization: str = None):
+    def update_scheduler(sid: int, body: dict, authorization: Optional[str] = Header(None)):
         user_id = shared._user_from_token(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -30,7 +32,7 @@ def register(app, ctx):
         return shared.update_scheduler_impl(sid, body, wsid)
 
     @app.delete('/api/scheduler/{sid}')
-    def delete_scheduler(sid: int, authorization: str = None):
+    def delete_scheduler(sid: int, authorization: Optional[str] = Header(None)):
         user_id = shared._user_from_token(authorization)
         if not user_id:
             raise HTTPException(status_code=401)

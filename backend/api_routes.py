@@ -22,6 +22,8 @@ def register(app, ctx):
     try:
         from fastapi import HTTPException  # type: ignore
         from fastapi.responses import JSONResponse  # type: ignore
+        from fastapi import Header, Request  # type: ignore
+        _FASTAPI_HEADERS = True
     except Exception:
         class HTTPException(Exception):
             def __init__(self, status_code: int = 500, detail: str = None):
@@ -33,6 +35,11 @@ def register(app, ctx):
             def __init__(self, content=None, status_code: int = 200):
                 self.content = content
                 self.status_code = status_code
+        # stand-ins so we can write unified route definitions below
+        def Header(default=None, **kwargs):
+            return default
+        Request = None
+        _FASTAPI_HEADERS = False
 
     # Helper: minimal encrypt/decrypt when DB-backed
     try:
@@ -42,8 +49,20 @@ def register(app, ctx):
         decrypt_value = None
 
     # /api/me
-    @app.get('/api/me')
-    def _me(authorization: str = None):
+    # actual route function delegates to _me_impl; place decorator inside
+    # the conditional so the decorator applies to a real function definition
+    if _FASTAPI_HEADERS:
+        @app.get('/api/me')
+        def _me(authorization: str = Header(None)):
+            return _me_impl(authorization)
+    else:
+        @app.get('/api/me')
+        def _me(authorization: str = None):
+            return _me_impl(authorization)
+
+    # actual implementation delegated to a nested function so the signature
+    # above gets the correct defaults for FastAPI vs the test stand-in
+    def _me_impl(authorization: str = None):
         # Try to reuse app_impl helper _user_from_token via ctx if present
         _user_from_token = ctx.get('_user_from_token')
         uid = None
@@ -73,7 +92,6 @@ def register(app, ctx):
         # in-memory fallback
         u = _users.get(uid)
         if not u:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=404)
         # find workspace
         ws_name = None
@@ -84,15 +102,22 @@ def register(app, ctx):
         return {'email': u.get('email'), 'workspace': ws_name}
 
     # Secrets: POST /api/secrets, GET /api/secrets, DELETE /api/secrets/{id}
-    @app.post('/api/secrets')
-    def create_secret(body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.post('/api/secrets')
+        def create_secret(body: dict, authorization: str = Header(None)):
+            return create_secret_impl(body, authorization)
+    else:
+        @app.post('/api/secrets')
+        def create_secret(body: dict, authorization: str = None):
+            return create_secret_impl(body, authorization)
+
+    def create_secret_impl(body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
         # find workspace
         wsid = _workspace_for_user(user_id)
         if not wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=400, detail='Workspace not found')
 
         name = body.get('name')
@@ -140,8 +165,16 @@ def register(app, ctx):
             pass
         return {'id': sid}
 
-    @app.get('/api/secrets')
-    def list_secrets(authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.get('/api/secrets')
+        def list_secrets(authorization: str = Header(None)):
+            return list_secrets_impl(authorization)
+    else:
+        @app.get('/api/secrets')
+        def list_secrets(authorization: str = None):
+            return list_secrets_impl(authorization)
+
+    def list_secrets_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -173,8 +206,16 @@ def register(app, ctx):
                 items.append(obj)
         return items
 
-    @app.delete('/api/secrets/{sid}')
-    def delete_secret(sid: int, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.delete('/api/secrets/{sid}')
+        def delete_secret(sid: int, authorization: str = Header(None)):
+            return delete_secret_impl(sid, authorization)
+    else:
+        @app.delete('/api/secrets/{sid}')
+        def delete_secret(sid: int, authorization: str = None):
+            return delete_secret_impl(sid, authorization)
+
+    def delete_secret_impl(sid: int, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -187,7 +228,6 @@ def register(app, ctx):
                 db = SessionLocal()
                 s = db.query(models.Secret).filter(models.Secret.id == sid).first()
                 if not s or s.workspace_id != wsid:
-                    from .app_impl import HTTPException
                     raise HTTPException(status_code=404)
                 db.delete(s)
                 db.commit()
@@ -201,7 +241,6 @@ def register(app, ctx):
                     db.rollback()
                 except Exception:
                     pass
-                from .app_impl import HTTPException
                 raise HTTPException(status_code=500)
             finally:
                 try:
@@ -220,8 +259,16 @@ def register(app, ctx):
         return {'status': 'deleted'}
 
     # Providers: GET /api/providers, POST /api/providers
-    @app.post('/api/providers')
-    def create_provider(body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.post('/api/providers')
+        def create_provider(body: dict, authorization: str = Header(None)):
+            return create_provider_impl(body, authorization)
+    else:
+        @app.post('/api/providers')
+        def create_provider(body: dict, authorization: str = None):
+            return create_provider_impl(body, authorization)
+
+    def create_provider_impl(body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         # allow provider creation without an authenticated user for some client flows
         if not user_id:
@@ -229,11 +276,9 @@ def register(app, ctx):
             if _users:
                 user_id = list(_users.keys())[0]
             else:
-                from .app_impl import HTTPException
                 raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=400)
 
         secret_id = body.get('secret_id')
@@ -244,7 +289,6 @@ def register(app, ctx):
                     db = SessionLocal()
                     s = db.query(models.Secret).filter(models.Secret.id == secret_id, models.Secret.workspace_id == wsid).first()
                     if not s:
-                        from .app_impl import HTTPException
                         raise HTTPException(status_code=400, detail='secret_id not found in workspace')
                 finally:
                     try:
@@ -254,7 +298,6 @@ def register(app, ctx):
             else:
                 s = _secrets.get(secret_id)
                 if not s or s.get('workspace_id') != wsid:
-                    from .app_impl import HTTPException
                     raise HTTPException(status_code=400, detail='secret_id not found in workspace')
 
         if _DB_AVAILABLE:
@@ -282,8 +325,16 @@ def register(app, ctx):
         _providers[pid] = {'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id, 'config': body.get('config')}
         return {'id': pid, 'workspace_id': wsid, 'type': body.get('type'), 'secret_id': secret_id}
 
-    @app.get('/api/providers')
-    def list_providers(authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.get('/api/providers')
+        def list_providers(authorization: str = Header(None)):
+            return list_providers_impl(authorization)
+    else:
+        @app.get('/api/providers')
+        def list_providers(authorization: str = None):
+            return list_providers_impl(authorization)
+
+    def list_providers_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -314,8 +365,16 @@ def register(app, ctx):
         return items
 
     # Workflows: GET /api/workflows, POST /api/workflows, PUT /api/workflows/{id}
-    @app.get('/api/workflows')
-    def list_workflows(authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.get('/api/workflows')
+        def list_workflows(authorization: str = Header(None)):
+            return list_workflows_impl(authorization)
+    else:
+        @app.get('/api/workflows')
+        def list_workflows(authorization: str = None):
+            return list_workflows_impl(authorization)
+
+    def list_workflows_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         # allow unauthenticated list to return empty
         if not user_id:
@@ -344,19 +403,25 @@ def register(app, ctx):
                 items.append(obj)
         return items
 
-    @app.post('/api/workflows')
-    def create_workflow(body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.post('/api/workflows')
+        def create_workflow(body: dict, authorization: str = Header(None)):
+            return create_workflow_impl(body, authorization)
+    else:
+        @app.post('/api/workflows')
+        def create_workflow(body: dict, authorization: str = None):
+            return create_workflow_impl(body, authorization)
+
+    def create_workflow_impl(body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             # allow creating a default user like DummyClient does
             if _users:
                 user_id = list(_users.keys())[0]
             else:
-                from .app_impl import HTTPException
                 raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
         if not wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=400, detail='workspace not found')
 
         # basic validation similar to DummyClient and editor expectations
@@ -490,8 +555,16 @@ def register(app, ctx):
         _workflows[wid] = {'workspace_id': wsid, 'name': body.get('name'), 'description': body.get('description'), 'graph': body.get('graph')}
         return {'id': wid, 'workspace_id': wsid, 'name': body.get('name')}
 
-    @app.put('/api/workflows/{wid}')
-    def update_workflow(wid: int, body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.put('/api/workflows/{wid}')
+        def update_workflow(wid: int, body: dict, authorization: str = Header(None)):
+            return update_workflow_impl(wid, body, authorization)
+    else:
+        @app.put('/api/workflows/{wid}')
+        def update_workflow(wid: int, body: dict, authorization: str = None):
+            return update_workflow_impl(wid, body, authorization)
+
+    def update_workflow_impl(wid: int, body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -530,7 +603,6 @@ def register(app, ctx):
 
         wf = _workflows.get(wid)
         if not wf or wf.get('workspace_id') != wsid:
-            from .app_impl import HTTPException
             raise HTTPException(status_code=404)
         if 'name' in body:
             wf['name'] = body.get('name')
@@ -541,8 +613,16 @@ def register(app, ctx):
         return {'id': wid, 'workspace_id': wf.get('workspace_id'), 'name': wf.get('name')}
 
     # Webhooks: create/list/delete per-workflow and public trigger
-    @app.post('/api/workflows/{wf_id}/webhooks')
-    def create_webhook(wf_id: int, body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.post('/api/workflows/{wf_id}/webhooks')
+        def create_webhook(wf_id: int, body: dict, authorization: str = Header(None)):
+            return create_webhook_impl(wf_id, body, authorization)
+    else:
+        @app.post('/api/workflows/{wf_id}/webhooks')
+        def create_webhook(wf_id: int, body: dict, authorization: str = None):
+            return create_webhook_impl(wf_id, body, authorization)
+
+    def create_webhook_impl(wf_id: int, body: dict, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -581,8 +661,16 @@ def register(app, ctx):
                 out.append({'id': hid, 'path': h.get('path'), 'description': h.get('description'), 'created_at': None})
         return out
 
-    @app.delete('/api/workflows/{wf_id}/webhooks/{hid}')
-    def delete_webhook(wf_id: int, hid: int, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.delete('/api/workflows/{wf_id}/webhooks/{hid}')
+        def delete_webhook(wf_id: int, hid: int, authorization: str = Header(None)):
+            return delete_webhook_impl(wf_id, hid, authorization)
+    else:
+        @app.delete('/api/workflows/{wf_id}/webhooks/{hid}')
+        def delete_webhook(wf_id: int, hid: int, authorization: str = None):
+            return delete_webhook_impl(wf_id, hid, authorization)
+
+    def delete_webhook_impl(wf_id: int, hid: int, authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
         if not user_id:
             raise HTTPException(status_code=401)
@@ -595,8 +683,16 @@ def register(app, ctx):
         del _webhooks[hid]
         return {'status': 'deleted'}
 
-    @app.post('/api/webhook/{workflow_id}/{trigger_id}')
-    def public_webhook_trigger(workflow_id: int, trigger_id: str, body: dict, authorization: str = None):
+    if _FASTAPI_HEADERS:
+        @app.post('/api/webhook/{workflow_id}/{trigger_id}')
+        def public_webhook_trigger(workflow_id: int, trigger_id: str, body: dict, authorization: str = Header(None)):
+            return public_webhook_trigger_impl(workflow_id, trigger_id, body, authorization)
+    else:
+        @app.post('/api/webhook/{workflow_id}/{trigger_id}')
+        def public_webhook_trigger(workflow_id: int, trigger_id: str, body: dict, authorization: str = None):
+            return public_webhook_trigger_impl(workflow_id, trigger_id, body, authorization)
+
+    def public_webhook_trigger_impl(workflow_id: int, trigger_id: str, body: dict, authorization: str = None):
         # Create a run and return queued status. This route intentionally allows
         # unauthenticated calls (public trigger) but will create an audit entry
         # if workspace/user can be determined.
@@ -620,4 +716,167 @@ def register(app, ctx):
         except Exception:
             pass
         return {'run_id': run_id, 'status': 'queued'}
+
+    # Audit logs: list and export (CSV)
+    if _FASTAPI_HEADERS:
+        @app.get('/api/audit_logs')
+        def list_audit_logs(limit: int = 50, offset: int = 0, action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = Header(None)):
+            return list_audit_logs_impl(limit, offset, action, object_type, user_id, date_from, date_to, authorization)
+    else:
+        @app.get('/api/audit_logs')
+        def list_audit_logs(limit: int = 50, offset: int = 0, action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = None):
+            return list_audit_logs_impl(limit, offset, action, object_type, user_id, date_from, date_to, authorization)
+
+    def list_audit_logs_impl(limit: int = 50, offset: int = 0, action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = None):
+        # require authenticated user
+        uid = ctx.get('_user_from_token')(authorization)
+        if not uid:
+            raise HTTPException(status_code=401)
+        wsid = _workspace_for_user(uid)
+        if not wsid:
+            return {'items': [], 'total': 0, 'limit': limit, 'offset': offset}
+
+        items = []
+        total = 0
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                q = db.query(models.AuditLog).filter(models.AuditLog.workspace_id == wsid)
+                if action:
+                    q = q.filter(models.AuditLog.action == action)
+                if object_type:
+                    q = q.filter(models.AuditLog.object_type == object_type)
+                if user_id:
+                    q = q.filter(models.AuditLog.user_id == user_id)
+                # date filters (assume ISO dates)
+                try:
+                    from datetime import datetime as _dt
+                    if date_from:
+                        df = _dt.fromisoformat(date_from)
+                        q = q.filter(models.AuditLog.timestamp >= df)
+                    if date_to:
+                        dt = _dt.fromisoformat(date_to)
+                        q = q.filter(models.AuditLog.timestamp <= dt)
+                except Exception:
+                    pass
+                total = q.count()
+                rows = q.order_by(models.AuditLog.id.desc()).offset(offset).limit(limit).all()
+                out = []
+                for r in rows:
+                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'user_id': r.user_id, 'action': r.action, 'object_type': r.object_type, 'object_id': r.object_id, 'detail': r.detail, 'timestamp': getattr(r, 'timestamp', None)})
+                items = out
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        else:
+            # no DB: best-effort if ctx provided a simple in-memory list (not normally present)
+            _audit_store = ctx.get('_audit_logs')
+            if _audit_store and isinstance(_audit_store, list):
+                filtered = [a for a in _audit_store if a.get('workspace_id') == wsid]
+                if action:
+                    filtered = [a for a in filtered if a.get('action') == action]
+                if object_type:
+                    filtered = [a for a in filtered if a.get('object_type') == object_type]
+                if user_id:
+                    filtered = [a for a in filtered if a.get('user_id') == user_id]
+                total = len(filtered)
+                items = filtered[offset: offset + limit]
+
+        return {'items': items, 'total': total, 'limit': limit, 'offset': offset}
+
+    if _FASTAPI_HEADERS:
+        @app.get('/api/audit_logs/export')
+        def export_audit_logs(action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = Header(None)):
+            return export_audit_logs_impl(action, object_type, user_id, date_from, date_to, authorization)
+    else:
+        @app.get('/api/audit_logs/export')
+        def export_audit_logs(action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = None):
+            return export_audit_logs_impl(action, object_type, user_id, date_from, date_to, authorization)
+
+    def export_audit_logs_impl(action: str = None, object_type: str = None, user_id: int = None, date_from: str = None, date_to: str = None, authorization: str = None):
+        uid = ctx.get('_user_from_token')(authorization)
+        if not uid:
+            raise HTTPException(status_code=401)
+
+        # role check (admin required)
+        is_admin = False
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                u = db.query(models.User).filter(models.User.id == uid).first()
+                if u and getattr(u, 'role', '') == 'admin':
+                    is_admin = True
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        else:
+            # fallback: check in-memory users if provided
+            _users_local = ctx.get('_users') or {}
+            u = _users_local.get(uid)
+            if u and u.get('role') == 'admin':
+                is_admin = True
+
+        if not is_admin:
+            raise HTTPException(status_code=403)
+
+        # reuse listing logic to get items for this admin's workspace
+        wsid = _workspace_for_user(uid)
+        if not wsid:
+            return ''
+
+        rows = []
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                q = db.query(models.AuditLog).filter(models.AuditLog.workspace_id == wsid)
+                if action:
+                    q = q.filter(models.AuditLog.action == action)
+                if object_type:
+                    q = q.filter(models.AuditLog.object_type == object_type)
+                if user_id:
+                    q = q.filter(models.AuditLog.user_id == user_id)
+                try:
+                    from datetime import datetime as _dt
+                    if date_from:
+                        df = _dt.fromisoformat(date_from)
+                        q = q.filter(models.AuditLog.timestamp >= df)
+                    if date_to:
+                        dt = _dt.fromisoformat(date_to)
+                        q = q.filter(models.AuditLog.timestamp <= dt)
+                except Exception:
+                    pass
+                rows = q.order_by(models.AuditLog.id.desc()).all()
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        else:
+            _audit_store = ctx.get('_audit_logs') or []
+            rows = [a for a in _audit_store if a.get('workspace_id') == wsid]
+            if action:
+                rows = [a for a in rows if a.get('action') == action]
+            if object_type:
+                rows = [a for a in rows if a.get('object_type') == object_type]
+            if user_id:
+                rows = [a for a in rows if a.get('user_id') == user_id]
+
+        # build CSV
+        try:
+            import csv, io
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(['id', 'workspace_id', 'user_id', 'action', 'object_type', 'object_id', 'detail', 'timestamp'])
+            for r in rows:
+                if _DB_AVAILABLE:
+                    writer.writerow([r.id, r.workspace_id, r.user_id, r.action, r.object_type or '', r.object_id or '', r.detail or '', getattr(r, 'timestamp', '') or ''])
+                else:
+                    writer.writerow([r.get('id'), r.get('workspace_id'), r.get('user_id'), r.get('action'), r.get('object_type') or '', r.get('object_id') or '', r.get('detail') or '', r.get('timestamp') or ''])
+            return buf.getvalue()
+        except Exception:
+            return ''
 
