@@ -71,6 +71,7 @@ except Exception:
         sys.modules['fastapi.responses'] = responses_mod
 
     class TestClient:
+        __test__ = False  # prevent pytest from collecting this class as a test
         """Minimal TestClient used when fastapi.testclient isn't available.
         It can operate against a very small fallback FastAPI implementation
         used by backend.app in lightweight test environments. This client
