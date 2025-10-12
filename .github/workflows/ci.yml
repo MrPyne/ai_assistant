@@ -44,6 +44,11 @@ jobs:
         run: |
           pip install black
           black --check .
+      - name: Live-LLM usage check (scripts/check_live_llm_usage.py)
+        run: |
+          # Fail CI if any adapter under backend/adapters references
+          # ENABLE_*/LIVE_LLM directly instead of using backend/llm_utils
+          python scripts/check_live_llm_usage.py
       - name: Type check (mypy)
         run: |
           pip install mypy

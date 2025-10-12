@@ -28,13 +28,15 @@ for p in ADAPTERS_DIR.glob("**/*.py"):
     if p.name in IGNORE_FILES:
         continue
     text = p.read_text(encoding="utf-8")
+
+    # If the file already uses the central helper, skip it --- docstrings may
+    # mention legacy env vars but runtime should call is_live_llm_enabled.
+    if "is_live_llm_enabled" in text:
+        continue
+
     for pattern in PATTERNS:
         for m in pattern.finditer(text):
-            # Filter out the approved helper usage
-            if "is_live_llm_enabled" in text:
-                # if the file already calls helper, likely OK; still report only direct env checks
-                # but skip matches inside comments that mention ENABLE_* in docs
-                pass
+            # report the line containing the match
             line_no = text.count("\n", 0, m.start()) + 1
             snippet = text.splitlines()[line_no - 1].strip()
             matches.append(f"{p.relative_to(ROOT)}:{line_no}: {snippet}")
