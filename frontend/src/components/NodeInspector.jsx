@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
-import { useEditorState } from '../state/EditorContext'
+import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
 export default function NodeInspector({
   selectedNode,
@@ -21,6 +21,7 @@ export default function NodeInspector({
 }) {
   // read selectedNodeId from EditorContext to avoid prop drilling
   const editorState = useEditorState()
+  const editorDispatch = useEditorDispatch()
   const selectedNodeId = editorState.selectedNodeId
   const syncTimer = useRef(null)
 
@@ -107,10 +108,10 @@ export default function NodeInspector({
 
           <div style={{ marginTop: 8 }}>
             <label style={{ display: 'block', marginBottom: 4 }}>Test payload (JSON)</label>
-            <textarea value={webhookTestPayload} onChange={(e) => setWebhookTestPayload(e.target.value)} style={{ width: '100%', height: 120 }} />
+            <textarea value={webhookTestPayload} onChange={(e) => editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: e.target.value })} style={{ width: '100%', height: 120 }} />
             <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
               <button onClick={testWebhook}>Send Test (POST)</button>
-              <button onClick={() => { setWebhookTestPayload('{}') }} className="secondary">Reset</button>
+              <button onClick={() => { editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: '{}' }) }} className="secondary">Reset</button>
             </div>
           </div>
         </div>

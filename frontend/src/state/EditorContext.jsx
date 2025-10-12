@@ -9,6 +9,22 @@ const defaultState = {
   saveStatus: 'idle',
   lastSavedAt: null,
   selectedNodeId: null,
+  showNodeTest: false,
+  nodeTestToken: '',
+  showTemplates: false,
+  webhookTestPayload: '{}',
+  validationError: null,
+  selectedRunDetail: null,
+  runDetailError: null,
+  loadingRunDetail: false,
+  runs: [],
+  selectedRunLogs: [],
+  leftPanelOpen: true,
+  rightPanelOpen: true,
+  leftPanelWidth: 300,
+  rightPanelWidth: 360,
+  activeLeftTab: 'palette',
+  activeRightTab: 'inspector',
   isDirty: false,
 }
 
@@ -24,6 +40,42 @@ function reducer(state, action) {
       return { ...state, lastSavedAt: action.payload }
     case 'SET_SELECTED_NODE_ID':
       return { ...state, selectedNodeId: action.payload }
+    case 'SET_SHOW_NODE_TEST':
+      return { ...state, showNodeTest: !!action.payload }
+    case 'SET_NODE_TEST_TOKEN':
+      return { ...state, nodeTestToken: action.payload }
+    case 'SET_SHOW_TEMPLATES':
+      return { ...state, showTemplates: !!action.payload }
+    case 'SET_WEBHOOK_TEST_PAYLOAD':
+      return { ...state, webhookTestPayload: action.payload }
+    case 'SET_VALIDATION_ERROR':
+      return { ...state, validationError: action.payload }
+    case 'SET_SELECTED_RUN_DETAIL':
+      return { ...state, selectedRunDetail: action.payload }
+    case 'SET_RUN_DETAIL_ERROR':
+      return { ...state, runDetailError: action.payload }
+    case 'SET_LOADING_RUN_DETAIL':
+      return { ...state, loadingRunDetail: !!action.payload }
+    case 'SET_RUNS':
+      return { ...state, runs: action.payload || [] }
+    case 'SET_SELECTED_RUN_LOGS':
+      return { ...state, selectedRunLogs: action.payload || [] }
+    case 'APPEND_SELECTED_RUN_LOG':
+      return { ...state, selectedRunLogs: (state.selectedRunLogs || []).concat([action.payload]) }
+    case 'CLEAR_SELECTED_RUN_LOGS':
+      return { ...state, selectedRunLogs: [] }
+    case 'SET_LEFT_PANEL_OPEN':
+      return { ...state, leftPanelOpen: !!action.payload }
+    case 'SET_RIGHT_PANEL_OPEN':
+      return { ...state, rightPanelOpen: !!action.payload }
+    case 'SET_LEFT_PANEL_WIDTH':
+      return { ...state, leftPanelWidth: Number(action.payload) || state.leftPanelWidth }
+    case 'SET_RIGHT_PANEL_WIDTH':
+      return { ...state, rightPanelWidth: Number(action.payload) || state.rightPanelWidth }
+    case 'SET_ACTIVE_LEFT_TAB':
+      return { ...state, activeLeftTab: action.payload }
+    case 'SET_ACTIVE_RIGHT_TAB':
+      return { ...state, activeRightTab: action.payload }
     case 'MARK_DIRTY':
       return { ...state, isDirty: true, saveStatus: 'dirty' }
     case 'MARK_CLEAN':
