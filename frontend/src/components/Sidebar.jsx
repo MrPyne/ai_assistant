@@ -10,7 +10,7 @@ export default function Sidebar({
   addWebhookTrigger,
   addIfNode,
   addSwitchNode,
-  setShowTemplates,
+  // setShowTemplates removed; Sidebar now uses EditorContext to show templates
   token,
   setToken,
   workflowId,

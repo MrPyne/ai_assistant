@@ -4,13 +4,9 @@ import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
 export default function NodeInspector({
   selectedNode,
-  setShowNodeTest,
-  setNodeTestToken,
   token,
   copyWebhookUrl,
   workflowId,
-  webhookTestPayload,
-  setWebhookTestPayload,
   testWebhook,
   updateNodeConfig,
   providers,
@@ -94,7 +90,7 @@ export default function NodeInspector({
     <div>
       <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
       <div style={{ marginBottom: 8 }}>
-        <button onClick={() => { setShowNodeTest(true); setNodeTestToken(token) }} className="btn btn-ghost">Test Node</button>
+        <button onClick={() => { editorDispatch({ type: 'SET_SHOW_NODE_TEST', payload: true }); editorDispatch({ type: 'SET_NODE_TEST_TOKEN', payload: token }) }} className="btn btn-ghost">Test Node</button>
       </div>
 
       {selectedNode.data && selectedNode.data.label === 'Webhook Trigger' && (
@@ -108,7 +104,7 @@ export default function NodeInspector({
 
           <div style={{ marginTop: 8 }}>
             <label style={{ display: 'block', marginBottom: 4 }}>Test payload (JSON)</label>
-            <textarea value={webhookTestPayload} onChange={(e) => editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: e.target.value })} style={{ width: '100%', height: 120 }} />
+            <textarea value={editorState.webhookTestPayload} onChange={(e) => editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: e.target.value })} style={{ width: '100%', height: 120 }} />
             <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
               <button onClick={testWebhook}>Send Test (POST)</button>
               <button onClick={() => { editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: '{}' }) }} className="secondary">Reset</button>

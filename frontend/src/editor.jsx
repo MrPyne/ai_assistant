@@ -1,9 +1,11 @@
-import React, { useRef, useState } from 'react'
+import React, { useRef, useEffect } from 'react'
+import { useEditorDispatch } from './state/EditorContext'
 
-export default function Editor({ editorDispatch, token }) {
+export default function Editor({ token }) {
   const logEventSourceRef = useRef(null)
-  const [logEventSource, setLogEventSource] = useState(null)
+  const editorDispatch = useEditorDispatch()
 
+  // keep EventSource behavior but use EditorContext dispatch directly
   const viewRunLogs = async (runId) => {
     try {
       const url = token ? `/api/runs/${runId}/stream?access_token=${token}` : `/api/runs/${runId}/stream`
@@ -17,12 +19,17 @@ export default function Editor({ editorDispatch, token }) {
       es.onerror = (err) => {
         try { es.close() } catch (e) {}
         logEventSourceRef.current = null
-        setLogEventSource(null)
       }
       logEventSourceRef.current = es
-      setLogEventSource(es)
     } catch (err) {}
   }
+
+  // expose viewRunLogs globally for callers that previously invoked editor.viewRunLogs
+  useEffect(() => {
+    window.__editor_viewRunLogs = viewRunLogs
+    return () => { delete window.__editor_viewRunLogs }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return null
 }
