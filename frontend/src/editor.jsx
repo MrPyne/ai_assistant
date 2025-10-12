@@ -58,9 +58,12 @@ function InnerEditor() {
   const [selectedRunDetail, setSelectedRunDetail] = useState(null)
   const [runDetailError, setRunDetailError] = useState(null)
   const [loadingRunDetail, setLoadingRunDetail] = useState(false)
-  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
-  const [saveStatus, setSaveStatus] = useState('idle')
-  const [lastSavedAt, setLastSavedAt] = useState(null)
+  // Move autosave/save status into EditorContext where possible
+  // local states kept for backwards-compat but mirror context where used
+  // keep references to context values
+  // const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
+  // const [saveStatus, setSaveStatus] = useState('idle')
+  // const [lastSavedAt, setLastSavedAt] = useState(null)
   const autosaveTimer = useRef(null)
   const reactFlowInstance = useRef(null)
 
@@ -163,8 +166,8 @@ function InnerEditor() {
     setNodes(mappedNodes)
     setEdges(mappedEdges)
     setSelectedNodeId(null)
-    setSaveStatus('dirty')
-    setLastSavedAt(null)
+    editorDispatch({ type: 'MARK_DIRTY' })
+    editorDispatch({ type: 'SET_LAST_SAVED_AT', payload: null })
     markDirty()
   }
 
@@ -362,8 +365,8 @@ function InnerEditor() {
       }
     }
     if (wf.name) editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: wf.name })
-    setSaveStatus('saved')
-    setLastSavedAt(new Date())
+    editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saved' })
+    editorDispatch({ type: 'SET_LAST_SAVED_AT', payload: new Date() })
   }
 
   const saveWorkflow = async ({ silent = false } = {}) => {
@@ -372,7 +375,7 @@ function InnerEditor() {
       graph: { nodes, edges, selected_node_id: selectedNodeId },
     }
 
-    setSaveStatus('saving')
+    editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saving' })
     try {
       let resp
       if (workflowId) {
@@ -393,8 +396,8 @@ function InnerEditor() {
         const data = await resp.json()
         if (data && data.id) setWorkflowId(data.id)
         setValidationError(null)
-        setSaveStatus('saved')
-        setLastSavedAt(new Date())
+        editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saved' })
+        editorDispatch({ type: 'SET_LAST_SAVED_AT', payload: new Date() })
         await loadWorkflows()
         if (!silent) alert('Saved')
         return true
@@ -433,7 +436,7 @@ function InnerEditor() {
         }
 
         setValidationError(detail)
-        setSaveStatus('error')
+        editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'error' })
         if (nodeToSelect) {
           setSelectedNodeId(String(nodeToSelect))
           setNodes((nds) => nds.map(n => (String(n.id) === String(nodeToSelect) ? { ...n, data: { ...(n.data || {}), __validation_error: true } } : n)))
@@ -442,7 +445,7 @@ function InnerEditor() {
         return false
       }
     } catch (err) {
-      setSaveStatus('error')
+      editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'error' })
       if (!silent) alert('Save failed: ' + String(err))
       return false
     }
@@ -613,6 +616,8 @@ function InnerEditor() {
   const onNodeClick = (event, node) => {
     if (!node || !node.id) return
     setSelectedNodeId(node.id)
+    // also mirror selection into EditorContext to reduce prop drilling
+    editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: node.id })
   }
 
   const onPaneClick = () => {
@@ -700,8 +705,8 @@ function InnerEditor() {
   }
 
   const markDirty = () => {
-    setSaveStatus('dirty')
-    if (autoSaveEnabled) {
+    editorDispatch({ type: 'MARK_DIRTY' })
+    if (editorState.autoSaveEnabled) {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
       autosaveTimer.current = setTimeout(() => {
         saveWorkflow({ silent: true })
@@ -715,10 +720,7 @@ function InnerEditor() {
         <Sidebar
           markDirty={markDirty}
           saveWorkflow={saveWorkflow}
-          autoSaveEnabled={autoSaveEnabled}
-          setAutoSaveEnabled={setAutoSaveEnabled}
-          saveStatus={saveStatus}
-          lastSavedAt={lastSavedAt}
+          // autosave/UI flags moved into EditorContext
           addHttpNode={addHttpNode}
           addLlmNode={addLlmNode}
           addWebhookTrigger={addWebhookTrigger}
@@ -776,7 +778,7 @@ function InnerEditor() {
         <RightPanel
           validationError={validationError}
           selectedNode={selectedNode}
-          selectedNodeId={selectedNodeId}
+          // selectedNodeId now read from EditorContext inside RightPanel/NodeInspector
           setShowNodeTest={setShowNodeTest}
           setNodeTestToken={setNodeTestToken}
           token={token}

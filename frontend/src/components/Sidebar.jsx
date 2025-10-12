@@ -4,10 +4,6 @@ import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
 export default function Sidebar({
   saveWorkflow,
-  autoSaveEnabled,
-  setAutoSaveEnabled,
-  saveStatus,
-  lastSavedAt,
   markDirty,
   addHttpNode,
   addLlmNode,
@@ -77,13 +73,15 @@ export default function Sidebar({
             <button onClick={() => saveWorkflow({ silent: false })} className="btn btn-primary" style={{ padding: '10px 16px', fontSize: 16 }}>Save</button>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={autoSaveEnabled} onChange={(e) => setAutoSaveEnabled(e.target.checked)} /> Autosave</label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={!!editorState.autoSaveEnabled} onChange={(e) => dispatch({ type: 'SET_AUTOSAVE_ENABLED', payload: e.target.checked })} /> Autosave
+            </label>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>
-              {saveStatus === 'saving' && 'Saving...'}
-              {saveStatus === 'saved' && lastSavedAt && `Saved ${new Date(lastSavedAt).toLocaleTimeString()}`}
-              {saveStatus === 'dirty' && 'Unsaved changes'}
-              {saveStatus === 'error' && 'Save error'}
-              {saveStatus === 'idle' && 'Not saved'}
+              {editorState.saveStatus === 'saving' && 'Saving...'}
+              {editorState.saveStatus === 'saved' && editorState.lastSavedAt && `Saved ${new Date(editorState.lastSavedAt).toLocaleTimeString()}`}
+              {editorState.saveStatus === 'dirty' && 'Unsaved changes'}
+              {editorState.saveStatus === 'error' && 'Save error'}
+              {editorState.saveStatus === 'idle' && 'Not saved'}
             </div>
           </div>
         </div>

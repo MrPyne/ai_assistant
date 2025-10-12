@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
+import { useEditorState } from '../state/EditorContext'
 
 export default function NodeInspector({
   selectedNode,
-  selectedNodeId,
   setShowNodeTest,
   setNodeTestToken,
   token,
@@ -19,6 +19,9 @@ export default function NodeInspector({
   setNodes,
   markDirty,
 }) {
+  // read selectedNodeId from EditorContext to avoid prop drilling
+  const editorState = useEditorState()
+  const selectedNodeId = editorState.selectedNodeId
   const syncTimer = useRef(null)
 
   const { register, handleSubmit, reset, watch, setValue } = useForm({ mode: 'onChange' })
