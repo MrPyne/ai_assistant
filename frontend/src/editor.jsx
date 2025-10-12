@@ -6,6 +6,8 @@ import NodeRenderer from './NodeRenderer'
 import RightPanel from './components/RightPanel'
 import TemplatePreview from './components/TemplatePreview'
 import Sidebar from './components/Sidebar'
+import { EditorProvider } from './state/EditorContext'
+import { useEditorState, useEditorDispatch } from './state/EditorContext'
 
 // Define nodeTypes at module scope so the object identity is stable across renders.
 const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
@@ -21,6 +23,15 @@ const initialNodes = [
 const initialEdges = []
 
 export default function Editor(){
+  // Wrap editor UI in the provider so panels can use the shared editor UI state
+  return (
+    <EditorProvider>
+      <InnerEditor />
+    </EditorProvider>
+  )
+}
+
+function InnerEditor() {
   const [nodes, setNodes] = useState(initialNodes)
   const [edges, setEdges] = useState(initialEdges)
   const { token, setToken } = useAuth()
@@ -35,7 +46,9 @@ export default function Editor(){
   const [newSecretName, setNewSecretName] = useState('')
   const [newSecretValue, setNewSecretValue] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState(null)
-  const [workflowName, setWorkflowName] = useState('New Workflow')
+  const editorState = useEditorState()
+  const editorDispatch = useEditorDispatch()
+  const workflowName = editorState.workflowName
   const [newProviderType, setNewProviderType] = useState('openai')
   const [newProviderSecretId, setNewProviderSecretId] = useState('')
   const [webhookTestPayload, setWebhookTestPayload] = useState('{}')
@@ -146,7 +159,7 @@ export default function Editor(){
     }))
 
     setWorkflowId(null)
-    setWorkflowName(template.name || 'Template')
+    editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: template.name || 'Template' })
     setNodes(mappedNodes)
     setEdges(mappedEdges)
     setSelectedNodeId(null)
@@ -348,7 +361,7 @@ export default function Editor(){
         }
       }
     }
-    if (wf.name) setWorkflowName(wf.name)
+    if (wf.name) editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: wf.name })
     setSaveStatus('saved')
     setLastSavedAt(new Date())
   }
@@ -472,7 +485,7 @@ export default function Editor(){
 
   const newWorkflow = () => {
     setWorkflowId(null)
-    setWorkflowName('New Workflow')
+    editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: 'New Workflow' })
     setNodes(initialNodes)
     setEdges(initialEdges)
     setSelectedNodeId(null)
@@ -700,8 +713,7 @@ export default function Editor(){
     <div className="editor-root">
       <div className="editor-main">
         <Sidebar
-          workflowName={workflowName}
-          setWorkflowName={(v) => { setWorkflowName(v); markDirty() }}
+          markDirty={markDirty}
           saveWorkflow={saveWorkflow}
           autoSaveEnabled={autoSaveEnabled}
           setAutoSaveEnabled={setAutoSaveEnabled}
