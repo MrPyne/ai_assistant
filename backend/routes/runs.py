@@ -1,5 +1,5 @@
 def register(app, ctx):
-    from . import _shared as shared
+    from . import shared_impls as shared
     from fastapi import HTTPException
     from typing import Optional
 
