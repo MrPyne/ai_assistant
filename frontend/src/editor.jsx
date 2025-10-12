@@ -252,6 +252,29 @@ export default function Editor({ token }) {
     editorDispatch({ type: 'MARK_DIRTY' })
   }, [editorDispatch])
 
+  // helper to seed N demo nodes onto the canvas
+  const seedNodes = useCallback((count = 10) => {
+    const created = []
+    setNodes((nds) => {
+      const startIndex = nds.length
+      const next = [...nds]
+      for (let i = 0; i < count; i++) {
+        const id = String(nextIdRef.current++)
+        const label = `Demo ${startIndex + i + 1}`
+        const node = { id, type: 'default', position: { x: 50 + ((startIndex + i) * 40), y: 50 + ((startIndex + i) * 20) }, data: { label, config: {} } }
+        next.push(node)
+        created.push(node)
+      }
+      return next
+    })
+    // optionally focus/select the last created node
+    if (created.length) {
+      const last = created[created.length - 1]
+      editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: last.id })
+    }
+    editorDispatch({ type: 'MARK_DIRTY' })
+  }, [editorDispatch])
+
   // Auto-load lists when token changes (or on mount if token is set)
   useEffect(() => {
     if (tokenState) {
@@ -275,6 +298,8 @@ export default function Editor({ token }) {
         addWebhookTrigger={addWebhookTrigger}
         addIfNode={addIfNode}
         addSwitchNode={addSwitchNode}
+        // pass seeding helper so sidebar can trigger many nodes
+        seedNodes={seedNodes}
         token={tokenState}
         setToken={setToken}
         workflowId={null}

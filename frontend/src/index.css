@@ -273,6 +273,22 @@ textarea { resize: vertical }
 /* Handles should appear above the card content slightly */
 .react-flow__handle { z-index: 1100 }
 
+/* Fix collapsed selects/inputs inside side panels */
+/*
+  When a flex container's children need to shrink properly the flex item
+  must allow widths below their content size. Many browsers default to
+  min-width:auto which prevents flex shrink. Setting min-width:0 on the
+  form controls inside panels fixes collapsed select/input/textarea cases.
+*/
+.sidebar input,
+.sidebar select,
+.sidebar textarea,
+.rightpanel select,
+.templates-modal select {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 /* small screens */
 @media (max-width:900px) {
   .sidebar { display: none }

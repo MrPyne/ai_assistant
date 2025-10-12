@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useForm, FormProvider, useWatch } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
@@ -10,6 +10,8 @@ export default function Sidebar({
   addWebhookTrigger,
   addIfNode,
   addSwitchNode,
+  // new helper to seed multiple nodes for testing
+  seedNodes,
   // setShowTemplates removed; Sidebar now uses EditorContext to show templates
   token,
   setToken,
@@ -67,6 +69,29 @@ export default function Sidebar({
   const setActiveTab = (t) => dispatch({ type: 'SET_ACTIVE_LEFT_TAB', payload: t })
   const adjustWidth = (delta) => dispatch({ type: 'SET_LEFT_PANEL_WIDTH', payload: Math.max(200, editorState.leftPanelWidth + delta) })
 
+  // Local selection state for dropdowns
+  const [selectedProviderId, setSelectedProviderId] = useState(providers && providers.length ? String(providers[0].id) : '')
+  const [selectedSecretId, setSelectedSecretId] = useState(secrets && secrets.length ? String(secrets[0].id) : '')
+  const [selectedRunId, setSelectedRunId] = useState(runs && runs.length ? String(runs[0].id) : '')
+
+  useEffect(() => {
+    if (providers && providers.length && !providers.find(p => String(p.id) === selectedProviderId)) {
+      setSelectedProviderId(String(providers[0].id))
+    }
+  }, [providers])
+
+  useEffect(() => {
+    if (secrets && secrets.length && !secrets.find(s => String(s.id) === selectedSecretId)) {
+      setSelectedSecretId(String(secrets[0].id))
+    }
+  }, [secrets])
+
+  useEffect(() => {
+    if (runs && runs.length && !runs.find(r => String(r.id) === selectedRunId)) {
+      setSelectedRunId(String(runs[0].id))
+    }
+  }, [runs])
+
   return (
     <FormProvider {...methods}>
       {/* If panel is open show full content, otherwise render a thin handle to reopen it */}
@@ -99,19 +124,31 @@ export default function Sidebar({
           </div>
 
           <div style={{ marginTop: 12 }}>
-            {editorState.activeLeftTab === 'palette' ? (
+          {editorState.activeLeftTab === 'palette' ? (
               <div className="palette-buttons">
-                <button onClick={addHttpNode}>Add HTTP Node</button>
-                <button onClick={addLlmNode}>Add LLM Node</button>
-                <button onClick={addWebhookTrigger}>Add Webhook</button>
-                <button onClick={addIfNode}>Add If/Condition</button>
-                <button onClick={addSwitchNode}>Add Switch</button>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={addHttpNode}>Add HTTP Node</button>
+                  <button onClick={addLlmNode}>Add LLM Node</button>
+                  <button onClick={addWebhookTrigger}>Add Webhook</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={addIfNode}>Add If/Condition</button>
+                  <button onClick={addSwitchNode}>Add Switch</button>
+                </div>
+
                 <div style={{ marginTop: 8 }}>
                   <label style={{ display: 'block', marginTop: 8 }}>Starter templates</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                     <button onClick={() => dispatch({ type: 'SET_SHOW_TEMPLATES', payload: true })}>Browse templates...</button>
                   </div>
                 </div>
+
+                {/* Seed many nodes for testing */}
+                {typeof seedNodes === 'function' ? (
+                  <div style={{ marginTop: 10, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <SeedNodesControl seedNodes={seedNodes} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -157,27 +194,35 @@ export default function Sidebar({
                 <button onClick={createProvider}>Create Provider</button>
               </div>
 
-              <div className="list-scroll">
-                {providers.length === 0 ? <div className="muted">No providers</div> : providers.map(p => (
-                  <div key={p.id} className="list-item">
-                    <div><strong>{p.type}</strong> <span className="muted">(id: {p.id})</span></div>
-                  </div>
-                ))}
+              {/* Providers list converted to a dropdown for compactness */}
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', marginBottom: 4 }}>Existing providers</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <select value={selectedProviderId} onChange={(e) => setSelectedProviderId(e.target.value)} style={{ flex: 1 }}>
+                    {providers.length === 0 ? <option value=''>No providers</option> : providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+                  </select>
+                  <button onClick={() => { const p = providers.find(x => String(x.id) === selectedProviderId); if (p) alert(`Provider: ${p.type} (id:${p.id})`)}} className="secondary">Info</button>
+                </div>
               </div>
 
               <hr />
               <h4>Secrets</h4>
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
                 <button onClick={loadSecrets}>Refresh Secrets</button>
+                <div style={{ flex: 1 }} />
               </div>
-              <div className="list-scroll">
-                {secrets.length === 0 ? <div className="muted">No secrets</div> : secrets.map(s => (
-                  <div key={s.id} className="list-item">
-                    <div><strong>{s.name}</strong></div>
-                    <div className="muted">id: {s.id} <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(s.id)); alert('Copied id to clipboard') }} className="secondary">Copy id</button></div>
-                  </div>
-                ))}
+
+              {/* Secrets list -> dropdown with copy button */}
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', marginBottom: 4 }}>Existing secrets</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <select value={selectedSecretId} onChange={(e) => setSelectedSecretId(e.target.value)} style={{ flex: 1 }}>
+                    {secrets.length === 0 ? <option value=''>No secrets</option> : secrets.map(s => <option key={s.id} value={s.id}>{s.name} (id:{s.id})</option>)}
+                  </select>
+                  <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(String(selectedSecretId)); alert('Copied id to clipboard') }} className="secondary">Copy id</button>
+                </div>
               </div>
+
               <div style={{ marginTop: 8 }}>
                 <input placeholder='Secret name' value={newSecretName} onChange={(e) => setNewSecretName(e.target.value)} style={{ marginBottom: 6 }} />
                 <input placeholder='Secret value' value={newSecretValue} onChange={(e) => setNewSecretValue(e.target.value)} style={{ marginBottom: 6 }} />
@@ -185,16 +230,15 @@ export default function Sidebar({
               </div>
 
               <h4 style={{ marginTop: 12 }}>Runs</h4>
-              <div className="list-scroll runs-list">
-                {runs.length === 0 ? <div className="muted">No runs</div> : runs.map(r => (
-                  <div key={r.id} className="run-item">
-                    <div className="run-meta">Run {r.id} — {r.status}</div>
-                    <div>
-                      <button onClick={() => viewRunLogs(r.id)} className="secondary">View Logs</button>
-                      <button onClick={() => viewRunDetail(r.id)} style={{ marginLeft: 6 }} className="secondary">Details</button>
-                    </div>
-                  </div>
-                ))}
+              {/* Runs list -> dropdown with action buttons */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)} style={{ flex: 1 }}>
+                  {runs.length === 0 ? <option value=''>No runs</option> : runs.map(r => <option key={r.id} value={r.id}>Run {r.id} — {r.status}</option>)}
+                </select>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => viewRunLogs(selectedRunId)} className="secondary">View Logs</button>
+                  <button onClick={() => viewRunDetail(selectedRunId)} className="secondary">Details</button>
+                </div>
               </div>
             </>
           )}
@@ -212,5 +256,15 @@ export default function Sidebar({
         </div>
       )}
     </FormProvider>
+  )
+}
+function SeedNodesControl({ seedNodes }) {
+  const [count, setCount] = React.useState(10)
+  return (
+    <>
+      <label style={{ fontSize: 12 }}>Seed nodes:</label>
+      <input type="number" value={count} onChange={(e) => setCount(Number(e.target.value || 0))} style={{ width: 80 }} />
+      <button onClick={() => seedNodes(count)}>Seed</button>
+    </>
   )
 }
