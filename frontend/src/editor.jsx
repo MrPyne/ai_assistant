@@ -57,6 +57,12 @@ export default function Editor(){
   const [runDetailError, setRunDetailError] = useState(null)
   const [loadingRunDetail, setLoadingRunDetail] = useState(false)
 
+  // Save / autosave state
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false)
+  const [saveStatus, setSaveStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error' | 'dirty'
+  const [lastSavedAt, setLastSavedAt] = useState(null)
+  const autosaveTimer = useRef(null)
+
   // react-flow instance ref to compute projected coords and other helpers
   const reactFlowInstance = useRef(null)
 
@@ -160,10 +166,18 @@ export default function Editor(){
     }
   }
 
-  const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
-  const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
+  const onNodesChange = useCallback((changes) => {
+    setNodes((nds) => applyNodeChanges(changes, nds))
+    markDirty()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const onEdgesChange = useCallback((changes) => {
+    setEdges((eds) => applyEdgeChanges(changes, eds))
+    markDirty()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [])
+  const onConnect = useCallback((params) => { setEdges((eds) => addEdge(params, eds)); markDirty() }, [])
 
   // Generic addNode helper tries to compute a sensible position using the reactflow instance when available.
   // Also marks the newly created node as selected and clears selection on other nodes so the UI reflects
@@ -207,6 +221,7 @@ export default function Editor(){
       // schedule selectedNodeId update after state change
       // (we still return the new array here)
       setTimeout(() => setSelectedNodeId(id), 0)
+      markDirty()
       return cleared.concat(node)
     })
   }
@@ -241,6 +256,7 @@ export default function Editor(){
       // ensure prevData.config is an object
       const prevConfig = prevData.config && typeof prevData.config === 'object' ? prevData.config : {}
       const merged = { ...prevData, config: { ...prevConfig, ...(newConfig || {}) } }
+      markDirty()
       return { ...n, data: merged }
     }))
   }
@@ -289,45 +305,57 @@ export default function Editor(){
       }
     }
     if (wf.name) setWorkflowName(wf.name)
+    // mark editor clean after loading
+    setSaveStatus('saved')
+    setLastSavedAt(new Date())
   }
 
-  const saveWorkflow = async () => {
+  // new: unified save function supports both create (POST) and update (PUT).
+  // options: { silent: bool } suppresses alert popups (used by autosave)
+  const saveWorkflow = async ({ silent = false } = {}) => {
+    // build payload
     const payload = {
       name: workflowName || 'Untitled',
-      // persist selection so editor state (selected node) can be restored
       graph: { nodes, edges, selected_node_id: selectedNodeId },
     }
+
+    setSaveStatus('saving')
     try {
-      const resp = await fetch('/api/workflows', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify(payload),
-      })
+      let resp
+      if (workflowId) {
+        resp = await fetch(`/api/workflows/${workflowId}`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        })
+      } else {
+        resp = await fetch('/api/workflows', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        })
+      }
+
       if (resp.ok) {
         const data = await resp.json()
-        alert('Saved')
-        setValidationError(null)
         if (data && data.id) setWorkflowId(data.id)
+        setValidationError(null)
+        setSaveStatus('saved')
+        setLastSavedAt(new Date())
         // reload workflows so the list reflects the newly saved workflow
         await loadWorkflows()
+        if (!silent) alert('Saved')
+        return true
       } else {
-        // Try to parse JSON error body and extract a concise detail message
+        // extract error detail as before
         let detail = null
         try {
           const j = await resp.json()
           detail = j && (j.detail || j.message || JSON.stringify(j))
         } catch (e) {
-          try {
-            detail = await resp.text()
-          } catch (e2) {
-            detail = String(e)
-          }
+          try { detail = await resp.text() } catch (e2) { detail = String(e) }
         }
 
-        // Backends may return either a plain string detail or a structured
-        // object like { message: '...', node_id: 'n1' }. Support both: prefer
-        // the structured node_id when present, otherwise fall back to
-        // heuristic parsing of the message string (legacy behaviour).
         let nodeToSelect = null
         if (detail && typeof detail === 'object') {
           nodeToSelect = detail.node_id || detail.id || null
@@ -335,9 +363,6 @@ export default function Editor(){
         }
 
         if (!nodeToSelect && typeof detail === 'string') {
-          // patterns we expect from backend: "http node n1 missing url",
-          // "llm node n1 missing prompt", "node at index 0 has invalid shape",
-          // "node at index 0 missing id", etc.
           const httpMatch = detail.match(/http node (\S+)/i)
           const llmMatch = detail.match(/llm node (\S+)/i)
           const idxMatch = detail.match(/node at index (\d+)/i)
@@ -351,27 +376,26 @@ export default function Editor(){
               nodeToSelect = String(nodes[idx].id)
             }
           } else if (missingIdMatch) {
-            // generic missing id: try to find any node with empty / falsy id
             const bad = nodes.find(n => n == null || n.id == null || String(n.id).trim() === '')
             if (bad) nodeToSelect = String(bad.id)
           }
         }
 
         setValidationError(detail)
+        setSaveStatus('error')
         if (nodeToSelect) {
-          // focus node so the user can edit its config immediately
           setSelectedNodeId(String(nodeToSelect))
-          // mark the node visually as invalid so NodeRenderer can highlight it
           setNodes((nds) => nds.map(n => (String(n.id) === String(nodeToSelect) ? { ...n, data: { ...(n.data || {}), __validation_error: true } } : n)))
         }
-
-        // Also show a user-visible alert as a fallback for older browsers/tests
-        alert('Save failed: ' + (detail || 'Unknown error'))
+        if (!silent) alert('Save failed: ' + (detail || 'Unknown error'))
+        return false
       }
-      } catch (err) {
-        alert('Save failed: ' + String(err))
-      }
+    } catch (err) {
+      setSaveStatus('error')
+      if (!silent) alert('Save failed: ' + String(err))
+      return false
     }
+  }
 
   const loadWorkflows = async () => {
     try {
@@ -382,7 +406,7 @@ export default function Editor(){
         if (data && data.length > 0) {
           const wf = data[0]
           // preserve legacy behaviour: auto-load the first workflow
-          loadWorkflowGraph(wf)
+          if (!workflowId) loadWorkflowGraph(wf)
         }
       } else {
         const txt = await resp.text()
@@ -405,6 +429,7 @@ export default function Editor(){
     setNodes(initialNodes)
     setEdges(initialEdges)
     setSelectedNodeId(null)
+    setSaveStatus('idle')
   }
 
   const runWorkflow = async () => {
@@ -586,6 +611,8 @@ export default function Editor(){
       } catch (e) {}
       logEventSourceRef.current = null
       setLogEventSource(null)
+      // clear autosave timer
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logEventSource])
@@ -638,18 +665,49 @@ export default function Editor(){
     }
   }
 
+  // mark editor dirty and optionally trigger autosave
+  const markDirty = () => {
+    setSaveStatus('dirty')
+    if (autoSaveEnabled) {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
+      autosaveTimer.current = setTimeout(() => {
+        saveWorkflow({ silent: true })
+      }, 1500)
+    }
+  }
+
   return (
     <div className="editor-root">
       <div className="editor-main">
         <div className="sidebar">
-          <h3>Palette</h3>
-          <div className="palette-buttons">
-            <button onClick={addHttpNode}>Add HTTP Node</button>
-            <button onClick={addLlmNode}>Add LLM Node</button>
-            <button onClick={addWebhookTrigger}>Add Webhook</button>
-            <button onClick={addIfNode}>Add If/Condition</button>
-            <button onClick={addSwitchNode}>Add Switch</button>
+          <div style={{ position: 'sticky', top: 0, background: 'var(--panel-bg, #fff)', paddingBottom: 8, zIndex: 5 }}>
+            <h3>Palette</h3>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <input value={workflowName} onChange={(e) => { setWorkflowName(e.target.value); markDirty() }} style={{ flex: 1, fontSize: 16, padding: '6px 8px' }} />
+              <button onClick={() => saveWorkflow({ silent: false })} style={{ padding: '10px 16px', fontSize: 16, background: 'var(--primary, #007bff)', color: '#fff', border: 'none', borderRadius: 4 }}>Save</button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={autoSaveEnabled} onChange={(e) => setAutoSaveEnabled(e.target.checked)} /> Autosave</label>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>
+                {saveStatus === 'saving' && 'Saving...'}
+                {saveStatus === 'saved' && lastSavedAt && `Saved ${new Date(lastSavedAt).toLocaleTimeString()}`}
+                {saveStatus === 'dirty' && 'Unsaved changes'}
+                {saveStatus === 'error' && 'Save error'}
+                {saveStatus === 'idle' && 'Not saved'}
+              </div>
+            </div>
           </div>
+
+          <div style={{ marginTop: 12 }}>
+            <div className="palette-buttons">
+              <button onClick={addHttpNode}>Add HTTP Node</button>
+              <button onClick={addLlmNode}>Add LLM Node</button>
+              <button onClick={addWebhookTrigger}>Add Webhook</button>
+              <button onClick={addIfNode}>Add If/Condition</button>
+              <button onClick={addSwitchNode}>Add Switch</button>
+            </div>
+          </div>
+
           <hr />
           <div>
             <strong>Auth Token (dev):</strong>
@@ -657,10 +715,7 @@ export default function Editor(){
           </div>
 
           <hr />
-          <div className="row">
-            <input className="col" value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} />
-            <button onClick={saveWorkflow}>Save</button>
-          </div>
+
           <div className="mt-8">Selected workflow id: {workflowId || 'none'}</div>
 
           {/* Workflow selector and list */}
@@ -846,6 +901,7 @@ export default function Editor(){
                       const parsed = JSON.parse(e.target.value)
                       // replace entire data
                       setNodes((nds) => nds.map(n => n.id === selectedNodeId ? { ...n, data: parsed } : n))
+                      markDirty()
                     } catch (err) {
                       // ignore
                     }
