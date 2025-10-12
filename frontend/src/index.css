@@ -151,5 +151,22 @@ textarea{resize:vertical}
    content to render on top via a small elevation shadow and visible border. */
 .react-flow__node .node-card { box-shadow: 0 6px 20px rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.04); }
 
+/* Minimal, high-specificity fixes for the remaining visual issues:
+   - Ensure the node element uses border-box sizing so padding increases the
+     layout box (prevents the visible card from overflowing its parent).
+   - Make sure the node container doesn't add extra padding that would
+     mis-size the card. Keep handle positioning absolute and centered.
+*/
+.react-flow__node{ box-sizing: border-box !important; padding: 0 !important; display: inline-block !important; }
+.react-flow__node .node-card{ display: block !important; box-sizing: border-box !important; padding: 12px 14px !important; min-width:160px !important; min-height:44px !important; border-radius:8px !important; background: linear-gradient(180deg, rgba(7,17,36,0.94), rgba(7,17,36,0.90)) !important; color: #e6eef6 !important; }
+
+/* Make sure handles are absolutely positioned relative to the node and centered */
+.react-flow__node .react-flow__handle{ position: absolute !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 1100 !important; }
+.react-flow__node .react-flow__handle.react-flow__handle-left{ left: -8px !important; }
+.react-flow__node .react-flow__handle.react-flow__handle-right{ right: -8px !important; }
+
+/* Re-assert pointer-events and visibility for custom handle classes used in code */
+.rf-handle-left, .rf-handle-right, .rf-handle-true, .rf-handle-false { pointer-events: auto !important; }
+
 /* small screens */
 @media(max-width:900px){.sidebar{display:none}.rightpanel{display:none}}
