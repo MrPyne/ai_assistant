@@ -66,7 +66,19 @@ export default function NodeRenderer(props) {
       data-node-id={id}
     >
       {/* Target / input handle on the left */}
-      <Handle type="target" id="in" position={Position.Left} className="rf-handle-left" />
+      {/*
+        Use explicit styles to ensure handles align to the visual edge of the
+        node regardless of padding. We center vertically with top: '50%'
+        and translate to get an exact center point. This avoids relying on
+        global CSS offsets which can drift when padding/size changes.
+      */}
+      <Handle
+        type="target"
+        id="in"
+        position={Position.Left}
+        className="rf-handle-left"
+        style={{ top: '50%', transform: 'translate(-50%, -50%)' }}
+      />
 
       <div className="node-header">
         <span className={`node-icon node-icon-${kind}`} aria-hidden>
@@ -81,13 +93,31 @@ export default function NodeRenderer(props) {
       {/* Outputs */}
       {isIf ? (
         <>
-          <Handle type="source" id="true" position={Position.Right} style={{ top: 18 }} className="rf-handle-true" />
+          <Handle
+            type="source"
+            id="true"
+            position={Position.Right}
+            style={{ top: 28, transform: 'translate(50%, -50%)' }}
+            className="rf-handle-true"
+          />
           <div className="handle-label handle-label-true">T</div>
-          <Handle type="source" id="false" position={Position.Right} style={{ bottom: 18 }} className="rf-handle-false" />
+          <Handle
+            type="source"
+            id="false"
+            position={Position.Right}
+            style={{ bottom: 28, transform: 'translate(50%, 50%)' }}
+            className="rf-handle-false"
+          />
           <div className="handle-label handle-label-false">F</div>
         </>
       ) : isSwitch ? (
-        <Handle type="source" id="out" position={Position.Right} className="rf-handle-right" />
+        <Handle
+          type="source"
+          id="out"
+          position={Position.Right}
+          className="rf-handle-right"
+          style={{ top: '50%', transform: 'translate(50%, -50%)' }}
+        />
       ) : (
         <Handle type="source" id="out" position={Position.Right} className="rf-handle-right" />
       )}

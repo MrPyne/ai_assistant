@@ -57,7 +57,7 @@ textarea{resize:vertical}
 .palette-buttons{display:flex;gap:8px;margin-bottom:10px}
 .list-scroll{max-height:160px;overflow:auto;border-radius:8px;padding:6px;border:1px solid rgba(255,255,255,0.02);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
 
-.node-card{position:relative;padding:8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);min-width:160px;min-height:44px;display:flex;flex-direction:column;justify-content:center}
+.node-card{position:relative;padding:12px 14px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);min-width:160px;min-height:44px;display:flex;flex-direction:column;justify-content:center}
 .node-card .label{font-weight:700;color:var(--accent);font-size:13px}
 .node-card:focus{outline:2px solid rgba(124,92,255,0.12);box-shadow:0 6px 24px rgba(124,92,255,0.08)}
 .node-header{display:flex;align-items:center;gap:8px}
@@ -81,6 +81,9 @@ textarea{resize:vertical}
 .rf-handle-right{right: -6px}
 .rf-handle-true{right: -6px}
 .rf-handle-false{right: -6px}
+
+/* Ensure handles align exactly at the visual midline of the node */
+.react-flow__node .react-flow__handle { transform: translateY(-50%) !important }
 
 .handle-label{position:absolute;color:var(--muted);font-weight:700;font-size:12px}
 .handle-label-true{right: 10px; top: 8px}
