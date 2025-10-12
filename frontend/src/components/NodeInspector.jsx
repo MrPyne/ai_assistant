@@ -36,7 +36,24 @@ export default function NodeInspector({
       reset({})
     } else {
       // raw config editing handled separately below
-      reset({ rawJsonText: JSON.stringify(selectedNode.data || {}, null, 2) })
+      // support some of the new node types with friendly forms
+      if (selectedNode.data && selectedNode.data.label === 'Send Email') {
+        reset({ to: cfg.to || '', from: cfg.from || '', subject: cfg.subject || '', body: cfg.body || '', provider_id: cfg.provider_id || '' })
+      } else if (selectedNode.data && selectedNode.data.label === 'Slack Message') {
+        reset({ channel: cfg.channel || '', text: cfg.text || '', provider_id: cfg.provider_id || '' })
+      } else if (selectedNode.data && selectedNode.data.label === 'DB Query') {
+        reset({ provider_id: cfg.provider_id || '', query: cfg.query || '' })
+      } else if (selectedNode.data && selectedNode.data.label === 'Cron Trigger') {
+        reset({ cron: cfg.cron || '0 * * * *', timezone: cfg.timezone || 'UTC', enabled: cfg.enabled !== false })
+      } else if (selectedNode.data && selectedNode.data.label === 'HTTP Trigger') {
+        reset({ capture_headers: cfg.capture_headers || false })
+      } else if (selectedNode.data && selectedNode.data.label === 'Transform') {
+        reset({ language: cfg.language || 'jinja', template: cfg.template || '' })
+      } else if (selectedNode.data && selectedNode.data.label === 'Wait') {
+        reset({ seconds: cfg.seconds || 60 })
+      } else {
+        reset({ rawJsonText: JSON.stringify(selectedNode.data || {}, null, 2) })
+      }
     }
   }, [selectedNode, reset])
 
@@ -61,8 +78,49 @@ export default function NodeInspector({
           updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt, provider_id })
           markDirty()
         } else {
-          // for raw JSON edits we don't use this path
-        }
+      // sync friendly forms for new node types
+      if (selectedNode.data && selectedNode.data.label === 'Send Email') {
+        const to = watched.to || ''
+        const from = watched.from || ''
+        const subject = watched.subject || ''
+        const body = watched.body || ''
+        const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), to, from, subject, body, provider_id })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'Slack Message') {
+        const channel = watched.channel || ''
+        const text = watched.text || ''
+        const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), channel, text, provider_id })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'DB Query') {
+        const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
+        const query = watched.query || ''
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), provider_id, query })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'Cron Trigger') {
+        const cron = watched.cron || '0 * * * *'
+        const timezone = watched.timezone || 'UTC'
+        const enabled = !!watched.enabled
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), cron, timezone, enabled })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'HTTP Trigger') {
+        const capture_headers = !!watched.capture_headers
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), capture_headers })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'Transform') {
+        const language = watched.language || 'jinja'
+        const template = watched.template || ''
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), language, template })
+        markDirty()
+      } else if (selectedNode.data && selectedNode.data.label === 'Wait') {
+        const seconds = Number(watched.seconds) || 0
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), seconds })
+        markDirty()
+      } else {
+        // for raw JSON edits we don't use this path
+      }
+    }
       } catch (e) {
         // ignore sync errors
       }
@@ -110,6 +168,86 @@ export default function NodeInspector({
               <button onClick={() => { editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: '{}' }) }} className="secondary">Reset</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'HTTP Trigger' && (
+        <div>
+          <label>Capture headers</label>
+          <input type="checkbox" {...register('capture_headers')} />
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'Cron Trigger' && (
+        <div>
+          <label>Cron expression</label>
+          <input {...register('cron')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>Timezone</label>
+          <input {...register('timezone')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>Enabled</label>
+          <input type="checkbox" {...register('enabled')} />
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'Send Email' && (
+        <div>
+          <label>To</label>
+          <input {...register('to')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>From</label>
+          <input {...register('from')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>Subject</label>
+          <input {...register('subject')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>Body</label>
+          <textarea {...register('body')} style={{ width: '100%', height: 120 }} />
+          <label>Provider</label>
+          <select {...register('provider_id')} style={{ width: '100%', marginTop: 8 }}>
+            <option value=''>-- Select provider --</option>
+            {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+          </select>
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'Slack Message' && (
+        <div>
+          <label>Channel</label>
+          <input {...register('channel')} style={{ width: '100%', marginBottom: 8 }} />
+          <label>Text</label>
+          <textarea {...register('text')} style={{ width: '100%', height: 120 }} />
+          <label>Provider</label>
+          <select {...register('provider_id')} style={{ width: '100%', marginTop: 8 }}>
+            <option value=''>-- Select provider --</option>
+            {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+          </select>
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'DB Query' && (
+        <div>
+          <label>Provider</label>
+          <select {...register('provider_id')} style={{ width: '100%', marginBottom: 8 }}>
+            <option value=''>-- Select provider --</option>
+            {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+          </select>
+          <label>Query</label>
+          <textarea {...register('query')} style={{ width: '100%', height: 140 }} />
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'Transform' && (
+        <div>
+          <label>Language</label>
+          <select {...register('language')} style={{ width: '100%', marginBottom: 8 }}>
+            <option value='jinja'>Jinja</option>
+          </select>
+          <label>Template</label>
+          <textarea {...register('template')} style={{ width: '100%', height: 200 }} />
+        </div>
+      )}
+
+      {selectedNode.data && selectedNode.data.label === 'Wait' && (
+        <div>
+          <label>Seconds</label>
+          <input type="number" {...register('seconds')} style={{ width: '100%' }} />
         </div>
       )}
 

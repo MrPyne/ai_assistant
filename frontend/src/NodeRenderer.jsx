@@ -34,6 +34,79 @@ function Icon({ type, size = 18 }) {
   )
 }
 
+// extra icons
+Icon.Email = function EmailIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <rect x="3" y="5" width="18" height="14" rx="2" strokeWidth="1.2" />
+      <path d="M3 7l9 6 9-6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+Icon.Cron = function CronIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <circle cx="12" cy="12" r="9" strokeWidth="1.2" />
+      <path d="M12 7v5l3 3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+Icon.Slack = function SlackIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <path d="M14 3h2a2 2 0 012 2v2" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M10 21H8a2 2 0 01-2-2v-2" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M21 14v2a2 2 0 01-2 2h-2" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M3 10V8a2 2 0 012-2h2" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+Icon.DB = function DbIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <ellipse cx="12" cy="6" rx="8" ry="3" strokeWidth="1.2" />
+      <path d="M4 6v6c0 1.657 3.582 3 8 3s8-1.343 8-3V6" strokeWidth="1.2" />
+    </svg>
+  )
+}
+
+Icon.S3 = function S3Icon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <rect x="3" y="7" width="18" height="10" rx="2" strokeWidth="1.2" />
+      <path d="M7 11h10" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+Icon.Transform = function TransformIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <path d="M4 7h6l2 3 6-3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 17h16" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+Icon.Wait = function WaitIcon({ size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
+  return (
+    <svg {...common} stroke="currentColor">
+      <path d="M12 7v5l3 3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="9" strokeWidth="1.2" />
+    </svg>
+  )
+}
+
 export default function NodeRenderer(props) {
   // Be defensive: react-flow may pass different shapes depending on version.
   const { data = {}, id, type: nodeType } = props || {}
@@ -50,6 +123,15 @@ export default function NodeRenderer(props) {
   if (l.includes('webhook')) kind = 'webhook'
   else if (l.includes('http') || l.includes('request')) kind = 'http'
   else if (l.includes('llm') || l.includes('ai') || l.includes('model')) kind = 'llm'
+
+  // additional kinds
+  else if (l.includes('email') || l.includes('send email') || l.includes('send-email')) kind = 'email'
+  else if (l.includes('cron') || l.includes('timer')) kind = 'cron'
+  else if (l.includes('slack')) kind = 'slack'
+  else if (l.includes('db') || l.includes('query')) kind = 'db'
+  else if (l.includes('s3') || l.includes('upload')) kind = 's3'
+  else if (l.includes('transform') || l.includes('jinja') || l.includes('template')) kind = 'transform'
+  else if (l.includes('wait') || l.includes('delay')) kind = 'wait'
 
   const isIf = l === 'if' || l === 'condition'
   const isSwitch = l === 'switch'
@@ -75,7 +157,7 @@ export default function NodeRenderer(props) {
 
       <div className="node-header">
         <span className={`node-icon node-icon-${kind}`} aria-hidden>
-          <Icon type={kind} />
+          {kind === 'email' ? <Icon.Email /> : kind === 'cron' ? <Icon.Cron /> : kind === 'slack' ? <Icon.Slack /> : kind === 'db' ? <Icon.DB /> : kind === 's3' ? <Icon.S3 /> : kind === 'transform' ? <Icon.Transform /> : kind === 'wait' ? <Icon.Wait /> : <Icon type={kind} />}
         </span>
         <div className="label">{label}</div>
       </div>

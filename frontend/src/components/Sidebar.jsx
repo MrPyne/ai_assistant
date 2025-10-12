@@ -8,6 +8,14 @@ export default function Sidebar({
   addHttpNode,
   addLlmNode,
   addWebhookTrigger,
+  addHttpTrigger,
+  addCronTrigger,
+  addSendEmail,
+  addSlackMessage,
+  addDbQuery,
+  addS3Upload,
+  addTransform,
+  addWait,
   addIfNode,
   addSwitchNode,
   // new helper to seed multiple nodes for testing
@@ -130,6 +138,20 @@ export default function Sidebar({
                   <button onClick={addHttpNode}>Add HTTP Node</button>
                   <button onClick={addLlmNode}>Add LLM Node</button>
                   <button onClick={addWebhookTrigger}>Add Webhook</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={addHttpTrigger}>Add HTTP Trigger</button>
+                  <button onClick={addCronTrigger}>Add Cron Trigger</button>
+                  <button onClick={addWait}>Add Wait</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={addSendEmail}>Add Send Email</button>
+                  <button onClick={addSlackMessage}>Add Slack Message</button>
+                  <button onClick={addDbQuery}>Add DB Query</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={addS3Upload}>Add S3 Upload</button>
+                  <button onClick={addTransform}>Add Transform</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                   <button onClick={addIfNode}>Add If/Condition</button>

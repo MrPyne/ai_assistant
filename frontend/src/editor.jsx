@@ -50,13 +50,13 @@ export default function Editor({ token }) {
   }, [viewRunLogs])
 
   // basic node operations used by Sidebar / Inspector
-  const addNode = useCallback((label, type = 'default') => {
+  const addNode = useCallback((label, type = 'default', initialConfig = {}) => {
     const id = String(nextIdRef.current++)
     const newNode = {
       id,
       type: type === 'input' ? 'input' : 'default',
       position: { x: 50 + (nodes.length * 40), y: 50 + (nodes.length * 20) },
-      data: { label, config: {} },
+      data: { label, config: initialConfig },
     }
     setNodes((nds) => [...nds, newNode])
     // select the new node
@@ -64,9 +64,17 @@ export default function Editor({ token }) {
     return id
   }, [editorDispatch, nodes.length])
 
-  const addHttpNode = useCallback(() => addNode('HTTP Request'), [addNode])
-  const addLlmNode = useCallback(() => addNode('LLM'), [addNode])
-  const addWebhookTrigger = useCallback(() => addNode('Webhook Trigger', 'input'), [addNode])
+  const addHttpNode = useCallback(() => addNode('HTTP Request', 'default', { method: 'GET', url: '' }), [addNode])
+  const addLlmNode = useCallback(() => addNode('LLM', 'default', { prompt: '' }), [addNode])
+  const addWebhookTrigger = useCallback(() => addNode('Webhook Trigger', 'input', {}), [addNode])
+  const addHttpTrigger = useCallback(() => addNode('HTTP Trigger', 'input', { capture_headers: true }), [addNode])
+  const addCronTrigger = useCallback(() => addNode('Cron Trigger', 'input', { cron: '0 * * * *', timezone: 'UTC', enabled: true }), [addNode])
+  const addSendEmail = useCallback(() => addNode('Send Email', 'default', { to: 'user@example.com', from: '', subject: '', body: '', provider_id: null }), [addNode])
+  const addSlackMessage = useCallback(() => addNode('Slack Message', 'default', { channel: '#alerts', text: '', provider_id: null }), [addNode])
+  const addDbQuery = useCallback(() => addNode('DB Query', 'default', { provider_id: null, query: 'SELECT 1' }), [addNode])
+  const addS3Upload = useCallback(() => addNode('S3 Upload', 'default', { bucket: '', key: '', body_template: '{{input}}', provider_id: null }), [addNode])
+  const addTransform = useCallback(() => addNode('Transform', 'default', { language: 'jinja', template: '{{ input }}', input_path: '' }), [addNode])
+  const addWait = useCallback(() => addNode('Wait', 'default', { seconds: 60 }), [addNode])
   const addIfNode = useCallback(() => addNode('If'), [addNode])
   const addSwitchNode = useCallback(() => addNode('Switch'), [addNode])
 
@@ -296,10 +304,16 @@ export default function Editor({ token }) {
         addHttpNode={addHttpNode}
         addLlmNode={addLlmNode}
         addWebhookTrigger={addWebhookTrigger}
+        addHttpTrigger={addHttpTrigger}
+        addCronTrigger={addCronTrigger}
+        addSendEmail={addSendEmail}
+        addSlackMessage={addSlackMessage}
+        addDbQuery={addDbQuery}
+        addS3Upload={addS3Upload}
+        addTransform={addTransform}
+        addWait={addWait}
         addIfNode={addIfNode}
         addSwitchNode={addSwitchNode}
-        // pass seeding helper so sidebar can trigger many nodes
-        seedNodes={seedNodes}
         token={tokenState}
         setToken={setToken}
         workflowId={null}
