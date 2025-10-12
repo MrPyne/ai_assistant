@@ -1362,6 +1362,24 @@ def node_test(body: dict):
                     provider = None
         except Exception:
             provider = None
+    # Apply any provider/secret overrides attached to the node for testing only.
+    # Frontend may include a transient `_override_secret_id` to allow testing a
+    # provider with a different secret without persisting changes. We apply it
+    # to the provider object (in-memory) so subsequent resolution uses the
+    # overridden secret_id. Do not persist to DB.
+    try:
+        if provider is not None and isinstance(node, dict) and node.get('_override_secret_id') is not None:
+            try:
+                # SQLAlchemy model: set attribute
+                setattr(provider, 'secret_id', int(node.get('_override_secret_id')))
+            except Exception:
+                try:
+                    # dict-like provider used in lightweight tests
+                    provider['secret_id'] = int(node.get('_override_secret_id'))
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # LLM node
     ntype = node.get('type')

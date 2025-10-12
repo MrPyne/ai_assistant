@@ -1,3 +1,4 @@
+import NodeTestModal from './components/NodeTestModal'
 import React, { useCallback, useState, useEffect, useRef } from 'react'
 // react-flow-renderer v10 exports from 'react-flow-renderer'. The project
 // depends on the v10 package (react-flow-renderer) rather than the newer
@@ -38,6 +39,8 @@ export default function Editor(){
   const [newProviderType, setNewProviderType] = useState('openai')
   const [newProviderSecretId, setNewProviderSecretId] = useState('')
   const [webhookTestPayload, setWebhookTestPayload] = useState('{}')
+  const [showNodeTest, setShowNodeTest] = useState(false)
+  const [nodeTestToken, setNodeTestToken] = useState(localStorage.getItem('authToken') || '')
 
   // new: store validation error returned by the backend on save so we can
   // surface it in the editor UI and optionally focus the problematic node
@@ -718,6 +721,9 @@ export default function Editor(){
           {selectedNode ? (
             <div>
               <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
+              <div style={{ marginBottom: 8 }}>
+                <button onClick={() => { setShowNodeTest(true); setNodeTestToken(token) }} className="btn btn-ghost">Test Node</button>
+              </div>
 
               {/* Webhook info */}
               {selectedNode.data && selectedNode.data.label === 'Webhook Trigger' && (
@@ -823,6 +829,7 @@ export default function Editor(){
           </div>
         </div>
       </div>
+  {showNodeTest && <NodeTestModal node={selectedNode} token={nodeTestToken} providers={providers} secrets={secrets} onClose={() => setShowNodeTest(false)} />}
     </div>
   )
 }
