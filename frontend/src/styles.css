@@ -273,13 +273,59 @@ select:focus {
   transform: translateX(6px);
 }
 
-/* Canvas (react-flow) area */
+/* Canvas (react-flow) area
+   NOTE: keep this consistent with the more detailed editor layout in index.css.
+   We include flex:1 and layout rules here because styles.css is imported after
+   index.css and would otherwise override the earlier rules unintentionally.
+*/
 .canvas {
+  /* allow the canvas to expand to available vertical space inside the editor */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+
+  /* visual styling */
   min-height: 680px;
   border-radius: 12px;
   padding: 12px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.01), rgba(255, 255, 255, 0.005));
   border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+/* React Flow wrapper tweaks to ensure the canvas and nodes render above
+   decorative backgrounds and fill the available vertical space. These rules
+   increase specificity to avoid being overridden by global app styles. */
+.reactflow-wrapper {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  display: flex;
+  flex: 1 1 auto;
+}
+.reactflow-wrapper .react-flow {
+  flex: 1 1 auto;
+  min-height: 200px;
+}
+
+/* Ensure nodes and handles render above edges and decorations */
+.react-flow__node,
+.node-card {
+  z-index: 1000 !important;
+  pointer-events: auto !important;
+  background-clip: padding-box;
+}
+.react-flow__handle,
+.rf-handle-left,
+.rf-handle-right,
+.rf-handle-true,
+.rf-handle-false {
+  z-index: 1100 !important;
+}
+.react-flow__edge {
+  z-index: 500 !important;
 }
 
 

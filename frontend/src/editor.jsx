@@ -3,7 +3,7 @@ import { EditorProvider, useEditorDispatch, useEditorState } from './state/Edito
 import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
 import NodeRenderer from './NodeRenderer'
-import ReactFlow, { ReactFlowProvider, Background, Controls } from 'react-flow-renderer'
+import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'react-flow-renderer'
 
 // A compact, test-focused Editor implementation. The real app uses react-flow
 // and a richer editor; tests only require a handful of behaviors (add nodes,
@@ -19,7 +19,7 @@ function EditorInner({ initialToken = '' }) {
   const editorState = useEditorState()
 
   const [nodes, setNodes] = useState([])
-  const [edges] = useState([])
+  const [edges, setEdges] = useState([])
   const nodesRef = useRef(nodes)
   const selectedNodeId = editorState.selectedNodeId
 
@@ -29,6 +29,11 @@ function EditorInner({ initialToken = '' }) {
 
   // token used by the Workflows panel (initialize from prop so App can pass auth token)
   const [token, setToken] = useState(initialToken || '')
+
+  // keep local token in sync if the parent passes a new token
+  useEffect(() => {
+    setToken(initialToken || '')
+  }, [initialToken])
 
   // runs & eventsource handling
   const esRef = useRef(null)
@@ -43,6 +48,8 @@ function EditorInner({ initialToken = '' }) {
       if (!sel.length) return
       const next = nodesRef.current.filter(n => !sel.includes(String(n.id)))
       setNodes(next)
+      // also remove edges connected to deleted nodes
+      setEdges((prev) => prev.filter(e => !sel.includes(String(e.source)) && !sel.includes(String(e.target))))
       editorDispatch({ type: 'CLEAR_SELECTION' })
       editorDispatch({ type: 'MARK_DIRTY' })
     }
@@ -68,7 +75,7 @@ function EditorInner({ initialToken = '' }) {
   // Save workflow: POST /api/workflows
   const saveWorkflow = useCallback(async ({ silent = true } = {}) => {
     try {
-      const payload = { graph: { nodes: nodes.map(n => ({ id: String(n.id), data: n.data, position: n.position })), edges, selected_node_id: editorState.selectedNodeId } }
+      const payload = { graph: { nodes: nodes.map(n => ({ id: String(n.id), data: n.data, position: n.position })), edges: edges.map(e => ({ id: e.id, source: String(e.source), target: String(e.target), source_handle: e.sourceHandle || e.source_handle, target_handle: e.targetHandle || e.target_handle })), selected_node_id: editorState.selectedNodeId } }
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers.Authorization = `Bearer ${token}`
       const resp = await fetch('/api/workflows', { method: 'POST', headers, body: JSON.stringify(payload) })
@@ -108,13 +115,30 @@ function EditorInner({ initialToken = '' }) {
       // eslint-disable-next-line no-console
       console.debug('/api/workflows ->', { status: resp.status, body: data })
       setWorkflows(Array.isArray(data) ? data : [])
-      // If the first workflow has a graph with nodes, load them into the editor
+      // If the first workflow has a graph with nodes, load them into the editor.
+      // Note: the list endpoint may return only metadata (id/name). If so,
+      // fetch the single workflow to retrieve its full graph payload.
       if (Array.isArray(data) && data.length) {
-        const w = data[0]
-        const g = w.graph
+        let w = data[0]
+        let g = w.graph
+        if (!g) {
+          // try to fetch the full workflow
+          try {
+            const r2 = await fetch(`/api/workflows/${w.id}`, { headers })
+            if (r2 && r2.ok) {
+              const full = await r2.json()
+              w = full
+              g = full && full.graph
+            }
+          } catch (e) {
+            // ignore \u2014 we'll just not load nodes
+          }
+        }
+
         // support legacy array-of-elements graph
         if (Array.isArray(g)) {
           setNodes(g.map(el => ({ id: String(el.id || makeId()), data: el.data || { label: el.data && el.data.label }, position: el.position || { x: 0, y: 0 } })))
+          setEdges([])
           editorDispatch({ type: 'CLEAR_SELECTION' })
           setWorkflowId(w.id)
           return
@@ -122,6 +146,12 @@ function EditorInner({ initialToken = '' }) {
         // expected shape: { nodes: [...], edges: [...], selected_node_id }
         if (g && Array.isArray(g.nodes)) {
           setNodes(g.nodes.map(n => ({ id: String(n.id || makeId()), data: n.data || { label: n.data && n.data.label }, position: n.position || { x: 0, y: 0 } })))
+          // map edges into react-flow shape
+          if (Array.isArray(g.edges)) {
+            setEdges(g.edges.map(e => ({ id: e.id || makeId('e'), source: String(e.source), target: String(e.target), sourceHandle: e.source_handle || e.sourceHandle || null, targetHandle: e.target_handle || e.targetHandle || null })))
+          } else {
+            setEdges([])
+          }
           if (g.selected_node_id) {
             editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(g.selected_node_id) })
           } else {
@@ -247,6 +277,22 @@ function EditorInner({ initialToken = '' }) {
     editorDispatch({ type: 'MARK_DIRTY' })
   }, [editorDispatch])
 
+  // react-flow change handlers so nodes/edges are interactive
+  const onNodesChange = useCallback((changes) => {
+    setNodes((nds) => applyNodeChanges(changes, nds))
+    editorDispatch({ type: 'MARK_DIRTY' })
+  }, [editorDispatch])
+
+  const onEdgesChange = useCallback((changes) => {
+    setEdges((eds) => applyEdgeChanges(changes, eds))
+    editorDispatch({ type: 'MARK_DIRTY' })
+  }, [editorDispatch])
+
+  const onConnect = useCallback((connection) => {
+    setEdges((eds) => addEdge(connection, eds))
+    editorDispatch({ type: 'MARK_DIRTY' })
+  }, [editorDispatch])
+
   // select workflow from dropdown
   const selectWorkflow = useCallback((wid) => {
     if (!wid) {
@@ -356,6 +402,29 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [loadWorkflows, token])
 
+  // react-flow instance ref so we can call fitView after nodes/edges are loaded
+  const rfInstanceRef = useRef(null)
+
+  // whenever nodes or edges change, center/fit the view so the graph is visible.
+  // Support React Flow variations that expose onInit or onLoad by capturing
+  // the instance in either callback below.
+  useEffect(() => {
+    try {
+      if (!rfInstanceRef.current || typeof rfInstanceRef.current.fitView !== 'function') return
+      // give the DOM a moment to settle so fitView computes correctly
+      const t = setTimeout(() => {
+        try {
+          rfInstanceRef.current.fitView({ padding: 0.12 })
+        } catch (e) {
+          // swallow transient errors
+        }
+      }, 50)
+      return () => clearTimeout(t)
+    } catch (e) {
+      // ignore
+    }
+  }, [nodes.length, edges.length])
+
   return (
     // Use the same class names the project's CSS expects so layout rules
     // (min-width:0, proper heights, scroll behavior) are applied.
@@ -388,7 +457,7 @@ function EditorInner({ initialToken = '' }) {
           workflows={workflows}
           loadWorkflows={loadWorkflows}
           selectWorkflow={selectWorkflow}
-          newWorkflow={() => { setWorkflowId(null); setNodes([]); editorDispatch({ type: 'RESET' }) }}
+          newWorkflow={() => { setWorkflowId(null); setNodes([]); setEdges([]); editorDispatch({ type: 'RESET' }) }}
           runWorkflow={runWorkflow}
           loadRuns={loadRuns}
           providers={providers}
@@ -413,20 +482,30 @@ function EditorInner({ initialToken = '' }) {
 
         <div className="canvas">
           {/* Render an interactive React Flow canvas so nodes, edges and grid are visible. */}
-          <div className="react-flow-wrapper" style={{ height: 400, minHeight: 200 }}>
+          {/* Use 100% height so it fills the canvas card; minHeight keeps it usable on small screens */}
+          <div className="reactflow-wrapper" style={{ height: '100%', minHeight: 600 }}>
             <ReactFlowProvider>
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={{ default: NodeRenderer, http: NodeRenderer, llm: NodeRenderer, input: NodeRenderer, action: NodeRenderer, timer: NodeRenderer }}
                 onNodeClick={(ev, node) => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(node.id) })}
-                onInit={(rfi) => {
-                  // center the view when the flow initializes
-                  try {
-                    setTimeout(() => { rfi && typeof rfi.fitView === 'function' && rfi.fitView({ padding: 0.1 }) }, 0)
-                  } catch (e) {}
-                }}
-                fitView
+                onInit={(rfi) => { try { rfInstanceRef.current = rfi } catch (e) {} }}
+                // some React Flow versions call onLoad instead of onInit
+                onLoad={(rfi) => { try { rfInstanceRef.current = rfi } catch (e) {} }}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                // enable common interactions and sane zoom limits
+                zoomOnScroll={true}
+                zoomOnPinch={true}
+                panOnScroll={true}
+                panOnDrag={true}
+                minZoom={0.05}
+                maxZoom={2}
+                fitView={false}
+                fitViewOptions={{ padding: 0.12 }}
+                style={{ width: '100%', height: '100%' }}
               >
                 <Background gap={16} />
                 <Controls />
