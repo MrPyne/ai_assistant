@@ -206,6 +206,46 @@ def register(app, ctx):
                 items.append(obj)
         return items
 
+    # Provider schema discovery: GET /api/provider_schema/{type}
+    if _FASTAPI_HEADERS:
+        @app.get('/api/provider_schema/{ptype}')
+        def get_provider_schema(ptype: str, authorization: str = Header(None)):
+            return get_provider_schema_impl(ptype, authorization)
+    else:
+        @app.get('/api/provider_schema/{ptype}')
+        def get_provider_schema(ptype: str, authorization: str = None):
+            return get_provider_schema_impl(ptype, authorization)
+
+    def get_provider_schema_impl(ptype: str, authorization: str = None):
+        # minimal auth required; allow unauthenticated for discovery in some flows
+        # return provider-specific JSON Schema + UI hints
+        schemas = {
+            's3': {
+                'title': 'AWS S3',
+                'type': 'object',
+                'properties': {
+                    'access_key': {'type': 'string'},
+                    'secret_key': {'type': 'string', 'ui:widget': 'password'},
+                    'session_token': {'type': 'string', 'ui:widget': 'password'},
+                    'region': {'type': 'string'}
+                },
+                'required': ['access_key', 'secret_key']
+            },
+            'smtp': {
+                'title': 'SMTP',
+                'type': 'object',
+                'properties': {
+                    'host': {'type': 'string'},
+                    'port': {'type': 'number'},
+                    'username': {'type': 'string'},
+                    'password': {'type': 'string', 'ui:widget': 'password'},
+                    'use_tls': {'type': 'boolean'}
+                },
+                'required': ['host']
+            }
+        }
+        return schemas.get(ptype, {'title': ptype, 'type': 'object'})
+
     if _FASTAPI_HEADERS:
         @app.delete('/api/secrets/{sid}')
         def delete_secret(sid: int, authorization: str = Header(None)):
@@ -282,6 +322,49 @@ def register(app, ctx):
             raise HTTPException(status_code=400)
 
         secret_id = body.get('secret_id')
+        inline_secret = body.get('secret')
+        # If an inline secret JSON object is provided, create a Secret and
+        # attach it to the provider. This lets the frontend submit structured
+        # credentials (e.g., AWS keys, session tokens) without a separate
+        # secret creation step.
+        if inline_secret is not None:
+            # inline_secret should be serializable to a string; coerce to JSON
+            try:
+                import json as _json
+                secret_value = _json.dumps(inline_secret)
+            except Exception:
+                return JSONResponse(status_code=400, content={'detail': 'invalid secret payload'})
+            # create secret in DB or in-memory store
+            if _DB_AVAILABLE:
+                try:
+                    db = SessionLocal()
+                    enc = secret_value
+                    try:
+                        if encrypt_value is not None:
+                            enc = encrypt_value(secret_value)
+                    except Exception:
+                        enc = secret_value
+                    s = models.Secret(workspace_id=wsid, name=f"provider:{body.get('type')}", encrypted_value=enc, created_by=user_id)
+                    db.add(s)
+                    db.commit()
+                    db.refresh(s)
+                    secret_id = s.id
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    return JSONResponse(status_code=500, content={'detail': 'failed to create secret'})
+                finally:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+            else:
+                sid = _next.get('secret', 1)
+                _next['secret'] = sid + 1
+                _secrets[sid] = {'workspace_id': wsid, 'name': f"provider:{body.get('type')}", 'value': secret_value}
+                secret_id = sid
         if secret_id is not None:
             # validate secret ownership
             if _DB_AVAILABLE:
@@ -307,6 +390,11 @@ def register(app, ctx):
                 db.add(p)
                 db.commit()
                 db.refresh(p)
+                try:
+                    # audit provider creation
+                    _add_audit(wsid, user_id, 'create_provider', object_type='provider', object_id=p.id, detail=body.get('type'))
+                except Exception:
+                    pass
                 return {'id': p.id, 'workspace_id': p.workspace_id, 'type': p.type, 'secret_id': p.secret_id}
             except Exception:
                 try:
@@ -348,7 +436,7 @@ def register(app, ctx):
                 rows = db.query(models.Provider).filter(models.Provider.workspace_id == wsid).all()
                 out = []
                 for r in rows:
-                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'type': r.type, 'secret_id': getattr(r, 'secret_id', None)})
+                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'type': r.type, 'secret_id': getattr(r, 'secret_id', None), 'last_tested_at': getattr(r, 'last_tested_at', None)})
                 return out
             finally:
                 try:
@@ -754,6 +842,135 @@ def register(app, ctx):
         except Exception:
             pass
         return {'run_id': run_id, 'status': 'queued'}
+
+    # Test connection: POST /api/providers/{id}/test_connection
+    if _FASTAPI_HEADERS:
+        @app.post('/api/providers/{pid}/test_connection')
+        def test_provider_connection(pid: int, body: dict = None, authorization: str = Header(None)):
+            return test_provider_connection_impl(pid, body or {}, authorization)
+    else:
+        @app.post('/api/providers/{pid}/test_connection')
+        def test_provider_connection(pid: int, body: dict = None, authorization: str = None):
+            return test_provider_connection_impl(pid, body or {}, authorization)
+
+    def test_provider_connection_impl(pid: int, body: dict = None, authorization: str = None):
+        user_id = ctx.get('_user_from_token')(authorization) if authorization is not None else None
+        # allow unauthenticated in some client flows, but fail if we can't resolve a workspace
+        if not user_id:
+            if _users:
+                user_id = list(_users.keys())[0]
+            else:
+                raise HTTPException(status_code=401)
+        wsid = _workspace_for_user(user_id)
+        if not wsid:
+            raise HTTPException(status_code=400)
+
+        # body may contain an inline secret object to override stored secret
+        inline_secret = body.get('secret') if isinstance(body, dict) else None
+
+        # resolve provider
+        if _DB_AVAILABLE:
+            try:
+                db = SessionLocal()
+                p = db.query(models.Provider).filter(models.Provider.id == pid).first()
+                if not p or p.workspace_id != wsid:
+                    raise HTTPException(status_code=404)
+                secret_record = None
+                if inline_secret is not None:
+                    # create ephemeral secret (not persisted) to test connection
+                    try:
+                        import json as _json
+                        secret_value = _json.dumps(inline_secret)
+                    except Exception:
+                        return JSONResponse(status_code=400, content={'detail': 'invalid secret payload'})
+                    # decrypt/encrypt not needed for ephemeral; pass plaintext to adapter
+                    secret_record = {'value': secret_value}
+                elif getattr(p, 'secret_id', None):
+                    s = db.query(models.Secret).filter(models.Secret.id == p.secret_id).first()
+                    if not s:
+                        raise HTTPException(status_code=400, detail='secret not found')
+                    # decrypt when possible
+                    sec_val = getattr(s, 'encrypted_value', None)
+                    try:
+                        if decrypt_value is not None:
+                            sec_val = decrypt_value(sec_val)
+                    except Exception:
+                        pass
+                    secret_record = {'value': sec_val}
+                # attempt provider-specific test using adapters in tasks or adapters modules
+                test_ok = False
+                test_err = None
+                try:
+                    # simplistic tests for known types
+                    if p.type == 's3':
+                        import boto3
+                        import botocore
+                        import json as _json
+                        creds = _json.loads(secret_record.get('value')) if isinstance(secret_record.get('value'), str) else secret_record.get('value')
+                        session = boto3.session.Session(aws_access_key_id=creds.get('access_key'), aws_secret_access_key=creds.get('secret_key'), aws_session_token=creds.get('session_token'))
+                        s3 = session.client('s3')
+                        s3.list_buckets()
+                        test_ok = True
+                    elif p.type == 'smtp':
+                        import smtplib
+                        import json as _json
+                        creds = _json.loads(secret_record.get('value')) if isinstance(secret_record.get('value'), str) else secret_record.get('value')
+                        host = creds.get('host')
+                        port = int(creds.get('port') or 25)
+                        server = smtplib.SMTP(host, port, timeout=5)
+                        server.noop()
+                        server.quit()
+                        test_ok = True
+                    else:
+                        # default: succeed if a secret exists
+                        if secret_record is not None:
+                            test_ok = True
+                        else:
+                            test_ok = False
+                except Exception as e:
+                    test_ok = False
+                    test_err = str(e)
+
+                # update provider last_tested metadata
+                try:
+                    p.last_tested_at = _dt.utcnow()
+                    p.last_tested_by = user_id
+                    db.add(p)
+                    db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+
+                # audit
+                try:
+                    _add_audit(wsid, user_id, 'test_provider', object_type='provider', object_id=pid, detail=p.type)
+                except Exception:
+                    pass
+
+                if test_ok:
+                    return {'ok': True}
+                return JSONResponse(status_code=400, content={'ok': False, 'error': 'test failed', 'detail': test_err})
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        else:
+            p = _providers.get(pid)
+            if not p or p.get('workspace_id') != wsid:
+                raise HTTPException(status_code=404)
+            # in-memory: basic check
+            if inline_secret or p.get('secret_id'):
+                # record last_tested_at in-memory
+                p['last_tested_at'] = _dt.utcnow()
+                try:
+                    _add_audit(wsid, user_id, 'test_provider', object_type='provider', object_id=pid, detail=p.get('type'))
+                except Exception:
+                    pass
+                return {'ok': True}
+            return JSONResponse(status_code=400, content={'ok': False, 'error': 'no secret configured'})
 
     # Audit logs: list and export (CSV)
     if _FASTAPI_HEADERS:

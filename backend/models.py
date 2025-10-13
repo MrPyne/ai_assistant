@@ -38,6 +38,9 @@ class Provider(Base):
     type = Column(String, nullable=False)
     config = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # metadata for test-connection actions
+    last_tested_at = Column(DateTime, nullable=True)
+    last_tested_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
 class Workflow(Base):
     __tablename__ = 'workflows'

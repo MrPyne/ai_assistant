@@ -93,6 +93,11 @@ class ProviderCreate(BaseModel):
     config: Optional[Any] = None
     # Optional secret_id may be provided to reference an existing Secret
     secret_id: Optional[int] = None
+    # New long-term: allow providing an inline secret object. If present the
+    # backend will create an encrypted Secret record and link it to the
+    # provider. This is preferred for richer provider credentials that don't
+    # fit in a single text field.
+    secret: Optional[Any] = None
 
 
 class ProviderOut(BaseModel):
@@ -100,7 +105,10 @@ class ProviderOut(BaseModel):
     workspace_id: int
     type: str
     secret_id: Optional[int] = None
+    config: Optional[Any] = None
     created_at: Optional[str]
+    last_tested_at: Optional[str] = None
+    last_tested_by: Optional[int] = None
 
     class Config:
         orm_mode = True

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from datetime import datetime
 
 from celery import Celery
@@ -12,6 +13,18 @@ from .crypto import decrypt_value
 
 from .adapters.openai_adapter import OpenAIAdapter
 from .adapters.ollama_adapter import OllamaAdapter
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+except Exception:
+    boto3 = None
+
+try:
+    from croniter import croniter
+except Exception:
+    croniter = None
+import threading
+from datetime import timedelta
 try:
     from jinja2.sandbox import SandboxedEnvironment as JinjaEnv
 except Exception:
@@ -37,7 +50,6 @@ METRICS = {
     'runs_succeeded': 0,
     'runs_failed': 0,
 }
-
 
 
 @celery_app.task(bind=True, name='execute_workflow')
@@ -146,29 +158,376 @@ def _execute_node(db, run, node):
         except Exception:
             return None
 
-    if ntype == 'llm':
-        provider_id = node.get('provider_id')
-        prompt = node.get('prompt', '')
-        provider = None
-        if provider_id:
-            provider = db.query(Provider).filter(Provider.id == provider_id).first()
-        if not provider:
-            _write_log(db, run.id, node_id, 'warning', f"No provider configured for node {node_id}; returning mock response")
-            return {'text': '[mock] no provider configured'}
-        if provider.type == 'openai':
-            adapter = OpenAIAdapter(provider, db=db)
-            resp = adapter.generate(prompt)
-            # redact obvious secrets before writing to logs
-            _write_log(db, run.id, node_id, 'info', f"LLM response: {str(redact_secrets(resp))[:500]}")
-            return resp
-        elif provider.type == 'ollama':
-            adapter = OllamaAdapter(provider, db=db)
-            resp = adapter.generate(prompt)
-            _write_log(db, run.id, node_id, 'info', f"LLM response: {str(redact_secrets(resp))[:500]}")
-            return resp
-        else:
-            _write_log(db, run.id, node_id, 'warning', f"Unknown provider type: {provider.type}")
-            return {'text': '[mock] unknown provider'}
+    # Helper: resolve provider and its decrypted secret value (best-effort)
+    def _resolve_provider_and_secret(provider_id):
+        if not provider_id or db is None:
+            return None, None
+        prov = db.query(Provider).filter(Provider.id == provider_id).first()
+        if not prov:
+            return None, None
+        secret_val = None
+        try:
+            if getattr(prov, 'secret_id', None):
+                from .models import Secret
+
+                s = db.query(Secret).filter(Secret.id == prov.secret_id, Secret.workspace_id == prov.workspace_id).first()
+                if s:
+                    try:
+                        secret_val = decrypt_value(s.encrypted_value)
+                    except Exception:
+                        secret_val = None
+        except Exception:
+            pass
+        return prov, secret_val
+
+    # SEND EMAIL
+    if ntype in ('send_email', 'email', 'send email'):
+        cfg = node.get('config') or node
+        to = cfg.get('to')
+        subject = cfg.get('subject') or cfg.get('title') or ''
+        body = cfg.get('body') or cfg.get('text') or ''
+        provider_id = cfg.get('provider_id') or cfg.get('provider')
+
+        prov, secret_val = _resolve_provider_and_secret(provider_id)
+        # Render templated fields
+        try:
+            if JinjaEnv is not None:
+                env = JinjaEnv()
+                ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                subject = env.from_string(subject).render(**ctx)
+                body = env.from_string(body).render(**ctx)
+        except Exception:
+            pass
+
+        # Try simple SMTP send (no external deps). Provider.type == 'smtp'
+        try:
+            import smtplib
+            from email.message import EmailMessage
+
+            host = None
+            port = 25
+            from_addr = None
+            username = None
+            password = None
+            if prov:
+                cfgp = prov.config or {}
+                host = cfgp.get('host') or cfgp.get('smtp_host')
+                port = cfgp.get('port') or cfgp.get('smtp_port') or port
+                from_addr = cfgp.get('from') or cfgp.get('from_email')
+            if secret_val:
+                # secret may be JSON with user/password or a plain token or 'user:pass'
+                try:
+                    import json as _json
+
+                    j = _json.loads(secret_val)
+                    username = j.get('username') or j.get('user')
+                    password = j.get('password')
+                except Exception:
+                    if ':' in secret_val:
+                        username, password = secret_val.split(':', 1)
+                    else:
+                        password = secret_val
+
+            if not host:
+                _write_log(db, run.id, node_id, 'warning', 'No SMTP host configured for provider; skipping send')
+                return {'status': 'skipped', 'reason': 'no_smtp_host'}
+
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            msg['From'] = from_addr or (username or 'no-reply@example.com')
+            msg['To'] = to
+            msg.set_content(body)
+
+            smtp_port = int(port) if port else 25
+            server = smtplib.SMTP(host, smtp_port, timeout=10)
+            try:
+                server.ehlo()
+                if username and password:
+                    server.starttls()
+                    server.login(username, password)
+                server.send_message(msg)
+            finally:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+
+            _write_log(db, run.id, node_id, 'info', f"Email sent to {to} via {prov.type if prov else 'smtp'}")
+            return {'status': 'sent'}
+        except Exception as e:
+            _write_log(db, run.id, node_id, 'error', f"Email send failed: {str(e)}")
+            return {'error': str(e)}
+
+    # SLACK
+    if ntype in ('slack', 'slack_message', 'slack message'):
+        cfg = node.get('config') or node
+        channel = cfg.get('channel') or cfg.get('to')
+        text = cfg.get('text') or cfg.get('message') or ''
+        blocks = cfg.get('blocks')
+        provider_id = cfg.get('provider_id') or cfg.get('provider')
+
+        prov, secret_val = _resolve_provider_and_secret(provider_id)
+        try:
+            if JinjaEnv is not None:
+                env = JinjaEnv()
+                ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                text = env.from_string(text).render(**ctx)
+        except Exception:
+            pass
+
+        # If provider gives a webhook url in config use it; else if secret is a token use Slack API
+        webhook = None
+        if prov:
+            webhook = (prov.config or {}).get('webhook_url')
+        if webhook:
+            try:
+                r = requests.post(webhook, json={'text': text}, timeout=10)
+                _write_log(db, run.id, node_id, 'info', f"Slack webhook posted -> status {r.status_code}")
+                return {'status': 'posted', 'status_code': r.status_code}
+            except Exception as e:
+                _write_log(db, run.id, node_id, 'error', f"Slack webhook post failed: {e}")
+                return {'error': str(e)}
+
+        if secret_val:
+            # secret_val may be the bearer token
+            try:
+                headers = {'Authorization': f"Bearer {secret_val}", 'Content-Type': 'application/json'}
+                payload = {'channel': channel, 'text': text}
+                if blocks:
+                    payload['blocks'] = blocks
+                r = requests.post('https://slack.com/api/chat.postMessage', json=payload, headers=headers, timeout=10)
+                try:
+                    data = r.json()
+                except Exception:
+                    data = {'status_code': r.status_code, 'text': r.text}
+                _write_log(db, run.id, node_id, 'info', f"Slack API response: {str(redact_secrets(data))[:500]}")
+                return data
+            except Exception as e:
+                _write_log(db, run.id, node_id, 'error', f"Slack API call failed: {e}")
+                return {'error': str(e)}
+
+        _write_log(db, run.id, node_id, 'warning', 'No Slack webhook or token configured; skipping')
+        return {'status': 'skipped', 'reason': 'no_slack_configured'}
+
+    # DB QUERY
+    if ntype in ('db', 'db_query', 'db query', 'database'):
+        cfg = node.get('config') or node
+        query = cfg.get('query') or cfg.get('sql')
+        provider_id = cfg.get('provider_id') or cfg.get('provider')
+
+        prov, secret_val = _resolve_provider_and_secret(provider_id)
+        # render query
+        try:
+            if JinjaEnv is not None and query:
+                env = JinjaEnv()
+                ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                query = env.from_string(query).render(**ctx)
+        except Exception:
+            pass
+
+        if not query:
+            _write_log(db, run.id, node_id, 'warning', 'No query provided')
+            return {'error': 'no_query'}
+
+        # Attempt to execute against postgres via psycopg2 if a DSN is available
+        dsn = None
+        if prov:
+            dsn = (prov.config or {}).get('dsn') or (prov.config or {}).get('connection_string')
+        if not dsn and secret_val:
+            # secret may be a DSN string or JSON
+            try:
+                import json as _json
+
+                j = _json.loads(secret_val)
+                dsn = j.get('dsn') or j.get('connection_string')
+            except Exception:
+                # treat secret_val as DSN
+                dsn = secret_val
+
+        if not dsn:
+            _write_log(db, run.id, node_id, 'warning', 'No DB connection configured; skipping')
+            return {'status': 'skipped', 'reason': 'no_db_configured'}
+
+        try:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+
+            # Support parameterized queries via cfg.params (dict or list/tuple)
+            params = cfg.get('params')
+            try:
+                if JinjaEnv is not None and params is not None:
+                    # Render any templated string parameters
+                    env = JinjaEnv()
+                    ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                    if isinstance(params, dict):
+                        params = {k: (env.from_string(v).render(**ctx) if isinstance(v, str) else v) for k, v in params.items()}
+                    elif isinstance(params, list):
+                        params = [(env.from_string(v).render(**ctx) if isinstance(v, str) else v) for v in params]
+            except Exception:
+                pass
+
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                if params is not None:
+                    cur.execute(query, params)
+                else:
+                    cur.execute(query)
+                if cur.description:
+                    rows = cur.fetchall()
+                    # convert Decimal etc. to serializable types if needed
+                    result = [dict(r) for r in rows]
+                else:
+                    conn.commit()
+                    result = {'rowcount': cur.rowcount}
+                _write_log(db, run.id, node_id, 'info', f"DB query executed; rows: {len(result) if isinstance(result, list) else result}")
+                return {'rows': result}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            _write_log(db, run.id, node_id, 'error', f"DB query failed: {e}")
+            return {'error': str(e)}
+
+    # S3 / FILE UPLOAD
+    if ntype in ('s3', 's3_upload', 's3 upload', 'file_storage'):
+        cfg = node.get('config') or node
+        bucket = cfg.get('bucket')
+        key = cfg.get('key')
+        content = cfg.get('content') or cfg.get('body') or ''
+        presigned = cfg.get('presigned_url')
+        provider_id = cfg.get('provider_id') or cfg.get('provider')
+
+        prov, secret_val = _resolve_provider_and_secret(provider_id)
+        try:
+            if JinjaEnv is not None:
+                env = JinjaEnv()
+                ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                key = env.from_string(key or '').render(**ctx)
+                content = env.from_string(content or '').render(**ctx)
+        except Exception:
+            pass
+
+        # Native S3 upload via boto3 if available and provider/secret contains creds
+        # Priority: explicit presigned_url -> native boto3 upload -> provider upload_url_template -> skip
+        if presigned:
+            try:
+                r = requests.put(presigned, data=content, timeout=20)
+                _write_log(db, run.id, node_id, 'info', f"Uploaded to presigned URL -> status {r.status_code}")
+                return {'status_code': r.status_code}
+            except Exception as e:
+                _write_log(db, run.id, node_id, 'error', f"Upload to presigned URL failed: {e}")
+                return {'error': str(e)}
+
+        # Try native boto3 upload when boto3 is available and we have bucket/key
+        if boto3 is not None and bucket and key:
+            # resolve credentials from provider config or secret
+            aws_access_key = None
+            aws_secret_key = None
+            aws_session_token = None
+            region = None
+            if prov:
+                pcfg = prov.config or {}
+                region = pcfg.get('region') or pcfg.get('aws_region')
+                # provider may include inline keys in config (not recommended)
+                aws_access_key = pcfg.get('access_key') or pcfg.get('aws_access_key_id')
+                aws_secret_key = pcfg.get('secret_key') or pcfg.get('aws_secret_access_key')
+            if secret_val:
+                try:
+                    import json as _json
+
+                    j = _json.loads(secret_val)
+                    aws_access_key = aws_access_key or j.get('access_key') or j.get('aws_access_key_id')
+                    aws_secret_key = aws_secret_key or j.get('secret_key') or j.get('aws_secret_access_key')
+                    aws_session_token = j.get('session_token') or j.get('aws_session_token')
+                    region = region or j.get('region') or j.get('aws_region')
+                except Exception:
+                    # treat secret_val as raw secret key if access key set in config
+                    if aws_access_key and not aws_secret_key:
+                        aws_secret_key = secret_val
+
+            try:
+                # build boto3 client with provided creds or rely on environment/instance profile
+                client_kwargs = {}
+                if aws_access_key and aws_secret_key:
+                    client_kwargs['aws_access_key_id'] = aws_access_key
+                    client_kwargs['aws_secret_access_key'] = aws_secret_key
+                if aws_session_token:
+                    client_kwargs['aws_session_token'] = aws_session_token
+                if region:
+                    client_kwargs['region_name'] = region
+
+                s3 = boto3.client('s3', **client_kwargs) if client_kwargs else boto3.client('s3')
+                # content may be a string; boto3 accepts bytes or file-like
+                body = content.encode('utf-8') if isinstance(content, str) else content
+                resp = s3.put_object(Bucket=bucket, Key=key, Body=body)
+                _write_log(db, run.id, node_id, 'info', f"Uploaded to s3://{bucket}/{key}")
+                # boto3 returns metadata in response dict; redact any obvious secrets
+                return {'status_code': 200, 'response': redact_secrets(str(resp))}
+            except (BotoCoreError, ClientError) as e:
+                _write_log(db, run.id, node_id, 'error', f"S3 upload failed: {e}")
+                return {'error': str(e)}
+            except Exception as e:
+                _write_log(db, run.id, node_id, 'error', f"S3 upload failed: {e}")
+                return {'error': str(e)}
+
+        # If provider.config contains an 'upload_url_template' allow rendering and use plain PUT
+        upload_template = (prov.config or {}).get('upload_url_template') if prov is not None else None
+        if upload_template:
+            try:
+                if JinjaEnv is not None:
+                    env = JinjaEnv()
+                    ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+                    url = env.from_string(upload_template).render(**ctx)
+                else:
+                    url = upload_template
+                r = requests.put(url, data=content, timeout=20)
+                _write_log(db, run.id, node_id, 'info', f"Uploaded to provider url -> status {r.status_code}")
+                return {'status_code': r.status_code}
+            except Exception as e:
+                _write_log(db, run.id, node_id, 'error', f"S3 upload failed: {e}")
+                return {'error': str(e)}
+
+        _write_log(db, run.id, node_id, 'warning', 'No presigned URL, provider upload_url_template, or S3 credentials configured; skipping')
+        return {'status': 'skipped', 'reason': 'no_upload_url_or_creds'}
+
+    # TRANSFORM
+    if ntype in ('transform', 'jinja_transform', 'template'):
+        cfg = node.get('config') or node
+        template = cfg.get('template') or cfg.get('script') or ''
+        try:
+            if JinjaEnv is None:
+                _write_log(db, run.id, node_id, 'error', 'Jinja environment not available; cannot transform')
+                return {'error': 'jinja_unavailable'}
+            env = JinjaEnv()
+            ctx = {'input': getattr(run, 'input_payload', {}) or {}, 'run': {'id': run.id}}
+            tpl = env.from_string(template)
+            out = tpl.render(**ctx)
+            _write_log(db, run.id, node_id, 'info', f"Transform rendered output length {len(out) if out else 0}")
+            return {'output': out}
+        except Exception as e:
+            _write_log(db, run.id, node_id, 'error', f"Transform failed: {e}")
+            return {'error': str(e)}
+
+    # WAIT / DELAY
+    if ntype in ('wait', 'delay', 'wait_delay'):
+        cfg = node.get('config') or node
+        seconds = cfg.get('seconds') or cfg.get('delay_seconds') or cfg.get('duration') or 0
+        try:
+            sec = float(seconds)
+        except Exception:
+            sec = 0
+        if sec <= 0:
+            return {'status': 'skipped', 'reason': 'no_delay'}
+        _write_log(db, run.id, node_id, 'info', f"Waiting for {sec} seconds")
+        try:
+            time.sleep(sec)
+            return {'status': 'waited', 'seconds': sec}
+        except Exception as e:
+            _write_log(db, run.id, node_id, 'error', f"Wait failed: {e}")
+            return {'error': str(e)}
 
     # Branching nodes: If/Condition and Switch
     if ntype in ('if', 'condition'):
@@ -373,19 +732,20 @@ def _convert_elements_to_runtime_nodes(elements):
 
     for el in elements:
         # Already a runtime node
-        if isinstance(el, dict) and el.get('type') in ('http', 'llm'):
+        if isinstance(el, dict) and el.get('type') in ('http', 'llm', 'send_email', 'slack', 'db', 's3', 'transform', 'wait'):
             runtime.append(el)
             continue
 
         # React Flow node (has 'data')
         if isinstance(el, dict) and 'data' in el:
             data = el.get('data') or {}
-            label = data.get('label', '').lower()
+            label = (data.get('label') or '').lower()
             cfg = data.get('config') or {}
             node_id = el.get('id')
             pos = el.get('position')
 
-            if 'http' in label or 'http request' in label:
+            # map UI-friendly labels to runtime types
+            if 'http' in label or 'http request' in label or 'http trigger' in label:
                 n = {
                     'id': node_id,
                     'type': 'http',
@@ -412,6 +772,72 @@ def _convert_elements_to_runtime_nodes(elements):
                 runtime.append(n)
                 continue
 
+            if 'send' in label and 'email' in label or 'email' in label:
+                n = {
+                    'id': node_id,
+                    'type': 'send_email',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            if 'slack' in label:
+                n = {
+                    'id': node_id,
+                    'type': 'slack',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            if 'db' in label or 'database' in label or 'query' in label:
+                n = {
+                    'id': node_id,
+                    'type': 'db',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            if 's3' in label or 'storage' in label or 'file' in label:
+                n = {
+                    'id': node_id,
+                    'type': 's3',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            if 'transform' in label or 'template' in label or 'jinja' in label:
+                n = {
+                    'id': node_id,
+                    'type': 'transform',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            if 'wait' in label or 'delay' in label:
+                n = {
+                    'id': node_id,
+                    'type': 'wait',
+                    'config': cfg,
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
             # fallback: include as mock node preserving id and raw config
             n = {'id': node_id, 'type': data.get('label') or 'unknown', 'config': cfg}
             if pos:
@@ -423,158 +849,154 @@ def _convert_elements_to_runtime_nodes(elements):
     return runtime
 
 
-def _build_graph_struct(runtime_nodes, raw_edges=None):
-    """Build helper structures for traversal: node_map, adjacency (outgoing), incoming counts."""
-    node_map = {n.get('id'): n for n in runtime_nodes}
-    adjacency = {nid: [] for nid in node_map.keys()}
-    incoming = {nid: 0 for nid in node_map.keys()}
-
-    # edges may be provided as a list of react-flow edge objects
-    if raw_edges:
-        for e in raw_edges:
-            try:
-                src = str(e.get('source'))
-                tgt = str(e.get('target'))
-            except Exception:
-                continue
-            if src in adjacency:
-                adjacency[src].append(tgt)
-            if tgt in incoming:
-                incoming[tgt] = incoming.get(tgt, 0) + 1
-
-    return node_map, adjacency, incoming
-
-
 def process_run(run_id):
-    """Process a run by id: record logs and update status. This function is
-    intentionally simple and defensive to avoid introducing indentation or
-    syntax errors.
+    """Top-level processor invoked by the Celery task wrapper or called
+    directly in tests. Loads Run and Workflow, marks run as running,
+    executes nodes in sequence via _execute_node and records result.
+    This is intentionally simple: nodes are executed sequentially and
+    failures mark the run failed. The function returns a result dict
+    used by execute_workflow for retry decisions.
     """
-    db = SessionLocal()
+    db = None
     try:
-        run = db.query(Run).get(run_id)
+        db = SessionLocal()
+        run = db.query(Run).filter(Run.id == run_id).first()
         if not run:
-            logger.error("Run not found: %s", run_id)
-            return {"run_id": run_id, "status": "not_found"}
+            logger.error("process_run: run %s not found", run_id)
+            return {'status': 'failed', 'error': 'run_not_found'}
 
-        # write start log
-        msg = f"Starting run {run_id} at {datetime.utcnow().isoformat()}"
-        _write_log(db, run.id, None, 'info', msg)
-
-        # increment attempt counter (for basic retry/backoff tracking)
-        try:
-            run.attempts = (run.attempts or 0) + 1
-            db.add(run)
-            db.commit()
-        except Exception:
-            logger.exception("Failed to increment attempts for run %s", run_id)
-
-        # load workflow and graph
-        wf = db.query(Workflow).filter(Workflow.id == run.workflow_id).first()
-        graph = wf.graph or {}
-        nodes = None
-        # graph may be stored in several shapes: a dict with 'nodes' (React Flow
-        # or runtime nodes), or a plain list of nodes. Normalize both into a
-        # runtime node list that _execute_node understands.
-        if isinstance(graph, dict):
-            raw_nodes = graph.get('nodes')
-            nodes = _convert_elements_to_runtime_nodes(raw_nodes)
-        elif isinstance(graph, list):
-            nodes = _convert_elements_to_runtime_nodes(graph)
-        else:
-            nodes = None
-
-        results = {}
-        if nodes:
-    # Build traversal structures. If the workflow graph provided
-    # a nodes/edges shape use edges to follow execution; otherwise
-    # fall back to sequential execution preserving existing
-    # behaviour for legacy flows.
-            raw_graph = wf.graph or {}
-            raw_edges = None
-            if isinstance(raw_graph, dict):
-                raw_edges = raw_graph.get('edges')
-
-            node_map, adjacency, incoming = _build_graph_struct(nodes, raw_edges)
-
-            # Start from nodes with no incoming edges to approximate
-            # entry points (webhook triggers etc.). If none found, fall
-            # back to the original order.
-            start_nodes = [nid for nid, cnt in incoming.items() if cnt == 0]
-            if not start_nodes:
-                start_nodes = [n.get('id') for n in nodes]
-
-            visited = set()
-            # We'll use a simple queue to process nodes in BFS order; when
-            # an executed node returns a 'routed_to' value attempt to map
-            # that to a node id and enqueue the target(s). This keeps
-            # traversal deterministic and easy to reason about.
-            from collections import deque
-            q = deque(start_nodes)
-            while q:
-                nid = q.popleft()
-                if nid in visited:
-                    continue
-                node = node_map.get(nid)
-                if not node:
-                    visited.add(nid)
-                    continue
-
-                res = _execute_node(db, run, node)
-                results[nid] = res
-                visited.add(nid)
-
-                # If node returned a routed_to target, prefer following
-                # that explicit routing. Otherwise follow adjacency list.
-                try:
-                    target = None
-                    if isinstance(res, dict):
-                        target = res.get('routed_to')
-                    if target:
-                        # target may be a single id or a list; coerce to list
-                        tlist = target if isinstance(target, list) else [target]
-                        for t in tlist:
-                            if t is None:
-                                continue
-                            t = str(t)
-                            if t in node_map and t not in visited:
-                                q.append(t)
-                    else:
-                        # enqueue outgoing edges
-                        for out in adjacency.get(nid, []) or []:
-                            if out and out not in visited:
-                                q.append(out)
-                except Exception:
-                    # non-fatal traversal error
-                    pass
-        else:
-            _write_log(db, run.id, None, 'warning', 'No nodes defined in workflow graph; finishing')
-
-        # finalize run (redact output before storing)
-        run.status = 'success'
-        run.finished_at = datetime.utcnow()
-        try:
-            run.output_payload = redact_secrets(results)
-        except Exception:
-            run.output_payload = None
+        run.attempts = (getattr(run, 'attempts', 0) or 0) + 1
+        run.status = 'running'
+        run.started_at = datetime.utcnow()
         db.add(run)
         db.commit()
 
-        _write_log(db, run.id, None, 'info', 'Run completed successfully')
-
-        return {"run_id": run.id, "status": run.status, "output": run.output_payload}
-
-    except Exception as e:
-        logger.exception("Error processing run %s", run_id)
-        # record error (redacted)
-        err_msg = str(e)
-        safe_err = redact_secrets(err_msg)
-        try:
-            rl = RunLog(run_id=run_id, level="error", message=safe_err)
-            db.add(rl)
+        wf = db.query(Workflow).filter(Workflow.id == run.workflow_id).first()
+        if not wf:
+            _write_log(db, run.id, None, 'error', f"Workflow {run.workflow_id} not found")
+            run.status = 'failed'
+            run.finished_at = datetime.utcnow()
+            db.add(run)
             db.commit()
+            return {'status': 'failed', 'error': 'workflow_not_found'}
+
+        nodes = _convert_elements_to_runtime_nodes((wf.graph or {}).get('nodes') if wf.graph else [])
+        outputs = {}
+        for n in nodes:
+            try:
+                res = _execute_node(db, run, n)
+                outputs[n.get('id')] = res
+                # if node returned error, mark run failed and stop
+                if isinstance(res, dict) and res.get('error'):
+                    run.status = 'failed'
+                    run.output_payload = outputs
+                    run.finished_at = datetime.utcnow()
+                    db.add(run)
+                    db.commit()
+                    return {'status': 'failed', 'error': res.get('error'), 'attempts': run.attempts}
+            except Exception as e:
+                _write_log(db, run.id, n.get('id'), 'error', f"Node execution crashed: {e}")
+                run.status = 'failed'
+                run.output_payload = outputs
+                run.finished_at = datetime.utcnow()
+                db.add(run)
+                db.commit()
+                return {'status': 'failed', 'error': str(e), 'attempts': run.attempts}
+
+        # success
+        run.status = 'success'
+        run.output_payload = outputs
+        run.finished_at = datetime.utcnow()
+        db.add(run)
+        db.commit()
+        return {'status': 'success', 'attempts': run.attempts}
+    except Exception as e:
+        logger.exception("process_run failed for %s", run_id)
+        try:
+            if db:
+                run = db.query(Run).filter(Run.id == run_id).first()
+                if run:
+                    run.status = 'failed'
+                    run.finished_at = datetime.utcnow()
+                    db.add(run)
+                    db.commit()
         except Exception:
-            logger.exception("Failed to write RunLog for run %s", run_id)
-        return {"run_id": run_id, "status": "failed", "error": err_msg}
+            pass
+        return {'status': 'failed', 'error': str(e)}
     finally:
-        db.close()
+        try:
+            if db:
+                db.close()
+        except Exception:
+            pass
+
+
+# Scheduler background thread: periodically evaluate SchedulerEntry rows and
+# enqueue runs for cron-style schedules. This is best-effort and non-blocking.
+def _scheduler_loop():
+    poll = int(os.getenv('SCHEDULER_POLL_SECONDS', '60'))
+    enabled = os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true'
+    if not enabled:
+        logger.info('Scheduler disabled via ENABLE_SCHEDULER')
+        return
+    logger.info('Starting scheduler loop (poll=%s)', poll)
+    while True:
+        try:
+            db = SessionLocal()
+            entries = db.query(Provider).filter().first()  # dummy to ensure SessionLocal import used
+            # load scheduler entries
+            from .models import SchedulerEntry
+
+            rows = db.query(SchedulerEntry).filter(SchedulerEntry.active == 1).all()
+            now = datetime.utcnow()
+            for s in rows:
+                # if croniter not available skip
+                if croniter is None:
+                    continue
+                last = s.last_run_at or s.created_at or (now - timedelta(days=1))
+                try:
+                    itr = croniter(s.schedule, last)
+                    next_run = itr.get_next(datetime)
+                except Exception:
+                    # invalid cron expression or other error
+                    continue
+                if next_run <= now:
+                    # enqueue a Run for this workflow
+                    try:
+                        new_run = Run(workflow_id=s.workflow_id, status='queued')
+                        db.add(new_run)
+                        db.commit()
+                        db.refresh(new_run)
+                        # update last_run_at
+                        s.last_run_at = now
+                        db.add(s)
+                        db.commit()
+                        try:
+                            # prefer Celery enqueue
+                            celery_app.send_task('execute_workflow', args=(new_run.id,))
+                        except Exception:
+                            # fallback: spawn a thread to process inline
+                            threading.Thread(target=process_run, args=(new_run.id,)).start()
+                    except Exception:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        continue
+            try:
+                db.close()
+            except Exception:
+                pass
+        except Exception:
+            logger.exception('Scheduler loop iteration failed')
+        time.sleep(poll)
+
+
+# Start scheduler thread lazily if DB is available and croniter present.
+try:
+    # Only start scheduler when DB SessionLocal is a real callable
+    if SessionLocal and croniter is not None and os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true':
+        t = threading.Thread(target=_scheduler_loop, daemon=True)
+        t.start()
+except Exception:
+    logger.exception('Failed to start scheduler thread')
