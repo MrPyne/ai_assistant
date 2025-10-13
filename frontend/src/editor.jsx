@@ -5,6 +5,11 @@ import RightPanel from './components/RightPanel'
 import NodeRenderer from './NodeRenderer'
 import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'react-flow-renderer'
 
+// Keep node types as a stable reference so React Flow doesn't warn or
+// reinitialize node renderers on every render. Defining this at module
+// scope ensures the object identity is stable.
+const NODE_TYPES = { default: NodeRenderer, http: NodeRenderer, llm: NodeRenderer, input: NodeRenderer, action: NodeRenderer, timer: NodeRenderer }
+
 // A compact, test-focused Editor implementation. The real app uses react-flow
 // and a richer editor; tests only require a handful of behaviors (add nodes,
 // save/load workflows, run and stream logs, selection). Keep the implementation
@@ -45,17 +50,20 @@ function EditorInner({ initialToken = '' }) {
   useEffect(() => {
     window.__editor_deleteSelected = () => {
       const sel = editorState.selectedIds || []
+      // debug
+      // eslint-disable-next-line no-console
+      console.debug('__editor_deleteSelected called, sel=', sel)
       if (!sel.length) return
+      // remove nodes with ids in sel
       const next = nodesRef.current.filter(n => !sel.includes(String(n.id)))
       setNodes(next)
-      // also remove edges connected to deleted nodes
-      setEdges((prev) => prev.filter(e => !sel.includes(String(e.source)) && !sel.includes(String(e.target))))
+      // remove edges that reference deleted nodes OR that are individually selected
+      setEdges((prev) => prev.filter(e => !sel.includes(String(e.source)) && !sel.includes(String(e.target)) && !sel.includes(String(e.id))))
       editorDispatch({ type: 'CLEAR_SELECTION' })
       editorDispatch({ type: 'MARK_DIRTY' })
     }
     return () => { try { delete window.__editor_deleteSelected } catch (e) {} }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [editorState.selectedIds, editorDispatch])
 
   // helpers to add nodes; they set selection so tests can assert selected node
   const addNode = useCallback((label, type = 'default', config = {}) => {
@@ -288,6 +296,23 @@ function EditorInner({ initialToken = '' }) {
     editorDispatch({ type: 'MARK_DIRTY' })
   }, [editorDispatch])
 
+  // keep React Flow selection in sync with our EditorContext selection model
+  const onSelectionChange = useCallback((sel) => {
+    try {
+      // sel may be an object { nodes: [...], edges: [...] } or an array depending on RF version
+      let ids = []
+      if (Array.isArray(sel)) ids = sel.map(i => String(i))
+      else if (sel && typeof sel === 'object') {
+        if (Array.isArray(sel.nodes)) ids = ids.concat(sel.nodes.map(n => String(n.id)))
+        if (Array.isArray(sel.edges)) ids = ids.concat(sel.edges.map(e => String(e.id)))
+      }
+      // dispatch SET_SELECTION with the list of ids
+      editorDispatch({ type: 'SET_SELECTION', payload: ids })
+    } catch (e) {
+      // swallow selection sync errors
+    }
+  }, [editorDispatch])
+
   const onConnect = useCallback((connection) => {
     setEdges((eds) => addEdge(connection, eds))
     editorDispatch({ type: 'MARK_DIRTY' })
@@ -405,6 +430,20 @@ function EditorInner({ initialToken = '' }) {
   // react-flow instance ref so we can call fitView after nodes/edges are loaded
   const rfInstanceRef = useRef(null)
 
+  // nodeOptions helper: NodeInspector expects a function that returns
+  // selectable node targets for wiring. Provide a stable callback that
+  // excludes the currently-selected node (so you can't wire a node to
+  // itself) and returns { id, label } objects.
+  const nodeOptions = useCallback((excludeId) => {
+    try {
+      return nodes
+        .filter(n => String(n.id) !== String(excludeId))
+        .map(n => ({ id: String(n.id), label: (n.data && n.data.label) || String(n.id) }))
+    } catch (e) {
+      return []
+    }
+  }, [nodes])
+
   // whenever nodes or edges change, center/fit the view so the graph is visible.
   // Support React Flow variations that expose onInit or onLoad by capturing
   // the instance in either callback below.
@@ -488,8 +527,9 @@ function EditorInner({ initialToken = '' }) {
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
-                nodeTypes={{ default: NodeRenderer, http: NodeRenderer, llm: NodeRenderer, input: NodeRenderer, action: NodeRenderer, timer: NodeRenderer }}
+                nodeTypes={NODE_TYPES}
                 onNodeClick={(ev, node) => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(node.id) })}
+                onSelectionChange={onSelectionChange}
                 onInit={(rfi) => { try { rfInstanceRef.current = rfi } catch (e) {} }}
                 // some React Flow versions call onLoad instead of onInit
                 onLoad={(rfi) => { try { rfInstanceRef.current = rfi } catch (e) {} }}
@@ -521,7 +561,7 @@ function EditorInner({ initialToken = '' }) {
           workflowId={workflowId}
           updateNodeConfig={updateNodeConfig}
           providers={providers}
-          nodeOptions={{}}
+          nodeOptions={nodeOptions}
           autoWireTarget={() => {}}
           setNodes={setNodesSafe}
           markDirty={() => editorDispatch({ type: 'MARK_DIRTY' })}

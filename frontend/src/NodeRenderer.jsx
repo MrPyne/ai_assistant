@@ -142,9 +142,10 @@ export default function NodeRenderer(props) {
       tabIndex={0}
       // force nodes to render above edges / overlays in case the canvas
       // stacking context is unusual in some environments
+      // include explicit opacity/display so nodes don't become visually hidden
       style={isInvalid
-        ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', zIndex: 1000 }
-        : { zIndex: 1000 }}
+        ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', zIndex: 2000, opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }
+        : { zIndex: 2000, opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }}
       data-node-id={id}
     >
       {/* Target / input handle on the left */}
