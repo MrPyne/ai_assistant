@@ -3,6 +3,7 @@ import { EditorProvider, useEditorDispatch, useEditorState } from './state/Edito
 import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
 import NodeRenderer from './NodeRenderer'
+import ReactFlow, { ReactFlowProvider, Background, Controls } from 'react-flow-renderer'
 
 // A compact, test-focused Editor implementation. The real app uses react-flow
 // and a richer editor; tests only require a handful of behaviors (add nodes,
@@ -411,13 +412,26 @@ function EditorInner({ initialToken = '' }) {
         />
 
         <div className="canvas">
-          {/* render nodes in a simple list to avoid relying on react-flow in tests */}
-          <div style={{ padding: 12, minHeight: 200, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            {nodes.map(n => (
-              <div key={n.id} onClick={() => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(n.id) })} style={{ display: 'inline-block', margin: 6 }}>
-                <NodeRenderer id={n.id} data={n.data} type={n.type} />
-              </div>
-            ))}
+          {/* Render an interactive React Flow canvas so nodes, edges and grid are visible. */}
+          <div className="react-flow-wrapper" style={{ height: 400, minHeight: 200 }}>
+            <ReactFlowProvider>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={{ default: NodeRenderer, http: NodeRenderer, llm: NodeRenderer, input: NodeRenderer, action: NodeRenderer, timer: NodeRenderer }}
+                onNodeClick={(ev, node) => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(node.id) })}
+                onInit={(rfi) => {
+                  // center the view when the flow initializes
+                  try {
+                    setTimeout(() => { rfi && typeof rfi.fitView === 'function' && rfi.fitView({ padding: 0.1 }) }, 0)
+                  } catch (e) {}
+                }}
+                fitView
+              >
+                <Background gap={16} />
+                <Controls />
+              </ReactFlow>
+            </ReactFlowProvider>
           </div>
         </div>
 
