@@ -13,7 +13,7 @@ function makeId(prefix = 'n') {
   return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`
 }
 
-function EditorInner() {
+function EditorInner({ initialToken = '' }) {
   const editorDispatch = useEditorDispatch()
   const editorState = useEditorState()
 
@@ -26,8 +26,8 @@ function EditorInner() {
   const [workflowId, setWorkflowId] = useState(null)
   const [workflows, setWorkflows] = useState([])
 
-  // token used by the Workflows panel
-  const [token, setToken] = useState('')
+  // token used by the Workflows panel (initialize from prop so App can pass auth token)
+  const [token, setToken] = useState(initialToken || '')
 
   // runs & eventsource handling
   const esRef = useRef(null)
@@ -68,7 +68,9 @@ function EditorInner() {
   const saveWorkflow = useCallback(async ({ silent = true } = {}) => {
     try {
       const payload = { graph: { nodes: nodes.map(n => ({ id: String(n.id), data: n.data, position: n.position })), edges, selected_node_id: editorState.selectedNodeId } }
-      const resp = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify(payload) })
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+      const resp = await fetch('/api/workflows', { method: 'POST', headers, body: JSON.stringify(payload) })
       if (!resp.ok) {
         const text = await resp.text().catch(() => 'unknown')
         alert(`Save failed: ${text}`)
@@ -92,13 +94,18 @@ function EditorInner() {
   // Load workflows: GET /api/workflows
   const loadWorkflows = useCallback(async () => {
     try {
-      const resp = await fetch('/api/workflows', { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const resp = await fetch('/api/workflows', { headers })
       if (!resp.ok) {
         const text = await resp.text().catch(() => '')
         alert(`Failed to load workflows: ${text}`)
         return
       }
       const data = await resp.json()
+      // helpful debug output while investigating empty workflows
+      // eslint-disable-next-line no-console
+      console.debug('/api/workflows ->', { status: resp.status, body: data })
       setWorkflows(Array.isArray(data) ? data : [])
       // If the first workflow has a graph with nodes, load them into the editor
       if (Array.isArray(data) && data.length) {
@@ -131,7 +138,9 @@ function EditorInner() {
   const loadRuns = useCallback(async () => {
     try {
       const url = workflowId ? `/api/runs?workflow_id=${workflowId}` : '/api/runs'
-      const resp = await fetch(url, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const resp = await fetch(url, { headers })
       if (!resp.ok) return
       const data = await resp.json()
       // some endpoints return { items: [...] }
@@ -176,7 +185,9 @@ function EditorInner() {
         wid = saved && saved.id
         if (!wid) return
       }
-      const resp = await fetch(`/api/workflows/${wid}/run`, { method: 'POST', headers: { Authorization: token ? `Bearer ${token}` : '' } })
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const resp = await fetch(`/api/workflows/${wid}/run`, { method: 'POST', headers })
       if (!resp.ok) return
       const data = await resp.json()
       const runId = data && data.run_id
@@ -184,7 +195,9 @@ function EditorInner() {
       await loadRuns()
       // load existing logs and then open stream
       if (runId) {
-        const rresp = await fetch(`/api/runs/${runId}/logs`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+        const headers2 = {}
+        if (token) headers2.Authorization = `Bearer ${token}`
+        const rresp = await fetch(`/api/runs/${runId}/logs`, { headers: headers2 })
         if (rresp && rresp.ok) {
           const rd = await rresp.json()
           const logs = rd && Array.isArray(rd.logs) ? rd.logs : []
@@ -205,7 +218,9 @@ function EditorInner() {
       if (esRef.current && typeof esRef.current.close === 'function') {
         try { esRef.current.close() } catch (e) {}
       }
-      const rresp = await fetch(`/api/runs/${runId}/logs`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const rresp = await fetch(`/api/runs/${runId}/logs`, { headers })
       if (rresp && rresp.ok) {
         const rd = await rresp.json()
         const logs = rd && Array.isArray(rd.logs) ? rd.logs : []
@@ -241,92 +256,193 @@ function EditorInner() {
   }, [])
 
   // expose some minimal node options/providers/secrets for Sidebar to render
-  const providers = []
-  const secrets = []
+  const [providers, setProviders] = useState([])
+  const [secrets, setSecrets] = useState([])
+  const [newSecretName, setNewSecretName] = useState('')
+  const [newSecretValue, setNewSecretValue] = useState('')
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+      const r = await fetch('/api/providers', { headers })
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '')
+        alert(`Failed to load providers: ${txt}`)
+        return
+      }
+      const data = await r.json()
+      setProviders(Array.isArray(data) ? data : [])
+    } catch (e) {
+      // ignore
+    }
+  }, [token])
+
+  const loadSecrets = useCallback(async () => {
+    try {
+      const headers = {}
+      if (token) headers.Authorization = `Bearer ${token}`
+      const r = await fetch('/api/secrets', { headers })
+      if (!r.ok) {
+        return setSecrets([])
+      }
+      const data = await r.json()
+      setSecrets(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setSecrets([])
+    }
+  }, [token])
+
+  const createSecret = useCallback(async () => {
+    try {
+      if (!newSecretName) return alert('Provide secret name')
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+      const body = { name: newSecretName, value: newSecretValue }
+      const r = await fetch('/api/secrets', { method: 'POST', headers, body: JSON.stringify(body) })
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '')
+        alert(`Failed to create secret: ${txt}`)
+        return
+      }
+      // refresh list
+      await loadSecrets()
+      setNewSecretName('')
+      setNewSecretValue('')
+      alert('Secret created')
+    } catch (e) {
+      alert(String(e))
+    }
+  }, [newSecretName, newSecretValue, token, loadSecrets])
+
+  const testProvider = useCallback(async (pid) => {
+    try {
+      if (!pid) return alert('Select provider')
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+      const r = await fetch(`/api/providers/${pid}/test_connection`, { method: 'POST', headers })
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '')
+        alert(`Provider test failed: ${txt}`)
+        return
+      }
+      const data = await r.json()
+      if (data && data.ok) alert('Provider test succeeded')
+      else alert('Provider test failed')
+      // refresh providers metadata
+      await loadProviders()
+    } catch (e) {
+      alert(String(e))
+    }
+  }, [token, loadProviders])
+
+  // auto-load providers/secrets when token changes (or on mount when token set)
+  useEffect(() => {
+    // load when authenticated
+    if (token) {
+      loadProviders()
+      loadSecrets()
+    }
+  }, [token, loadProviders, loadSecrets])
+
+  // ensure workflows list is loaded when the editor mounts or token changes
+  useEffect(() => {
+    // loadWorkflows is safe to call unauthenticated (backend returns [] if not)
+    try {
+      loadWorkflows()
+    } catch (e) {
+      // ignore
+    }
+  }, [loadWorkflows, token])
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      <Sidebar
-        saveWorkflow={() => saveWorkflow({ silent: false })}
-        markDirty={() => editorDispatch({ type: 'MARK_DIRTY' })}
-        addHttpNode={addHttpNode}
-        addLlmNode={addLlmNode}
-        addWebhookTrigger={addWebhookTrigger}
-        addHttpTrigger={() => addNode('HTTP Trigger', 'input')}
-        addCronTrigger={() => addNode('Cron Trigger', 'timer')}
-        addSendEmail={() => addNode('Send Email', 'action')}
-        addSlackMessage={() => addNode('Slack Message', 'action')}
-        addDbQuery={() => addNode('DB Query', 'action')}
-        addS3Upload={() => addNode('S3 Upload', 'action')}
-        addTransform={() => addNode('Transform', 'action')}
-        addWait={() => addNode('Wait', 'action')}
-        addIfNode={() => addNode('If', 'action')}
-        addSwitchNode={() => addNode('Switch', 'action')}
-        seedNodes={(count) => {
-          const arr = []
-          for (let i = 0; i < count; i++) arr.push({ id: makeId('n'), type: 'default', data: { label: `Node ${i}` }, position: { x: i * 10, y: 0 } })
-          setNodes((s) => s.concat(arr))
-        }}
-        token={token}
-        setToken={setToken}
-        workflowId={workflowId}
-        workflows={workflows}
-        loadWorkflows={loadWorkflows}
-        selectWorkflow={selectWorkflow}
-        newWorkflow={() => { setWorkflowId(null); setNodes([]); editorDispatch({ type: 'RESET' }) }}
-        runWorkflow={runWorkflow}
-        loadRuns={loadRuns}
-        providers={providers}
-        newProviderType={() => {}}
-        setNewProviderType={() => {}}
-        newProviderSecretId={() => {}}
-        setNewProviderSecretId={() => {}}
-        createProvider={() => {}}
-        testProvider={() => {}}
-        secrets={secrets}
-        loadSecrets={() => {}}
-        createSecret={() => {}}
-        newSecretName={''}
-        setNewSecretName={() => {}}
-        newSecretValue={''}
-        setNewSecretValue={() => {}}
-        runs={editorState.runs || []}
-        viewRunLogs={viewRunLogs}
-        viewRunDetail={() => {}}
-      />
+    // Use the same class names the project's CSS expects so layout rules
+    // (min-width:0, proper heights, scroll behavior) are applied.
+    <div className="editor-root">
+      <div className="editor-main">
+        <Sidebar
+          saveWorkflow={() => saveWorkflow({ silent: false })}
+          markDirty={() => editorDispatch({ type: 'MARK_DIRTY' })}
+          addHttpNode={addHttpNode}
+          addLlmNode={addLlmNode}
+          addWebhookTrigger={addWebhookTrigger}
+          addHttpTrigger={() => addNode('HTTP Trigger', 'input')}
+          addCronTrigger={() => addNode('Cron Trigger', 'timer')}
+          addSendEmail={() => addNode('Send Email', 'action')}
+          addSlackMessage={() => addNode('Slack Message', 'action')}
+          addDbQuery={() => addNode('DB Query', 'action')}
+          addS3Upload={() => addNode('S3 Upload', 'action')}
+          addTransform={() => addNode('Transform', 'action')}
+          addWait={() => addNode('Wait', 'action')}
+          addIfNode={() => addNode('If', 'action')}
+          addSwitchNode={() => addNode('Switch', 'action')}
+          seedNodes={(count) => {
+            const arr = []
+            for (let i = 0; i < count; i++) arr.push({ id: makeId('n'), type: 'default', data: { label: `Node ${i}` }, position: { x: i * 10, y: 0 } })
+            setNodes((s) => s.concat(arr))
+          }}
+          token={token}
+          setToken={setToken}
+          workflowId={workflowId}
+          workflows={workflows}
+          loadWorkflows={loadWorkflows}
+          selectWorkflow={selectWorkflow}
+          newWorkflow={() => { setWorkflowId(null); setNodes([]); editorDispatch({ type: 'RESET' }) }}
+          runWorkflow={runWorkflow}
+          loadRuns={loadRuns}
+          providers={providers}
+          loadProviders={loadProviders}
+          newProviderType={() => {}}
+          setNewProviderType={() => {}}
+          newProviderSecretId={() => {}}
+          setNewProviderSecretId={() => {}}
+          createProvider={() => {}}
+          testProvider={testProvider}
+          secrets={secrets}
+          loadSecrets={loadSecrets}
+          createSecret={createSecret}
+          newSecretName={newSecretName}
+          setNewSecretName={setNewSecretName}
+          newSecretValue={newSecretValue}
+          setNewSecretValue={setNewSecretValue}
+          runs={editorState.runs || []}
+          viewRunLogs={viewRunLogs}
+          viewRunDetail={() => {}}
+        />
 
-      <div style={{ flex: 1, padding: 12 }}>
-        {/* render nodes in a simple list to avoid relying on react-flow in tests */}
-        <div style={{ minHeight: 200 }}>
-          {nodes.map(n => (
-            <div key={n.id} onClick={() => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(n.id) })} style={{ display: 'inline-block', margin: 6 }}>
-              <NodeRenderer id={n.id} data={n.data} type={n.type} />
-            </div>
-          ))}
+        <div className="canvas">
+          {/* render nodes in a simple list to avoid relying on react-flow in tests */}
+          <div style={{ padding: 12, minHeight: 200, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            {nodes.map(n => (
+              <div key={n.id} onClick={() => editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(n.id) })} style={{ display: 'inline-block', margin: 6 }}>
+                <NodeRenderer id={n.id} data={n.data} type={n.type} />
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <RightPanel
-        selectedNode={nodes.find(n => String(n.id) === String(selectedNodeId))}
-        token={token}
-        copyWebhookUrl={() => {}}
-        workflowId={workflowId}
-        updateNodeConfig={updateNodeConfig}
-        providers={providers}
-        nodeOptions={{}}
-        autoWireTarget={() => {}}
-        setNodes={setNodesSafe}
-        markDirty={() => editorDispatch({ type: 'MARK_DIRTY' })}
-        testWebhook={() => {}}
-      />
+        <RightPanel
+          selectedNode={nodes.find(n => String(n.id) === String(selectedNodeId))}
+          token={token}
+          copyWebhookUrl={() => {}}
+          workflowId={workflowId}
+          updateNodeConfig={updateNodeConfig}
+          providers={providers}
+          nodeOptions={{}}
+          autoWireTarget={() => {}}
+          setNodes={setNodesSafe}
+          markDirty={() => editorDispatch({ type: 'MARK_DIRTY' })}
+          testWebhook={() => {}}
+        />
+      </div>
     </div>
   )
 }
 
-export default function Editor() {
+export default function Editor({ token = '' }) {
   return (
     <EditorProvider>
-      <EditorInner />
+      <EditorInner initialToken={token} />
     </EditorProvider>
   )
 }

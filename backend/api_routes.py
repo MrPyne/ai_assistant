@@ -414,6 +414,20 @@ def register(app, ctx):
         }
         return schemas.get(ptype, {'title': ptype, 'type': 'object'})
 
+    # Provider types list: GET /api/provider_types
+    if _FASTAPI_HEADERS:
+        @app.get('/api/provider_types')
+        def list_provider_types(authorization: str = Header(None)):
+            return list_provider_types_impl(authorization)
+    else:
+        @app.get('/api/provider_types')
+        def list_provider_types(authorization: str = None):
+            return list_provider_types_impl(authorization)
+
+    def list_provider_types_impl(authorization: str = None):
+        # allow unauthenticated discovery
+        return ['s3', 'smtp', 'openai', 'gcp', 'azure']
+
     if _FASTAPI_HEADERS:
         @app.delete('/api/secrets/{sid}')
         def delete_secret(sid: int, authorization: str = Header(None)):

@@ -37,6 +37,8 @@ body {
 
 /* App shell: keep full viewport height */
 .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+/* prevent horizontal page growth caused by wide child elements (defensive) */
+html, body { max-width: 100%; overflow-x: hidden; }
 
 /* Topbar: fixed to top so it remains visible and doesn't cause page-level scrollbars */
 .topbar {
@@ -217,18 +219,18 @@ textarea { resize: vertical }
 }
 
 /* Editor layout: avoid 100vh (will overflow when topbar is fixed) */
-.editor-root { height: calc(100vh - var(--topbar-height));}
-.editor-main { display: flex; height: 100%;  width: 100%; align-items: stretch }
+.editor-root { height: calc(100vh - var(--topbar-height)); width: 100%; overflow: hidden;}
+.editor-main { display: flex; height: 100%;  width: 100%; align-items: stretch; min-width: 0; overflow: hidden }
 .sidebar {
-  width: 320px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.03);
+  width: 320px; max-width: 42%; flex: 0 0 320px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.03);
   background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
-  overflow: auto; z-index: 3;
+  overflow: auto; z-index: 3; box-sizing: border-box;
 }
 .canvas { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; z-index: 2 }
 .rightpanel {
-  width: 360px; padding: 16px; border-left: 1px solid rgba(255,255,255,0.03);
+  width: 360px; max-width: 42%; flex: 0 0 360px; padding: 16px; border-left: 1px solid rgba(255,255,255,0.03);
   background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
-  overflow: auto; z-index: 3;
+  overflow: auto; z-index: 3; box-sizing: border-box;
 }
 
 .reactflow-wrapper { height: 100%; background: transparent; position: relative }

@@ -64,6 +64,7 @@ function RequireAuthEditor() {
     <React.Suspense fallback={<div style={{ padding: 20 }}>Loading editor...</div>}>
       <LazyEditorProvider>
         <ErrorBoundary>
+          {/* Pass auth token down so the editor's left panel uses the real token for API calls */}
           <LazyEditor token={token} />
         </ErrorBoundary>
       </LazyEditorProvider>
