@@ -1,4 +1,7 @@
+import ProviderForm from './ProviderForm'
+import ReactModal from 'react-modal'
 import React, { useEffect, useState } from 'react'
+import ProviderEditModal from './ProviderEditModal'
 import { useForm, FormProvider, useWatch } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
@@ -36,6 +39,7 @@ export default function Sidebar({
   newProviderSecretId,
   setNewProviderSecretId,
   createProvider,
+  testProvider,
   secrets,
   loadSecrets,
   createSecret,
@@ -79,6 +83,8 @@ export default function Sidebar({
 
   // Local selection state for dropdowns
   const [selectedProviderId, setSelectedProviderId] = useState(providers && providers.length ? String(providers[0].id) : '')
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingProvider, setEditingProvider] = useState(null)
   const [selectedSecretId, setSelectedSecretId] = useState(secrets && secrets.length ? String(secrets[0].id) : '')
   const [selectedRunId, setSelectedRunId] = useState(runs && runs.length ? String(runs[0].id) : '')
 
@@ -104,6 +110,14 @@ export default function Sidebar({
     <FormProvider {...methods}>
       {/* If panel is open show full content, otherwise render a thin handle to reopen it */}
       {editorState.leftPanelOpen ? (
+        <>
+        <ReactModal isOpen={editModalOpen} onRequestClose={() => setEditModalOpen(false)} ariaHideApp={false} style={{ content: { maxWidth: 720, margin: 'auto' } }}>
+          <h3>Edit Provider</h3>
+          {editingProvider ? (
+            <ProviderEditModal provider={editingProvider} token={token} onClose={() => { setEditModalOpen(false); setEditingProvider(null); loadProviders && loadProviders() }} loadSecrets={loadSecrets} />
+          ) : <div>No provider selected</div>}
+          <div style={{ marginTop: 8 }}><button onClick={() => setEditModalOpen(false)}>Close</button></div>
+        </ReactModal>
         <div className="sidebar" style={{ width: editorState.leftPanelWidth, display: 'flex', flexDirection: 'column' }}>
           <div className="card" style={{ position: 'sticky', top: 0, paddingBottom: 8, zIndex: 5 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -207,23 +221,33 @@ export default function Sidebar({
 
               <hr />
               <h4>Providers</h4>
-              <div className="row" style={{ marginBottom: 6 }}>
-                <input placeholder='Type (e.g. openai)' value={newProviderType} onChange={(e) => setNewProviderType(e.target.value)} style={{ width: '60%', marginRight: 6 }} />
-                <select value={newProviderSecretId} onChange={(e) => setNewProviderSecretId(e.target.value)} style={{ width: '30%', marginRight: 6 }}>
-                  <option value=''>No secret</option>
-                  {secrets.map(s => <option key={s.id} value={s.id}>{s.name} (id:{s.id})</option>)}
-                </select>
-                <button onClick={createProvider}>Create Provider</button>
+              <div style={{ marginBottom: 8 }}>
+                {/* New provider form */}
+                <ProviderForm
+                  token={token}
+                  secrets={secrets}
+                  loadProviders={async () => { try { if (token) await loadProviders(); else await loadProviders() } catch (e) {} }}
+                  loadSecrets={loadSecrets}
+                  onCreated={(p) => { try { loadProviders(); loadSecrets(); alert('Provider created') } catch (e) {} }}
+                />
               </div>
 
               {/* Providers list converted to a dropdown for compactness */}
               <div style={{ marginBottom: 8 }}>
                 <label style={{ display: 'block', marginBottom: 4 }}>Existing providers</label>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <select value={selectedProviderId} onChange={(e) => setSelectedProviderId(e.target.value)} style={{ flex: 1 }}>
-                    {providers.length === 0 ? <option value=''>No providers</option> : providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
-                  </select>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select value={selectedProviderId} onChange={(e) => setSelectedProviderId(e.target.value)} style={{ flex: 1 }}>
+                  {providers.length === 0 ? <option value=''>No providers</option> : providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+                </select>
                   <button onClick={() => { const p = providers.find(x => String(x.id) === selectedProviderId); if (p) alert(`Provider: ${p.type} (id:${p.id})`)}} className="secondary">Info</button>
+                  <button onClick={() => { if (!selectedProviderId) return alert('Select a provider'); testProvider && testProvider(Number(selectedProviderId)) }} className="secondary">Test</button>
+                  <button onClick={() => {
+                    if (!selectedProviderId) return alert('Select a provider')
+                    const p = providers.find(x => String(x.id) === selectedProviderId)
+                    if (!p) return alert('Provider not found')
+                    setEditingProvider(p)
+                    setEditModalOpen(true)
+                  }} className="secondary">Edit</button>
                 </div>
               </div>
 
@@ -272,7 +296,7 @@ export default function Sidebar({
             <button onClick={toggleLeftPanel} className="secondary">Hide</button>
           </div>
         </div>
-      ) : (
+      </>) : (
         <div className="sidebar-collapsed" style={{ width: 36 }}>
           <button onClick={toggleLeftPanel} title="Show panel" className="secondary" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Show</button>
         </div>

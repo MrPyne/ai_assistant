@@ -137,6 +137,27 @@ export default function Editor({ token }) {
     } catch (e) { setWorkflows([]) }
   }, [tokenState])
 
+  const testProvider = useCallback(async (providerId, inlineSecret = null) => {
+    try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (tokenState) headers.Authorization = `Bearer ${tokenState}`
+      const body = inlineSecret ? { secret: inlineSecret } : {}
+      const r = await fetch(`/api/providers/${providerId}/test_connection`, { method: 'POST', headers, body: JSON.stringify(body) })
+      if (!r.ok) {
+        const txt = await r.text()
+        alert('Test failed: ' + txt)
+        return false
+      }
+      const data = await r.json()
+      if (data && data.ok) {
+        alert('Test succeeded')
+        return true
+      }
+      alert('Test failed')
+      return false
+    } catch (e) { alert('Test failed: ' + String(e)); return false }
+  }, [tokenState])
+
   const selectWorkflow = useCallback(async (wfId) => {
     if (!wfId) return
     try {
@@ -329,6 +350,7 @@ export default function Editor({ token }) {
         newProviderSecretId={''}
         setNewProviderSecretId={() => {}}
         createProvider={() => {}}
+        testProvider={testProvider}
         secrets={secrets}
         loadSecrets={loadSecrets}
         createSecret={() => {}}
