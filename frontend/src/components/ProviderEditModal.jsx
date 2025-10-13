@@ -121,6 +121,33 @@ export default function ProviderEditModal({ provider, token, onClose = null, loa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider.id, providerConfigLoaded])
 
+  // lightweight client-side validation driven by schema
+  const validateClient = () => {
+    const errs = {}
+    if (schema && schema.properties) {
+      const required = schema.required || []
+      required.forEach(k => {
+        const v = rawJsonMode ? (() => { try { const parsed = JSON.parse(rawJson); return parsed ? parsed[k] : undefined } catch (e) { return undefined } })() : formValues[k]
+        if (v === undefined || v === null || v === '') errs[k] = 'Required'
+      })
+      Object.keys(schema.properties).forEach(k => {
+        const prop = schema.properties[k]
+        const v = rawJsonMode ? (() => { try { const parsed = JSON.parse(rawJson); return parsed ? parsed[k] : undefined } catch (e) { return undefined } })() : formValues[k]
+        if (v === undefined || v === null || v === '') return
+        if ((prop.type === 'number' || prop.type === 'integer') && isNaN(Number(v))) errs[k] = 'Must be a number'
+        if (prop.pattern) {
+          try {
+            const re = new RegExp(prop.pattern)
+            if (typeof v === 'string' && !re.test(v)) errs[k] = 'Invalid format'
+          } catch (e) {}
+        }
+        if (prop.minLength && typeof v === 'string' && v.length < prop.minLength) errs[k] = `Minimum length ${prop.minLength}`
+        if (prop.maxLength && typeof v === 'string' && v.length > prop.maxLength) errs[k] = `Maximum length ${prop.maxLength}`
+      })
+    }
+    return errs
+  }
+
   const isDirty = () => {
     const init = initialStateRef.current
     if (!init) return false
@@ -184,6 +211,8 @@ export default function ProviderEditModal({ provider, token, onClose = null, loa
     setIsTesting(true)
     try {
       const secretObj = parsedSecret()
+      const clientErrs = validateClient()
+      if (Object.keys(clientErrs).length > 0) { setFieldErrors(clientErrs); setIsTesting(false); return }
       if (!secretObj && !selectedSecretId) { setTopError('Provide inline secret or select secret'); setIsTesting(false); return }
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers.Authorization = `Bearer ${token}`
@@ -213,6 +242,8 @@ export default function ProviderEditModal({ provider, token, onClose = null, loa
     if (!window.confirm('Save changes to this provider?')) return
     setIsSaving(true)
     try {
+      const clientErrs = validateClient()
+      if (Object.keys(clientErrs).length > 0) { setFieldErrors(clientErrs); setIsSaving(false); return }
       const secretObj = parsedSecret()
       const body = { type }
       if (secretObj) body.secret = secretObj
@@ -269,7 +300,9 @@ export default function ProviderEditModal({ provider, token, onClose = null, loa
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input value={type} onChange={(e) => setType(e.target.value)} placeholder='Type' />
+        {/* show type as read-only in edit flow to avoid accidental incompatible changes */}
+        <input value={type} readOnly placeholder='Type' style={{ opacity: 0.8 }} />
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Provider type is immutable after creation</div>
         <div style={{ flex: 1 }} />
         <button onClick={doTest} disabled={isTesting || isSaving}>{isTesting ? 'Testing...' : 'Test'}</button>
         <button onClick={doUpdate} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save'}</button>

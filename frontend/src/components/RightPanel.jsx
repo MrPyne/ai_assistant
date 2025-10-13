@@ -41,6 +41,12 @@ export default function RightPanel(props) {
             <button className={editorState.activeRightTab === 'inspector' ? 'btn btn-small' : 'secondary btn-small'} onClick={() => setActiveTab('inspector')}>Inspector</button>
             <button className={editorState.activeRightTab === 'runs' ? 'btn btn-small' : 'secondary btn-small'} onClick={() => setActiveTab('runs')}>Runs</button>
           </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <button className="secondary" onClick={() => {
+              // delete selection from editor state: delegate to window.__editor_deleteSelected if available
+              if (window.__editor_deleteSelected) window.__editor_deleteSelected()
+            }}>Delete</button>
+          </div>
           <div style={{ marginLeft: 8, fontWeight: 600 }}>{editorState.activeRightTab === 'inspector' ? 'Selected Node' : 'Runs / Logs'}</div>
         </div>
         {validationError && (

@@ -8,7 +8,10 @@ const defaultState = {
   autoSaveEnabled: false,
   saveStatus: 'idle',
   lastSavedAt: null,
+  // selection model: support multi-select via selectedIds, keep single-item helpers for compatibility
+  selectedIds: [],
   selectedNodeId: null,
+  selectedEdgeId: null,
   showNodeTest: false,
   nodeTestToken: '',
   showTemplates: false,
@@ -39,7 +42,23 @@ function reducer(state, action) {
     case 'SET_LAST_SAVED_AT':
       return { ...state, lastSavedAt: action.payload }
     case 'SET_SELECTED_NODE_ID':
-      return { ...state, selectedNodeId: action.payload }
+      return { ...state, selectedNodeId: action.payload, selectedEdgeId: null, selectedIds: action.payload ? [String(action.payload)] : [] }
+    case 'SET_SELECTED_EDGE_ID':
+      return { ...state, selectedEdgeId: action.payload, selectedNodeId: null, selectedIds: action.payload ? [String(action.payload)] : [] }
+    case 'SET_SELECTION':
+      // payload expected to be array of ids
+      return { ...state, selectedIds: Array.isArray(action.payload) ? action.payload.map(String) : [], selectedNodeId: (Array.isArray(action.payload) && action.payload.length === 1) ? String(action.payload[0]) : null, selectedEdgeId: null }
+    case 'TOGGLE_SELECTION':
+      // payload: id to toggle
+      const id = String(action.payload)
+      const exists = (state.selectedIds || []).includes(id)
+      if (exists) {
+        const next = (state.selectedIds || []).filter(i => i !== id)
+        return { ...state, selectedIds: next, selectedNodeId: next.length === 1 ? next[0] : null }
+      }
+      return { ...state, selectedIds: [...(state.selectedIds || []), id], selectedNodeId: id }
+    case 'CLEAR_SELECTION':
+      return { ...state, selectedIds: [], selectedNodeId: null, selectedEdgeId: null }
     case 'SET_SHOW_NODE_TEST':
       return { ...state, showNodeTest: !!action.payload }
     case 'SET_NODE_TEST_TOKEN':
