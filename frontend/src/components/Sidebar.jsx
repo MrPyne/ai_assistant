@@ -1,5 +1,4 @@
 import ProviderForm from './ProviderForm'
-import ReactModal from 'react-modal'
 import React, { useEffect, useState } from 'react'
 import ProviderEditModal from './ProviderEditModal'
 import { useForm, FormProvider, useWatch } from 'react-hook-form'
@@ -111,13 +110,21 @@ export default function Sidebar({
       {/* If panel is open show full content, otherwise render a thin handle to reopen it */}
       {editorState.leftPanelOpen ? (
         <>
-        <ReactModal isOpen={editModalOpen} onRequestClose={() => setEditModalOpen(false)} ariaHideApp={false} style={{ content: { maxWidth: 720, margin: 'auto' } }}>
-          <h3>Edit Provider</h3>
-          {editingProvider ? (
-            <ProviderEditModal provider={editingProvider} token={token} onClose={() => { setEditModalOpen(false); setEditingProvider(null); loadProviders && loadProviders() }} loadSecrets={loadSecrets} />
-          ) : <div>No provider selected</div>}
-          <div style={{ marginTop: 8 }}><button onClick={() => setEditModalOpen(false)}>Close</button></div>
-        </ReactModal>
+        {editModalOpen ? (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
+            <div style={{ background: 'var(--bg)', padding: 16, borderRadius: 8, width: '90%', maxWidth: 720 }}>
+              <h3>Edit Provider</h3>
+              {editingProvider ? (
+                <ProviderEditModal provider={editingProvider} token={token} onClose={() => { setEditModalOpen(false); setEditingProvider(null); loadProviders && loadProviders() }} loadSecrets={loadSecrets} />
+              ) : (
+                <div>No provider selected</div>
+              )}
+              <div style={{ marginTop: 8 }}>
+                <button onClick={() => setEditModalOpen(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="sidebar" style={{ width: editorState.leftPanelWidth, display: 'flex', flexDirection: 'column' }}>
           <div className="card" style={{ position: 'sticky', top: 0, paddingBottom: 8, zIndex: 5 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
