@@ -428,6 +428,48 @@ def register(app, ctx):
         # allow unauthenticated discovery
         return ['s3', 'smtp', 'openai', 'gcp', 'azure']
 
+    # Templates: GET /api/templates
+    # Frontend expects a list of template objects. This endpoint is optional —
+    # if no remote templates are provided the frontend will fall back to built-in
+    # templates. We expose any templates present in ctx['_templates'] or return
+    # a small default starter template so the UI works out of the box.
+    if _FASTAPI_HEADERS:
+        @app.get('/api/templates')
+        def list_templates(authorization: str = Header(None)):
+            return list_templates_impl(authorization)
+    else:
+        @app.get('/api/templates')
+        def list_templates(authorization: str = None):
+            return list_templates_impl(authorization)
+
+    def list_templates_impl(authorization: str = None):
+        # optional auth: try to validate token but allow unauthenticated access
+        try:
+            _ = ctx.get('_user_from_token')(authorization)
+        except Exception:
+            pass
+        # prefer templates provided by the runtime/context
+        t = ctx.get('_templates')
+        if t and isinstance(t, list):
+            return t
+
+        # default fallback templates
+        return [
+            {
+                'id': 'starter-1',
+                'title': 'HTTP -> LLM',
+                'description': 'Simple pipeline: HTTP request -> LLM processing',
+                'graph': {
+                    'nodes': [
+                        { 'id': 'n1', 'type': 'input', 'position': { 'x': 0, 'y': 0 }, 'data': { 'label': 'HTTP Trigger', 'config': {} } },
+                        { 'id': 'n2', 'type': 'http', 'position': { 'x': 180, 'y': 0 }, 'data': { 'label': 'HTTP Request', 'config': { 'method': 'GET', 'url': 'https://api.example.com' } } },
+                        { 'id': 'n3', 'type': 'llm', 'position': { 'x': 360, 'y': 0 }, 'data': { 'label': 'LLM', 'config': { 'model': 'gpt' } } },
+                    ],
+                    'edges': [ { 'id': 'e1', 'source': 'n1', 'target': 'n2' }, { 'id': 'e2', 'source': 'n2', 'target': 'n3' } ]
+                }
+            }
+        ]
+
     if _FASTAPI_HEADERS:
         @app.delete('/api/secrets/{sid}')
         def delete_secret(sid: int, authorization: str = Header(None)):
@@ -1316,4 +1358,3 @@ def register(app, ctx):
             return buf.getvalue()
         except Exception:
             return ''
-

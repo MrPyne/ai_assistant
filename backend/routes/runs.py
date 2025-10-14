@@ -205,45 +205,98 @@ def register(app, ctx):
                 # If Redis is available, subscribe and stream events from it.
                 if redis_client is not None:
                     try:
-                        redis_pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+                        # We'll run a resilient listener in a dedicated thread. The
+                        # listener will manage its own redis client and pubsub and
+                        # will reconnect on transient errors.
                         channel_name = f"run:{run_id}:events"
-                        redis_pubsub.subscribe(channel_name)
-
-                        # asyncio queue for cross-thread delivery
                         message_queue = asyncio.Queue()
-
-                        def _redis_listener(pubsub, loop, q, stop_event):
-                            try:
-                                for msg in pubsub.listen():
-                                    if stop_event.is_set():
-                                        break
-                                    if not msg:
-                                        continue
-                                    # redis-py returns dicts with 'type' and 'data'
-                                    if msg.get('type') != 'message':
-                                        continue
-                                    data = msg.get('data')
-                                    payload = None
-                                    try:
-                                        if isinstance(data, bytes):
-                                            payload = json.loads(data.decode('utf-8'))
-                                        else:
-                                            payload = json.loads(data)
-                                    except Exception:
-                                        payload = {'type': 'raw', 'raw': data}
-                                    try:
-                                        loop.call_soon_threadsafe(q.put_nowait, payload)
-                                    except Exception:
-                                        # if queue is closed or full ignore
-                                        continue
-                            finally:
-                                try:
-                                    pubsub.close()
-                                except Exception:
-                                    pass
-
                         redis_stop = __import__('threading').Event()
-                        redis_thread = __import__('threading').Thread(target=_redis_listener, args=(redis_pubsub, asyncio.get_event_loop(), message_queue, redis_stop), daemon=True)
+
+                        def _redis_listener_loop(redis_url, channel, loop, q, stop_event):
+                            import time as _time
+                            import logging as _logging
+                            logger = _logging.getLogger(__name__)
+                            backoff = 1.0
+                            max_backoff = 60.0
+
+                            while not stop_event.is_set():
+                                client = None
+                                pubsub = None
+                                try:
+                                    try:
+                                        client = redis.from_url(redis_url)
+                                    except Exception:
+                                        client = None
+
+                                    if client is None:
+                                        raise RuntimeError('failed to create redis client')
+
+                                    pubsub = client.pubsub(ignore_subscribe_messages=True)
+                                    pubsub.subscribe(channel)
+                                    logger.info('Subscribed to redis channel %s', channel)
+
+                                    # reset backoff after a successful subscribe
+                                    backoff = 1.0
+
+                                    # loop reading messages using get_message so we can timeout
+                                    while not stop_event.is_set():
+                                        try:
+                                            msg = pubsub.get_message(timeout=1.0)
+                                        except (redis.exceptions.ConnectionError, OSError) as exc:
+                                            # socket errors / connection closed -> break to reconnect
+                                            logger.warning('Redis get_message error: %s', exc)
+                                            break
+
+                                        if not msg:
+                                            continue
+                                        if msg.get('type') != 'message':
+                                            continue
+                                        data = msg.get('data')
+                                        try:
+                                            if isinstance(data, bytes):
+                                                payload = json.loads(data.decode('utf-8'))
+                                            else:
+                                                payload = json.loads(data)
+                                        except Exception:
+                                            payload = {'type': 'raw', 'raw': data}
+
+                                        try:
+                                            loop.call_soon_threadsafe(q.put_nowait, payload)
+                                        except Exception:
+                                            # queue likely closed or full; ignore and continue
+                                            continue
+
+                                except Exception as exc:
+                                    logger.warning('Redis listener problem for channel %s: %s', channel, exc)
+
+                                finally:
+                                    try:
+                                        if pubsub is not None:
+                                            pubsub.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        if client is not None:
+                                            # redis-py may not have explicit close on client for older versions
+                                            try:
+                                                client.close()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+
+                                # if we're here, sleep with backoff before reconnecting
+                                if stop_event.is_set():
+                                    break
+                                _time.sleep(backoff)
+                                backoff = min(backoff * 2, max_backoff)
+
+                        # start the thread; it will manage reconnects internally
+                        redis_thread = __import__('threading').Thread(
+                            target=_redis_listener_loop,
+                            args=(REDIS_URL, channel_name, asyncio.get_event_loop(), message_queue, redis_stop),
+                            daemon=True,
+                        )
                         redis_thread.start()
                     except Exception:
                         # can't subscribe; fall back to DB polling below
