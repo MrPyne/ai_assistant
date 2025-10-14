@@ -132,6 +132,36 @@ def _write_log(db, run_id, node_id, level, message):
         rl = RunLog(run_id=run_id, node_id=node_id, level=level, message=safe_msg)
         db.add(rl)
         db.commit()
+        # Try to publish to Redis so any SSE subscribers can get pushed events.
+        try:
+            try:
+                import redis
+                import json as _json
+                import os as _os
+            except Exception:
+                redis = None
+            if redis is not None:
+                try:
+                    REDIS_URL = _os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0'
+                    rc = redis.from_url(REDIS_URL)
+                    payload = {
+                        'type': 'log',
+                        'id': getattr(rl, 'id', None),
+                        'run_id': run_id,
+                        'node_id': node_id,
+                        'timestamp': getattr(rl, 'timestamp', None).isoformat() if getattr(rl, 'timestamp', None) is not None else None,
+                        'level': level,
+                        'message': safe_msg,
+                    }
+                    try:
+                        rc.publish(f"run:{run_id}:events", _json.dumps(payload))
+                    except Exception:
+                        # swallow redis publish errors
+                        pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
     except Exception:
         logger.exception("Failed to write RunLog for run %s node %s", run_id, node_id)
 
@@ -878,50 +908,184 @@ def process_run(run_id):
             run.finished_at = datetime.utcnow()
             db.add(run)
             db.commit()
+            # publish terminal status to Redis
+            try:
+                try:
+                    import redis as _redis
+                    import os as _os
+                    import json as _json
+                except Exception:
+                    _redis = None
+                if _redis is not None:
+                    try:
+                        rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                        rc.publish(f"run:{run.id}:events", _json.dumps({'type': 'status', 'status': 'failed'}))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             return {'status': 'failed', 'error': 'workflow_not_found'}
 
         nodes = _convert_elements_to_runtime_nodes((wf.graph or {}).get('nodes') if wf.graph else [])
         outputs = {}
-        for n in nodes:
-            try:
-                res = _execute_node(db, run, n)
-                outputs[n.get('id')] = res
-                # if node returned error, mark run failed and stop
-                if isinstance(res, dict) and res.get('error'):
+        try:
+            for n in nodes:
+                try:
+                    res = _execute_node(db, run, n)
+                    outputs[n.get('id')] = res
+                    # Persist a structured node-level event so new SSE clients can
+                    # learn node state from DB replay, and publish a node event to
+                    # Redis so live subscribers update immediately.
+                    try:
+                        import json as _json
+                        node_event = {
+                            'type': 'node',
+                            'node_id': n.get('id'),
+                            'run_id': run.id,
+                            'status': 'success' if not (isinstance(res, dict) and res.get('error')) else 'failed',
+                            'result': res,
+                        }
+                        try:
+                            # Persist as a RunLog row containing the JSON payload.
+                            rl = RunLog(run_id=run.id, node_id=n.get('id'), level='info', message=_json.dumps(node_event))
+                            db.add(rl)
+                            db.commit()
+                        except Exception:
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                        # best-effort publish to Redis
+                        try:
+                            try:
+                                import redis as _redis
+                                import os as _os
+                            except Exception:
+                                _redis = None
+                            if _redis is not None:
+                                try:
+                                    rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                                    rc.publish(f"run:{run.id}:events", _json.dumps(node_event))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        # node event persistence/publish is best-effort
+                        pass
+                    # if node returned error, mark run failed and stop
+                    if isinstance(res, dict) and res.get('error'):
+                        run.status = 'failed'
+                        run.output_payload = outputs
+                        run.finished_at = datetime.utcnow()
+                        db.add(run)
+                        db.commit()
+                        # publish terminal status to Redis
+                        try:
+                            try:
+                                import redis as _redis
+                                import os as _os
+                                import json as _json
+                            except Exception:
+                                _redis = None
+                            if _redis is not None:
+                                try:
+                                    rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                                    rc.publish(f"run:{run.id}:events", _json.dumps({'type': 'status', 'status': 'failed'}))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        return {'status': 'failed', 'error': res.get('error'), 'attempts': run.attempts}
+                except Exception as e:
+                    # persist and publish node crash event
+                    try:
+                        import json as _json
+                        node_event = {'type': 'node', 'node_id': n.get('id'), 'run_id': run.id, 'status': 'failed', 'error': str(e)}
+                        try:
+                            rl = RunLog(run_id=run.id, node_id=n.get('id'), level='error', message=_json.dumps(node_event))
+                            db.add(rl)
+                            db.commit()
+                        except Exception:
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                        try:
+                            try:
+                                import redis as _redis
+                                import os as _os
+                            except Exception:
+                                _redis = None
+                            if _redis is not None:
+                                try:
+                                    rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                                    rc.publish(f"run:{run.id}:events", _json.dumps(node_event))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    _write_log(db, run.id, n.get('id'), 'error', f"Node execution crashed: {e}")
                     run.status = 'failed'
                     run.output_payload = outputs
                     run.finished_at = datetime.utcnow()
                     db.add(run)
                     db.commit()
-                    return {'status': 'failed', 'error': res.get('error'), 'attempts': run.attempts}
-            except Exception as e:
-                _write_log(db, run.id, n.get('id'), 'error', f"Node execution crashed: {e}")
-                run.status = 'failed'
-                run.output_payload = outputs
-                run.finished_at = datetime.utcnow()
-                db.add(run)
-                db.commit()
-                return {'status': 'failed', 'error': str(e), 'attempts': run.attempts}
+                    return {'status': 'failed', 'error': str(e), 'attempts': run.attempts}
 
-        # success
-        run.status = 'success'
-        run.output_payload = outputs
-        run.finished_at = datetime.utcnow()
-        db.add(run)
-        db.commit()
-        return {'status': 'success', 'attempts': run.attempts}
-    except Exception as e:
-        logger.exception("process_run failed for %s", run_id)
-        try:
-            if db:
-                run = db.query(Run).filter(Run.id == run_id).first()
-                if run:
-                    run.status = 'failed'
-                    run.finished_at = datetime.utcnow()
-                    db.add(run)
-                    db.commit()
-        except Exception:
-            pass
+            # success
+            run.status = 'success'
+            run.output_payload = outputs
+            run.finished_at = datetime.utcnow()
+            db.add(run)
+            db.commit()
+            # publish terminal status to Redis
+            try:
+                try:
+                    import redis as _redis
+                    import os as _os
+                    import json as _json
+                except Exception:
+                    _redis = None
+                if _redis is not None:
+                    try:
+                        rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                        rc.publish(f"run:{run.id}:events", _json.dumps({'type': 'status', 'status': 'success'}))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return {'status': 'success', 'attempts': run.attempts}
+        except Exception as e:
+            logger.exception("process_run failed for %s", run_id)
+            try:
+                if db:
+                    run = db.query(Run).filter(Run.id == run_id).first()
+                    if run:
+                        run.status = 'failed'
+                        run.finished_at = datetime.utcnow()
+                        db.add(run)
+                        db.commit()
+                        # publish terminal status to Redis
+                        try:
+                            try:
+                                import redis as _redis
+                                import os as _os
+                                import json as _json
+                            except Exception:
+                                _redis = None
+                            if _redis is not None:
+                                try:
+                                    rc = _redis.from_url(_os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0')
+                                    rc.publish(f"run:{run.id}:events", _json.dumps({'type': 'status', 'status': 'failed'}))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         return {'status': 'failed', 'error': str(e)}
     finally:
         try:

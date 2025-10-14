@@ -1,0 +1,29 @@
+.node-runtime-badge {
+  background: rgba(255,255,255,0.02);
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+
+.node-runtime-badge .runtime-spinner {
+  display: inline-block;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg) }
+  to { transform: rotate(360deg) }
+}
+
+.runtime-running {
+  border: 1px solid rgba(95,176,255,0.18);
+  background: linear-gradient(90deg, rgba(95,176,255,0.06), rgba(95,176,255,0.02));
+}
+
+.runtime-success {
+  border: 1px solid rgba(102,255,166,0.12);
+  background: linear-gradient(90deg, rgba(102,255,166,0.04), rgba(102,255,166,0.02));
+}
+
+.runtime-failed {
+  border: 1px solid rgba(255,107,107,0.12);
+  background: linear-gradient(90deg, rgba(255,107,107,0.04), rgba(255,107,107,0.02));
+}

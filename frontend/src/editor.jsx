@@ -199,14 +199,54 @@ function EditorInner({ initialToken = '' }) {
       }
       // create a new EventSource. Tests mock global.EventSource and expect it to be constructed.
       const es = new (window.EventSource)(`/api/runs/${runId}/stream`)
-      es.onmessage = (ev) => {
+
+      // Generic log events (emitted as SSE event 'log')
+      es.addEventListener('log', (ev) => {
         try {
           const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
           editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload: msg })
         } catch (e) {}
-      }
+      })
+
+      // Node-level structured events (emitted as SSE event 'node')
+      es.addEventListener('node', (ev) => {
+        try {
+          const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
+          // append to run logs view so users still see structured node events
+          editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload })
+          // update node visual state in the editor canvas
+          try {
+            const nid = payload && payload.node_id ? String(payload.node_id) : null
+            if (nid) {
+              setNodes((prev) => {
+                return prev.map((n) => {
+                  if (String(n.id) !== String(nid)) return n
+                  // attach runtime info under data.runtime so existing tests
+                  // that inspect node.data.config are unaffected.
+                  const existingData = n.data || {}
+                  return { ...n, data: { ...existingData, runtime: payload } }
+                })
+              })
+            }
+          } catch (e) {
+            // ignore node update errors
+          }
+        } catch (e) {}
+      })
+
+      // Terminal status events (emitted as SSE event 'status')
+      es.addEventListener('status', (ev) => {
+        try {
+          const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
+          editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload })
+          // refresh runs list so run state in left panel updates
+          try { loadRuns() } catch (e) {}
+        } catch (e) {}
+        try { es.close() } catch (e) {}
+      })
+
       es.onerror = () => {
-        // ignore for tests
+        // ignore for tests; real UI might show reconnect/backoff here
       }
       esRef.current = es
       return es

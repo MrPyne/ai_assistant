@@ -96,25 +96,100 @@ def register(app, ctx):
                     pass
 
         async def event_stream():
-            """Poll DB for new RunLog rows and yield SSE events."""
+            """Stream RunLog rows and status using Redis pub/sub when available,
+            falling back to DB polling if Redis isn't available.
+
+            Behavior:
+            - On connect, replay existing DB logs (if DB available).
+            - If REDIS is configured and redis-py is importable, subscribe to
+              channel `run:{run_id}:events` and stream incoming events.
+              Expected messages are JSON dicts with a 'type' key: 'log' or 'status'.
+            - If Redis not available, fall back to the original 1s DB polling.
+            - Heartbeats are emitted when idle to keep EventSource alive.
+            """
             db = None
             last_id = 0
             last_activity = 0
             heartbeat_interval = 15
             poll_interval = 1
+
+            # Attempt to initialize Redis subscription support (best-effort).
+            redis_client = None
+            redis_pubsub = None
+            redis_thread = None
+            redis_stop = None
+            message_queue = None
             try:
+                try:
+                    import redis
+
+                    REDIS_URL = None
+                    try:
+                        import os as _os
+
+                        REDIS_URL = _os.getenv('REDIS_URL') or _os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0'
+                    except Exception:
+                        REDIS_URL = 'redis://localhost:6379/0'
+
+                    try:
+                        redis_client = redis.from_url(REDIS_URL)
+                    except Exception:
+                        redis_client = None
+                except Exception:
+                    redis_client = None
+
                 if getattr(shared, '_DB_AVAILABLE', False):
                     db = shared.SessionLocal()
+
                 # on connect, send existing logs (if DB available)
                 if db is not None:
                     try:
                         from backend import models as _models
-                        rows = db.query(_models.RunLog).filter(_models.RunLog.run_id == run_id).order_by(_models.RunLog.id.asc()).all()
+
+                        rows = (
+                            db.query(_models.RunLog)
+                            .filter(_models.RunLog.run_id == run_id)
+                            .order_by(_models.RunLog.id.asc())
+                            .all()
+                        )
                         out = []
                         for rr in rows:
                             last_id = max(last_id, getattr(rr, 'id', 0))
-                            out.append({'id': rr.id, 'run_id': rr.run_id, 'node_id': rr.node_id, 'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None, 'level': rr.level, 'message': rr.message})
-                        for item in out:
+                            # Try to parse message as JSON to see if it encodes a structured event
+                            payload = None
+                            event_name = 'log'
+                            try:
+                                payload = json.loads(rr.message) if rr.message else None
+                                if isinstance(payload, dict) and 'type' in payload:
+                                    event_name = payload.get('type') or 'log'
+                                    # ensure run_id and node_id are present for consistency
+                                    payload.setdefault('run_id', rr.run_id)
+                                    payload.setdefault('node_id', rr.node_id)
+                                    payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
+                                else:
+                                    payload = {
+                                        'type': 'log',
+                                        'id': rr.id,
+                                        'run_id': rr.run_id,
+                                        'node_id': rr.node_id,
+                                        'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
+                                        'level': rr.level,
+                                        'message': rr.message,
+                                    }
+                            except Exception:
+                                payload = {
+                                    'type': 'log',
+                                    'id': rr.id,
+                                    'run_id': rr.run_id,
+                                    'node_id': rr.node_id,
+                                    'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
+                                    'level': rr.level,
+                                    'message': rr.message,
+                                }
+                            out.append((event_name, payload))
+                        for event_name, item in out:
+                            # emit explicit SSE event name for structured DB rows
+                            yield f"event: {event_name}\n"
                             yield f"data: {json.dumps(item)}\n\n"
                             last_activity = asyncio.get_event_loop().time()
                     except Exception:
@@ -122,54 +197,154 @@ def register(app, ctx):
                         pass
                 else:
                     # no DB: for in-memory runs there are no persisted logs; just send a note
-                    yield f"data: {json.dumps({'note': 'in-memory run; no persisted logs'})}\n\n"
+                    note_payload = {'note': 'in-memory run; no persisted logs'}
+                    yield f"event: log\n"
+                    yield f"data: {json.dumps(note_payload)}\n\n"
                     last_activity = asyncio.get_event_loop().time()
 
-                # Poll loop
+                # If Redis is available, subscribe and stream events from it.
+                if redis_client is not None:
+                    try:
+                        redis_pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+                        channel_name = f"run:{run_id}:events"
+                        redis_pubsub.subscribe(channel_name)
+
+                        # asyncio queue for cross-thread delivery
+                        message_queue = asyncio.Queue()
+
+                        def _redis_listener(pubsub, loop, q, stop_event):
+                            try:
+                                for msg in pubsub.listen():
+                                    if stop_event.is_set():
+                                        break
+                                    if not msg:
+                                        continue
+                                    # redis-py returns dicts with 'type' and 'data'
+                                    if msg.get('type') != 'message':
+                                        continue
+                                    data = msg.get('data')
+                                    payload = None
+                                    try:
+                                        if isinstance(data, bytes):
+                                            payload = json.loads(data.decode('utf-8'))
+                                        else:
+                                            payload = json.loads(data)
+                                    except Exception:
+                                        payload = {'type': 'raw', 'raw': data}
+                                    try:
+                                        loop.call_soon_threadsafe(q.put_nowait, payload)
+                                    except Exception:
+                                        # if queue is closed or full ignore
+                                        continue
+                            finally:
+                                try:
+                                    pubsub.close()
+                                except Exception:
+                                    pass
+
+                        redis_stop = __import__('threading').Event()
+                        redis_thread = __import__('threading').Thread(target=_redis_listener, args=(redis_pubsub, asyncio.get_event_loop(), message_queue, redis_stop), daemon=True)
+                        redis_thread.start()
+                    except Exception:
+                        # can't subscribe; fall back to DB polling below
+                        redis_client = None
+
+                # Main loop: prefer Redis events when available, otherwise DB poll
                 while True:
-                    # if DB available, fetch new rows since last_id
                     sent_any = False
-                    if db is not None:
+
+                    if message_queue is not None:
+                        # wait for a message with a short timeout so we can emit heartbeats
                         try:
-                            from backend import models as _models
-                            rows = db.query(_models.RunLog).filter(_models.RunLog.run_id == run_id, _models.RunLog.id > last_id).order_by(_models.RunLog.id.asc()).all()
-                            for rr in rows:
-                                item = {'id': rr.id, 'run_id': rr.run_id, 'node_id': rr.node_id, 'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None, 'level': rr.level, 'message': rr.message}
-                                last_id = max(last_id, getattr(rr, 'id', 0))
-                                yield f"data: {json.dumps(item)}\n\n"
-                                sent_any = True
+                            msg = await asyncio.wait_for(message_queue.get(), timeout=poll_interval)
+                        except Exception:
+                            msg = None
+
+                        if msg:
+                            # msg expected to be a dict with 'type'
+                            mtype = msg.get('type') if isinstance(msg, dict) else None
+                            if mtype == 'log':
+                                # emit as SSE event 'log'
+                                yield f"event: log\n"
+                                yield f"data: {json.dumps(msg)}\n\n"
                                 last_activity = asyncio.get_event_loop().time()
-                        except Exception:
-                            # swallow transient DB errors
-                            pass
-
-                        # check run terminal state and close if finished and no pending logs
-                        try:
-                            from backend import models as _models
-                            r = db.query(_models.Run).filter(_models.Run.id == run_id).first()
-                            if r and getattr(r, 'status', None) in ('success', 'failed'):
-                                # if we've sent all logs, emit a final event and close
-                                yield f"data: {json.dumps({'run_id': run_id, 'status': r.status})}\n\n"
+                                sent_any = True
+                            elif mtype == 'status':
+                                # emit final status as SSE event 'status' and close
+                                status_payload = {'run_id': run_id, 'status': msg.get('status')}
+                                yield f"event: status\n"
+                                yield f"data: {json.dumps(status_payload)}\n\n"
                                 return
-                        except Exception:
-                            pass
+                            else:
+                                # unknown type: emit as 'log' with raw payload
+                                yield f"event: log\n"
+                                yield f"data: {json.dumps({'raw': msg})}\n\n"
+                                last_activity = asyncio.get_event_loop().time()
+                                sent_any = True
+                    else:
+                        # Redis unavailable: fall back to DB polling (existing behavior)
+                        if db is not None:
+                            try:
+                                from backend import models as _models
+                                rows = (
+                                    db.query(_models.RunLog)
+                                    .filter(_models.RunLog.run_id == run_id, _models.RunLog.id > last_id)
+                                    .order_by(_models.RunLog.id.asc())
+                                    .all()
+                                )
+                                for rr in rows:
+                                    item = {
+                                        'type': 'log',
+                                        'id': rr.id,
+                                        'run_id': rr.run_id,
+                                        'node_id': rr.node_id,
+                                        'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
+                                        'level': rr.level,
+                                        'message': rr.message,
+                                    }
+                                    last_id = max(last_id, getattr(rr, 'id', 0))
+                                    # emit explicit SSE event name 'log' for each DB row
+                                    yield f"event: log\n"
+                                    yield f"data: {json.dumps(item)}\n\n"
+                                    sent_any = True
+                                    last_activity = asyncio.get_event_loop().time()
+                            except Exception:
+                                # swallow transient DB errors
+                                pass
 
-                    # if we've sent anything recently, reset heartbeat timer
+                            # check run terminal state and close if finished and no pending logs
+                            try:
+                                from backend import models as _models
+                                r = db.query(_models.Run).filter(_models.Run.id == run_id).first()
+                                if r and getattr(r, 'status', None) in ('success', 'failed'):
+                                    status_payload = {'run_id': run_id, 'status': r.status}
+                                    yield f"event: status\n"
+                                    yield f"data: {json.dumps(status_payload)}\n\n"
+                                    return
+                            except Exception:
+                                pass
+
+                    # heartbeats when idle
                     now = asyncio.get_event_loop().time()
                     if (now - last_activity) >= heartbeat_interval:
-                        # send SSE comment as heartbeat
                         yield ':\n\n'
                         last_activity = now
 
-                    try:
-                        await asyncio.sleep(poll_interval)
-                    except asyncio.CancelledError:
-                        return
-
             finally:
+                # cleanup DB and Redis listener thread
                 if db is not None:
                     try:
                         db.close()
+                    except Exception:
+                        pass
+                if redis_stop is not None:
+                    try:
+                        redis_stop.set()
+                    except Exception:
+                        pass
+                if redis_thread is not None:
+                    try:
+                        redis_thread.join(timeout=1)
                     except Exception:
                         pass
 
