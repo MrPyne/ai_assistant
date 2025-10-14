@@ -3,6 +3,7 @@ import { EditorProvider, useEditorDispatch, useEditorState } from './state/Edito
 import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
 import NodeRenderer from './NodeRenderer'
+import TemplatesModal from './components/TemplatesModal'
 import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'react-flow-renderer'
 
 // Keep node types as a stable reference so React Flow doesn't warn or
@@ -191,14 +192,32 @@ function EditorInner({ initialToken = '' }) {
   }, [workflowId, token, editorDispatch])
 
   // helper to fetch logs for a run and open EventSource streaming
-  const openRunEventSource = useCallback((runId) => {
+  // Note: EventSource (native) cannot send custom headers. When a token
+  // is present we prefer to use EventSourcePolyfill which supports headers
+  // so the Authorization header can be included like other API calls.
+  const openRunEventSource = useCallback(async (runId) => {
     try {
       // close existing
       if (esRef.current && typeof esRef.current.close === 'function') {
         try { esRef.current.close() } catch (e) {}
       }
-      // create a new EventSource. Tests mock global.EventSource and expect it to be constructed.
-      const es = new (window.EventSource)(`/api/runs/${runId}/stream`)
+
+      // Determine EventSource implementation. Prefer the event-source-polyfill
+      // when we have a bearer token so we can send Authorization headers.
+      let ESImpl = window.EventSource
+      if (token) {
+        try {
+          const mod = await import('event-source-polyfill')
+          ESImpl = mod && (mod.EventSourcePolyfill || mod.default || mod)
+        } catch (e) {
+          // dynamic import failed; fall back to native EventSource
+          ESImpl = window.EventSource
+        }
+      }
+
+      const es = (ESImpl === window.EventSource)
+        ? new ESImpl(`/api/runs/${runId}/stream`)
+        : new ESImpl(`/api/runs/${runId}/stream`, { headers: { Authorization: `Bearer ${token}` } })
 
       // Generic log events (emitted as SSE event 'log')
       es.addEventListener('log', (ev) => {
@@ -576,6 +595,30 @@ function EditorInner({ initialToken = '' }) {
           runs={editorState.runs || []}
           viewRunLogs={viewRunLogs}
           viewRunDetail={() => {}}
+        />
+
+        {/* Templates modal: uses EditorContext.showTemplates to control visibility */}
+        <TemplatesModal
+          open={!!editorState.showTemplates}
+          token={token}
+          onClose={() => editorDispatch({ type: 'SET_SHOW_TEMPLATES', payload: false })}
+          onApply={(graph) => {
+            try {
+              // Support legacy array-of-elements or { nodes, edges }
+              let g = graph
+              if (Array.isArray(graph)) {
+                g = { nodes: graph, edges: [] }
+              }
+              if (!g) return
+              const nextNodes = Array.isArray(g.nodes) ? g.nodes.map(n => ({ id: String(n.id || makeId()), type: n.type === 'input' ? 'input' : (n.type || 'default'), position: n.position || { x: 0, y: 0 }, data: n.data || { label: n.data && n.data.label } })) : []
+              const nextEdges = Array.isArray(g.edges) ? g.edges.map(e => ({ id: e.id || makeId('e'), source: String(e.source), target: String(e.target), sourceHandle: e.source_handle || e.sourceHandle || null, targetHandle: e.target_handle || e.targetHandle || null })) : []
+              setNodes(nextNodes)
+              setEdges(nextEdges)
+              editorDispatch({ type: 'SET_SHOW_TEMPLATES', payload: false })
+            } catch (e) {
+              // ignore
+            }
+          }}
         />
 
         <div className="canvas">

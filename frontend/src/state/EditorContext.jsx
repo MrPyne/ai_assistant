@@ -24,6 +24,7 @@ const defaultState = {
   selectedRunLogs: [],
   leftPanelOpen: true,
   rightPanelOpen: true,
+  showTemplates: false,
   leftPanelWidth: 300,
   rightPanelWidth: 360,
   activeLeftTab: 'palette',
