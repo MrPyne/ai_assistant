@@ -224,9 +224,12 @@ function EditorInner({ initialToken = '' }) {
         wid = saved && saved.id
         if (!wid) return
       }
-      const headers = {}
+      const headers = { 'Content-Type': 'application/json' }
       if (token) headers.Authorization = `Bearer ${token}`
-      const resp = await fetch(`/api/workflows/${wid}/run`, { method: 'POST', headers })
+      // send an explicit JSON body (empty object) so FastAPI receives a valid
+      // application/json payload. Some endpoints expect a JSON body and will
+      // return 422 if none is provided.
+      const resp = await fetch(`/api/workflows/${wid}/run`, { method: 'POST', headers, body: JSON.stringify({}) })
       if (!resp.ok) return
       const data = await resp.json()
       const runId = data && data.run_id
@@ -279,7 +282,23 @@ function EditorInner({ initialToken = '' }) {
   // update node config (NodeInspector uses updateNodeConfig in tests)
   const updateNodeConfig = useCallback((id, cb) => {
     setNodes((prev) => {
-      const copy = prev.map(n => n.id === id ? { ...n, data: { ...n.data, config: { ...(n.data && n.data.config), ...(cb ? cb(n.data && n.data.config) : {}) } } } : n)
+      const copy = prev.map(n => {
+        if (n.id !== id) return n
+        const existing = (n.data && n.data.config) || {}
+        let delta = {}
+        try {
+          if (typeof cb === 'function') {
+            delta = cb(existing) || {}
+          } else if (cb && typeof cb === 'object') {
+            delta = cb
+          } else {
+            delta = {}
+          }
+        } catch (e) {
+          delta = {}
+        }
+        return { ...n, data: { ...n.data, config: { ...existing, ...delta } } }
+      })
       return copy
     })
     editorDispatch({ type: 'MARK_DIRTY' })
