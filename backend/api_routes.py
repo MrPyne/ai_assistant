@@ -428,6 +428,30 @@ def register(app, ctx):
         # allow unauthenticated discovery
         return ['s3', 'smtp', 'openai', 'gcp', 'azure']
 
+    # Provider models list: GET /api/provider_models/{ptype}
+    if _FASTAPI_HEADERS:
+        @app.get('/api/provider_models/{ptype}')
+        def list_provider_models(ptype: str, authorization: str = Header(None)):
+            return list_provider_models_impl(ptype, authorization)
+    else:
+        @app.get('/api/provider_models/{ptype}')
+        def list_provider_models(ptype: str, authorization: str = None):
+            return list_provider_models_impl(ptype, authorization)
+
+    def list_provider_models_impl(ptype: str, authorization: str = None):
+        # Provide a minimal provider-model discovery endpoint used by the UI.
+        # This does not require a provider instance and returns a conservative
+        # set of models per provider type. In a production system this could
+        # call the upstream vendor API (OpenAI/Ollama) to list available models
+        # and cache results.
+        p = (ptype or '').lower()
+        if p == 'openai':
+            return ['gpt-4', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo', 'gpt-3.5-turbo-16k']
+        if p == 'ollama':
+            return ['llama', 'mistral', 'llama2']
+        # fallback: empty list
+        return []
+
     # Templates: GET /api/templates
     # Frontend expects a list of template objects. This endpoint is optional —
     # if no remote templates are provided the frontend will fall back to built-in

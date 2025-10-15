@@ -22,6 +22,42 @@ export default function NodeInspector({
   const syncTimer = useRef(null)
 
   const { register, handleSubmit, reset, watch, setValue } = useForm({ mode: 'onChange' })
+  const [modelOptions, setModelOptions] = React.useState([])
+
+  // load model list for selected provider when provider changes
+  useEffect(() => {
+    const providerId = (selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id) || null
+    if (!providerId) {
+      setModelOptions([])
+      return
+    }
+    let abort = false
+    ;(async () => {
+      try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (token) headers.Authorization = `Bearer ${token}`
+        const r = await fetch(`/api/providers/${providerId}`, { headers })
+        if (!r.ok) throw new Error('failed')
+        const data = await r.json()
+        // If provider has type info (e.g., 'openai' or 'ollama'), call provider-specific list
+        const ptype = data && data.type
+        if (!ptype) {
+          setModelOptions([])
+          return
+        }
+        const mr = await fetch(`/api/provider_models/${encodeURIComponent(ptype)}`, { headers })
+        if (!mr.ok) throw new Error('failed')
+        const mdata = await mr.json()
+        if (abort) return
+        if (Array.isArray(mdata)) setModelOptions(mdata)
+        else setModelOptions([])
+      } catch (e) {
+        if (abort) return
+        setModelOptions([])
+      }
+    })()
+    return () => { abort = true }
+  }, [selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id, token])
 
   useEffect(() => {
     if (!selectedNode) return
@@ -30,7 +66,7 @@ export default function NodeInspector({
     if (selectedNode.data && selectedNode.data.label === 'HTTP Request') {
       reset({ method: cfg.method || 'GET', url: cfg.url || '', headersText: JSON.stringify(cfg.headers || {}, null, 2), body: cfg.body || '' })
     } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
-      reset({ prompt: cfg.prompt || '', provider_id: cfg.provider_id || '' })
+      reset({ prompt: cfg.prompt || '', provider_id: cfg.provider_id || '', model: cfg.model || '' })
     } else if (selectedNode.data && selectedNode.data.label === 'Webhook Trigger') {
       // webhook doesn't edit node config here, but keep form in sync
       reset({})
@@ -75,7 +111,8 @@ export default function NodeInspector({
         } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
           const prompt = watched.prompt || ''
           const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
-          updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt, provider_id })
+          const model = watched.model || ''
+          updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), prompt, provider_id, model })
           markDirty()
         } else {
       // sync friendly forms for new node types
@@ -282,6 +319,12 @@ export default function NodeInspector({
           <select {...register('provider_id')} style={{ width: '100%', marginBottom: 8 }}>
             <option value=''>-- Select provider --</option>
             {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
+          </select>
+
+          <label>Model</label>
+          <select {...register('model')} style={{ width: '100%', marginBottom: 8 }}>
+            <option value=''>-- use provider default --</option>
+            {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
 
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>Note: live LLM calls are disabled by default in the backend. Enable via environment flag to make real API calls.</div>
