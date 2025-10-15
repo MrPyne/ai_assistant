@@ -220,10 +220,10 @@ export default function Sidebar({
                 </div>
               </div>
 
-              <div className="row mt-8">
-                <button onClick={loadWorkflows}>Load</button>
-                <button onClick={runWorkflow}>Run</button>
-                <button onClick={loadRuns}>Refresh Runs</button>
+                <div className="row mt-8">
+                <button type="button" onClick={loadWorkflows}>Load</button>
+                <button type="button" onClick={() => { try { console.debug('Sidebar: Run button clicked') } catch (e) {} ; runWorkflow() }}>Run</button>
+                <button type="button" onClick={loadRuns}>Refresh Runs</button>
               </div>
 
               <hr />
