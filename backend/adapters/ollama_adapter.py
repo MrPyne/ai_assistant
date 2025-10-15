@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Any, Optional
 
 from ..crypto import decrypt_value
@@ -72,7 +73,32 @@ class OllamaAdapter:
         api_key = self._get_api_key()
         enable_live = is_live_llm_enabled("ollama")
 
-        model = (self.provider.config or {}).get("model") or "llama"
+        # model resolution priority: runtime override -> node-provided (kwargs) -> provider.config -> env -> default
+        runtime_model = kwargs.get("model")
+        node_model = (kwargs.get("node_model") if kwargs.get("node_model") is not None else None)
+        provider_model = (self.provider.config or {}).get("model")
+        env_model = os.getenv("OLLAMA_DEFAULT_MODEL")
+        if runtime_model:
+            model = runtime_model
+            src = "runtime"
+        elif node_model:
+            model = node_model
+            src = "node"
+        elif provider_model:
+            model = provider_model
+            src = "provider"
+        elif env_model:
+            model = env_model
+            src = "env"
+        else:
+            model = "llama"
+            src = "default"
+        try:
+            # non-sensitive logging of which model was chosen
+            logger = logging.getLogger(__name__)
+            logger.info("OllamaAdapter: chosen model=%s source=%s provider_id=%s", model, src, getattr(self.provider, 'id', None))
+        except Exception:
+            pass
 
         if not enable_live:
             # Return a mock response that mirrors the real response shape so
