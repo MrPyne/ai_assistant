@@ -126,9 +126,30 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
             r = models.Run(workflow_id=wf_id, status='queued')
             db.add(r)
             db.commit()
+            db.refresh(r)
+            # store mapping to DB id for in-memory view
             _runs[run_id]['db_id'] = r.id
-            _add_audit(_workspace_for_user(user_id), user_id, 'create_run', object_type='run', object_id=r.id, detail='manual')
-            return {'run_id': run_id, 'status': 'queued'}
+            try:
+                _add_audit(_workspace_for_user(user_id), user_id, 'create_run', object_type='run', object_id=r.id, detail='manual')
+            except Exception:
+                pass
+
+            # Try to enqueue execution via Celery; fall back to inline processing in a separate thread.
+            try:
+                # Import lazily to avoid adding heavy imports at module load time.
+                from .. import tasks as _tasks
+                try:
+                    _tasks.celery_app.send_task('execute_workflow', args=(r.id,))
+                except Exception:
+                    # If Celery isn't configured or send_task fails, process inline in a daemon thread
+                    import threading as _threading
+                    _threading.Thread(target=_tasks.process_run, args=(r.id,), daemon=True).start()
+            except Exception:
+                # best-effort only: ignore enqueue errors
+                pass
+
+            # Return the DB run id so clients subscribe to the correct stream/channel
+            return {'run_id': r.id, 'status': 'queued'}
         except Exception:
             try:
                 db.rollback()

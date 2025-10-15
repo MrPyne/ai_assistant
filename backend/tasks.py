@@ -32,6 +32,9 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# Add task-level debug logger
+task_logger = logging.getLogger('backend.tasks')
+
 # Support both older env var names (CELERY_BROKER / CELERY_BACKEND) and the
 # more explicit names used in .env/.env.example (CELERY_BROKER_URL,
 # CELERY_RESULT_BACKEND). This makes Docker Compose and local env files
@@ -191,9 +194,11 @@ def _execute_node(db, run, node):
     # Helper: resolve provider and its decrypted secret value (best-effort)
     def _resolve_provider_and_secret(provider_id):
         if not provider_id or db is None:
+            task_logger.debug("_resolve_provider_and_secret: no provider_id or db; provider_id=%s", provider_id)
             return None, None
         prov = db.query(Provider).filter(Provider.id == provider_id).first()
         if not prov:
+            task_logger.debug("_resolve_provider_and_secret: provider not found provider_id=%s", provider_id)
             return None, None
         secret_val = None
         try:
@@ -204,9 +209,12 @@ def _execute_node(db, run, node):
                 if s:
                     try:
                         secret_val = decrypt_value(s.encrypted_value)
-                    except Exception:
+                        task_logger.debug("_resolve_provider_and_secret: decrypted secret for provider %s", provider_id)
+                    except Exception as e:
+                        task_logger.debug("_resolve_provider_and_secret: failed to decrypt secret for provider %s: %s", provider_id, e)
                         secret_val = None
-        except Exception:
+        except Exception as e:
+            task_logger.debug("_resolve_provider_and_secret: exception while resolving secret for provider %s: %s", provider_id, e)
             pass
         return prov, secret_val
 
@@ -741,6 +749,62 @@ def _execute_node(db, run, node):
             _write_log(db, run.id, node_id, 'error', f"HTTP request failed: {err}")
             return {'error': err}
 
+    # LLM nodes
+    try:
+        ntype_lower = ntype.lower() if isinstance(ntype, str) else ''
+    except Exception:
+        ntype_lower = ''
+
+    if ntype == 'llm' or 'llm' in ntype_lower:
+        prompt = node.get('prompt') or (node.get('config') or {}).get('prompt') or ''
+        provider_id = node.get('provider_id') or (node.get('config') or {}).get('provider_id') or (node.get('config') or {}).get('provider')
+        prov = None
+        task_logger.debug("LLM node invoked: node_id=%s provider_id=%s prompt_preview=%s", node.get('id'), provider_id, (prompt or '')[:80])
+        try:
+            if provider_id and db is not None:
+                prov = db.query(Provider).filter(Provider.id == provider_id).first()
+        except Exception:
+            prov = None
+
+        # Build a minimal provider-like object if none exists to allow adapters to operate
+        try:
+            from types import SimpleNamespace
+
+            if prov is None:
+                prov = SimpleNamespace(config={})
+        except Exception:
+            pass
+
+        # choose adapter
+        try:
+            ptype = getattr(prov, 'type', '') or ''
+            if isinstance(ptype, str) and 'ollama' in ptype.lower() or isinstance(ptype, str) and 'llama' in ptype.lower():
+                adapter = OllamaAdapter(prov, db)
+            else:
+                adapter = OpenAIAdapter(prov, db)
+            task_logger.debug("LLM node: using adapter %s for provider.type=%s provider_id=%s", adapter.__class__.__name__, getattr(prov, 'type', None), getattr(prov, 'id', None))
+            res = adapter.generate(prompt)
+            if isinstance(res, dict) and res.get('error'):
+                _write_log(db, run.id, node_id, 'error', f"LLM generation failed: {res.get('error')}")
+                return {'error': res.get('error')}
+            # log a summary of the response
+            txt = res.get('text') if isinstance(res, dict) else str(res)
+            _write_log(db, run.id, node_id, 'info', f"LLM output: {txt}")
+            task_logger.debug("LLM node result for node_id=%s: %s", node.get('id'), (txt or '')[:200])
+            return res
+        except Exception as e:
+            _write_log(db, run.id, node_id, 'error', f"LLM node failed: {e}")
+            return {'error': str(e)}
+
+    # Cron / Timer trigger nodes
+    if ntype_lower and ('cron' in ntype_lower or 'timer' in ntype_lower):
+        # For manual runs, treat cron/timer nodes as a trigger that passes through.
+        cfg = node.get('config') or {}
+        msg = cfg.get('description') or cfg.get('schedule') or 'Cron trigger fired'
+        _write_log(db, run.id, node_id, 'info', f"Cron trigger: {msg}")
+        # expose the trigger config as the node result so downstream transforms can use it
+        return {'status': 'triggered', 'config': cfg}
+
     # default/mock
     _write_log(db, run.id, node_id, 'info', f"Node type {ntype} not implemented; returning mock")
     return {'text': f'[mock] node {node_id}'}
@@ -796,6 +860,18 @@ def _convert_elements_to_runtime_nodes(elements):
                     'prompt': cfg.get('prompt', ''),
                     # provider id may be numeric or string; keep as-is
                     'provider_id': cfg.get('provider_id') or cfg.get('providerId') or cfg.get('provider'),
+                }
+                if pos:
+                    n['position'] = pos
+                runtime.append(n)
+                continue
+
+            # Cron / Timer trigger nodes created by the editor (label examples: "Cron Trigger", "timer")
+            if 'cron' in label or 'timer' in label or label.startswith('cron trigger'):
+                n = {
+                    'id': node_id,
+                    'type': 'cron_trigger',
+                    'config': cfg,
                 }
                 if pos:
                     n['position'] = pos

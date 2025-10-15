@@ -880,10 +880,38 @@ def register(app, ctx):
                 body_out = {'message': str(detail), 'detail': detail}
                 return JSONResponse(status_code=400, content=body_out)
 
+        # Ensure we always have a non-null name when persisting to DB. The
+        # frontend may omit a name for new workflows; derive a sensible default
+        # from the graph (first node label) or fall back to a generic title.
+        def _derive_workflow_name(payload: dict):
+            if not isinstance(payload, dict):
+                return 'Untitled Workflow'
+            name_val = payload.get('name')
+            if name_val:
+                return name_val
+            g = payload.get('graph')
+            nodes = []
+            if isinstance(g, dict):
+                nodes = g.get('nodes') or []
+            elif isinstance(g, list):
+                nodes = g
+            for n in nodes:
+                if isinstance(n, dict):
+                    data = n.get('data') or {}
+                    label = data.get('label') or n.get('label') or None
+                    if label:
+                        try:
+                            return str(label)
+                        except Exception:
+                            return 'Untitled Workflow'
+            return 'Untitled Workflow'
+
+        wf_name = _derive_workflow_name(body)
+
         if _DB_AVAILABLE:
             try:
                 db = SessionLocal()
-                wf = models.Workflow(workspace_id=wsid, name=body.get('name'), description=body.get('description'), graph=body.get('graph'))
+                wf = models.Workflow(workspace_id=wsid, name=wf_name, description=body.get('description'), graph=body.get('graph'))
                 db.add(wf)
                 db.commit()
                 db.refresh(wf)
@@ -902,8 +930,9 @@ def register(app, ctx):
 
         wid = _next.get('workflow', 1)
         _next['workflow'] = wid + 1
-        _workflows[wid] = {'workspace_id': wsid, 'name': body.get('name'), 'description': body.get('description'), 'graph': body.get('graph')}
-        return {'id': wid, 'workspace_id': wsid, 'name': body.get('name')}
+        # Use derived name for in-memory store as well so behaviour matches DB
+        _workflows[wid] = {'workspace_id': wsid, 'name': wf_name, 'description': body.get('description'), 'graph': body.get('graph')}
+        return {'id': wid, 'workspace_id': wsid, 'name': wf_name}
 
     if _FASTAPI_HEADERS:
         @app.put('/api/workflows/{wid}')

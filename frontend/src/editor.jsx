@@ -84,10 +84,14 @@ function EditorInner({ initialToken = '' }) {
   // Save workflow: POST /api/workflows
   const saveWorkflow = useCallback(async ({ silent = true } = {}) => {
     try {
-      const payload = { graph: { nodes: nodes.map(n => ({ id: String(n.id), data: n.data, position: n.position })), edges: edges.map(e => ({ id: e.id, source: String(e.source), target: String(e.target), source_handle: e.sourceHandle || e.source_handle, target_handle: e.targetHandle || e.target_handle })), selected_node_id: editorState.selectedNodeId } }
+      // include workflow name so updates persist the title
+      const payload = { name: editorState.workflowName, graph: { nodes: nodes.map(n => ({ id: String(n.id), data: n.data, position: n.position })), edges: edges.map(e => ({ id: e.id, source: String(e.source), target: String(e.target), source_handle: e.sourceHandle || e.source_handle, target_handle: e.targetHandle || e.target_handle })), selected_node_id: editorState.selectedNodeId } }
       const headers = { 'Content-Type': 'application/json' }
       if (token) headers.Authorization = `Bearer ${token}`
-      const resp = await fetch('/api/workflows', { method: 'POST', headers, body: JSON.stringify(payload) })
+      // If we have a workflowId, update via PUT; otherwise create via POST
+      const method = workflowId ? 'PUT' : 'POST'
+      const url = workflowId ? `/api/workflows/${workflowId}` : '/api/workflows'
+      const resp = await fetch(url, { method, headers, body: JSON.stringify(payload) })
       if (!resp.ok) {
         const text = await resp.text().catch(() => 'unknown')
         alert(`Save failed: ${text}`)
@@ -95,9 +99,12 @@ function EditorInner({ initialToken = '' }) {
         return null
       }
       const data = await resp.json()
-      setWorkflowId(data && data.id ? data.id : null)
+      // ensure we track the workflow id returned from create/update
+      if (data && data.id) setWorkflowId(data.id)
       editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saved' })
       editorDispatch({ type: 'MARK_CLEAN' })
+      // update the stored workflow name after save (PUT/POST may normalize it)
+      try { editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: data && data.name ? data.name : editorState.workflowName }) } catch (e) {}
       if (!silent) alert(`Saved workflow id: ${data && data.id}`)
       return data
     } catch (e) {
@@ -400,10 +407,50 @@ function EditorInner({ initialToken = '' }) {
   const selectWorkflow = useCallback((wid) => {
     if (!wid) {
       setWorkflowId(null)
+      // clear editor when selecting "New workflow"
+      setNodes([])
+      setEdges([])
+      editorDispatch({ type: 'RESET' })
       return
     }
-    setWorkflowId(wid)
-  }, [])
+    // when choosing an existing workflow from the dropdown we should fetch
+    // and apply its full graph to the editor so Save will update that id.
+    ;(async () => {
+      try {
+        const headers = {}
+        if (token) headers.Authorization = `Bearer ${token}`
+        const r = await fetch(`/api/workflows/${wid}`, { headers })
+        if (!r.ok) {
+          // still set id so user can create separate workflow or retry
+          setWorkflowId(wid)
+          return
+        }
+        const w = await r.json()
+        const g = w && w.graph
+        if (Array.isArray(g)) {
+          setNodes(g.map(el => ({ id: String(el.id || makeId()), data: el.data || { label: el.data && el.data.label }, position: el.position || { x: 0, y: 0 } })))
+          setEdges([])
+        } else if (g && Array.isArray(g.nodes)) {
+          setNodes(g.nodes.map(n => ({ id: String(n.id || makeId()), data: n.data || { label: n.data && n.data.label }, position: n.position || { x: 0, y: 0 } })))
+          if (Array.isArray(g.edges)) {
+            setEdges(g.edges.map(e => ({ id: e.id || makeId('e'), source: String(e.source), target: String(e.target), sourceHandle: e.source_handle || e.sourceHandle || null, targetHandle: e.target_handle || e.targetHandle || null })))
+          } else {
+            setEdges([])
+          }
+          if (g.selected_node_id) {
+            editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(g.selected_node_id) })
+          } else {
+            editorDispatch({ type: 'CLEAR_SELECTION' })
+          }
+        }
+        setWorkflowId(wid)
+        // update workflow name in editor state
+        try { editorDispatch({ type: 'SET_WORKFLOW_NAME', payload: w && w.name ? w.name : editorState.workflowName }) } catch (e) {}
+      } catch (e) {
+        setWorkflowId(wid)
+      }
+    })()
+  }, [editorDispatch, token, editorState.workflowName])
 
   // expose some minimal node options/providers/secrets for Sidebar to render
   const [providers, setProviders] = useState([])
