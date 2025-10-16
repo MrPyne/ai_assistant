@@ -406,3 +406,68 @@ def register(app, ctx):
     @app.get('/api/runs/{run_id}')
     def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
         return shared.get_run_detail_impl(run_id, authorization)
+    @app.get('/api/runs/{run_id}/logs')
+    def get_run_logs(run_id: int):
+        """Return persisted RunLog rows for a run.
+
+        This used to be a placeholder that returned an empty list; restore a
+        realistic implementation so UI code that fetches historical logs works
+        again.
+        """
+        import json
+        try:
+            # DB-backed path
+            if getattr(shared, '_DB_AVAILABLE', False):
+                db = None
+                try:
+                    db = shared.SessionLocal()
+                    from backend import models as _models
+
+                    rows = (
+                        db.query(_models.RunLog)
+                        .filter(_models.RunLog.run_id == run_id)
+                        .order_by(_models.RunLog.id.asc())
+                        .all()
+                    )
+                    out = []
+                    for rr in rows:
+                        try:
+                            payload = None
+                            try:
+                                payload = json.loads(rr.message) if rr.message else None
+                            except Exception:
+                                payload = None
+
+                            if isinstance(payload, dict) and 'type' in payload:
+                                payload.setdefault('run_id', rr.run_id)
+                                payload.setdefault('node_id', rr.node_id)
+                                payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
+                                out.append(payload)
+                            else:
+                                out.append({
+                                    'type': 'log',
+                                    'id': rr.id,
+                                    'run_id': rr.run_id,
+                                    'node_id': rr.node_id,
+                                    'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
+                                    'level': rr.level,
+                                    'message': rr.message,
+                                })
+                        except Exception:
+                            # skip problematic rows but continue
+                            continue
+                    return {'logs': out}
+                finally:
+                    try:
+                        if db is not None:
+                            db.close()
+                    except Exception:
+                        pass
+
+            # In-memory fallback
+            if hasattr(shared, '_runs') and run_id in shared._runs:
+                r = shared._runs.get(run_id)
+                return {'logs': r.get('logs', [])}
+            return {'logs': []}
+        except Exception:
+            return {'logs': []}

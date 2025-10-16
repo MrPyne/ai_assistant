@@ -1,0 +1,28 @@
+I added console.debugs and a DOM run-debug-indicator in frontend/src/editor.jsx to help track run clicks and SSE creation.
+
+Steps for you to follow in the browser (concise):
+
+1) Open DevTools -> Console and Network (Preserve log enabled).
+2) Reload the app so the updated frontend JS is loaded.
+3) Click Run in the Sidebar.
+4) Observe Console for messages prefixed by runWorkflow/openRunEventSource and for the DOM red indicator in the top-right.
+   - Expected console logs:
+     - "runWorkflow: invoked"
+     - "runWorkflow: save result" (if it saved)
+     - "runWorkflow: run queued" with runId
+     - "runWorkflow: opening EventSource for run"
+     - "openRunEventSource: start"
+     - "openRunEventSource: using polyfill" or "using native EventSource"
+     - "openRunEventSource: created es"
+     - "SSE connection opened"
+     - "SSE log event"/"SSE node event"/"SSE status event"
+
+5) Verify Network tab for a GET /api/runs/<id>/stream request. If not present, the client never initiated the stream.
+
+What to paste back here:
+- Whether you see the DOM run-debug-indicator and its text.
+- Exact console lines that appear when you click Run.
+- Whether Network tab shows a request to /api/runs/<id>/stream.
+- Any console errors (CORS, EventSource, fetch failures).
+
+If you prefer I can push another small patch that forces the EventSource to use a fallback polling mode (fetch polling) so UI updates even if SSE is blocked. But first let's confirm what logs and network entries you see.
