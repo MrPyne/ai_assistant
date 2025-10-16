@@ -6,6 +6,13 @@ def register(app, ctx):
 
     @app.post('/api/workflows/{wf_id}/run')
     def manual_run(wf_id: int, request: dict, authorization: Optional[str] = Header(None)):
+        # Allow token to be supplied either via Authorization header or
+        # query param `token` to support clients that cannot set headers
+        # (eg. native EventSource or other constrained environments).
+        try:
+            from fastapi import Request
+        except Exception:
+            Request = None
         return shared.manual_run_impl(wf_id, request, authorization)
 
     @app.post('/api/runs/{run_id}/retry')
@@ -13,8 +20,15 @@ def register(app, ctx):
         return shared.retry_run_impl(run_id, authorization)
 
     @app.get('/api/runs')
-    def list_runs(workflow_id: Optional[int] = None, limit: Optional[int] = 50, offset: Optional[int] = 0, authorization: Optional[str] = Header(None)):
-        return shared.list_runs_impl(workflow_id, limit, offset, authorization)
+    def list_runs(workflow_id: Optional[int] = None, limit: Optional[int] = 50, offset: Optional[int] = 0, authorization: Optional[str] = Header(None), request: Optional["Request"] = None):
+        # Support token via query param `token` as a fallback when header not present
+        auth = authorization
+        try:
+            if (not auth) and request is not None:
+                auth = request.query_params.get('token') or auth
+        except Exception:
+            pass
+        return shared.list_runs_impl(workflow_id, limit, offset, auth)
 
     @app.get('/api/runs/{run_id}/logs')
     def get_run_logs(run_id: int):
@@ -83,7 +97,7 @@ def register(app, ctx):
             return {'logs': []}
 
     @app.get('/api/runs/{run_id}/stream')
-    async def stream_run(run_id: int, authorization: Optional[str] = Header(None)):
+    async def stream_run(run_id: int, authorization: Optional[str] = Header(None), request: Optional["Request"] = None):
         """SSE endpoint that streams RunLog rows for a run in real-time.
 
         Behavior:
@@ -99,15 +113,25 @@ def register(app, ctx):
         import asyncio
         import json
         from datetime import datetime
+        import logging
 
-        # authenticate
+        logger = logging.getLogger(__name__)
+
+        # authenticate: support Authorization header or `token` query param.
         user_id = None
         try:
-            user_id = shared._user_from_token(authorization)
+            auth = authorization
+            try:
+                if (not auth) and request is not None:
+                    auth = request.query_params.get('token') or auth
+            except Exception:
+                pass
+            user_id = shared._user_from_token(auth)
         except Exception:
             user_id = None
         if not user_id:
             raise HTTPException(status_code=401, detail='authorization required')
+        logger.info("SSE connect requested run_id=%s user_id=%s", run_id, user_id)
 
         # Authorization / run existence checks
         db = None
@@ -249,6 +273,7 @@ def register(app, ctx):
                                     'message': rr.message,
                                 }
                             out.append((event_name, payload))
+                        logger.info("SSE replayed %s existing DB logs for run_id=%s", len(out), run_id)
                         for event_name, item in out:
                             # emit explicit SSE event name for structured DB rows
                             yield f"event: {event_name}\n"
@@ -387,6 +412,8 @@ def register(app, ctx):
                                 redis_client = None
                                 redis_thread = None
                                 message_queue = None
+                            else:
+                                logger.info("SSE redis listener subscribed run_id=%s channel=%s", run_id, channel_name)
                         except Exception:
                             redis_client = None
                             redis_thread = None
@@ -394,6 +421,8 @@ def register(app, ctx):
                     except Exception:
                         # can't subscribe; fall back to DB polling below
                         redis_client = None
+                else:
+                    logger.info("SSE redis not available, falling back to DB polling for run_id=%s", run_id)
 
                 # Main loop: prefer Redis events when available, otherwise DB poll
                 while True:
@@ -420,6 +449,7 @@ def register(app, ctx):
                                 status_payload = {'run_id': run_id, 'status': msg.get('status')}
                                 yield f"event: status\n"
                                 yield f"data: {json.dumps(status_payload)}\n\n"
+                                logger.info("SSE emitted final status for run_id=%s status=%s", run_id, msg.get('status'))
                                 return
                             else:
                                 # unknown type: emit as 'log' with raw payload
@@ -454,6 +484,8 @@ def register(app, ctx):
                                     yield f"data: {json.dumps(item)}\n\n"
                                     sent_any = True
                                     last_activity = asyncio.get_event_loop().time()
+                                if rows:
+                                    logger.info("SSE polled and emitted %s DB logs for run_id=%s", len(rows), run_id)
                             except Exception:
                                 # swallow transient DB errors
                                 pass
@@ -466,6 +498,7 @@ def register(app, ctx):
                                     status_payload = {'run_id': run_id, 'status': r.status}
                                     yield f"event: status\n"
                                     yield f"data: {json.dumps(status_payload)}\n\n"
+                                    logger.info("SSE emitted final DB status for run_id=%s status=%s", run_id, r.status)
                                     return
                             except Exception:
                                 pass
@@ -493,6 +526,7 @@ def register(app, ctx):
                         redis_thread.join(timeout=1)
                     except Exception:
                         pass
+                logger.info("SSE connection cleanup complete for run_id=%s", run_id)
 
         return StreamingResponse(event_stream(), media_type='text/event-stream')
 

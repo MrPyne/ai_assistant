@@ -134,16 +134,58 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
             except Exception:
                 pass
 
-            # Try to enqueue execution via Celery; fall back to inline processing in a separate thread.
+            # Try to enqueue execution via Celery, but schedule slightly
+            # delayed start in a background thread so clients have a short
+            # window to open an SSE connection and subscribe to the run
+            # channel. This reduces the race where the worker publishes
+            # terminal status before the browser subscribes.
             try:
                 # Import lazily to avoid adding heavy imports at module load time.
                 from .. import tasks as _tasks
+                import logging as _logging
+                logger = _logging.getLogger(__name__)
+
                 try:
-                    _tasks.celery_app.send_task('execute_workflow', args=(r.id,))
+                    grace = float(os.environ.get('RUN_START_GRACE', '0.5'))
                 except Exception:
-                    # If Celery isn't configured or send_task fails, process inline in a daemon thread
-                    import threading as _threading
-                    _threading.Thread(target=_tasks.process_run, args=(r.id,), daemon=True).start()
+                    grace = 0.5
+
+                def _delayed_enqueue(run_db_id):
+                    # small grace period to allow clients to subscribe
+                    import time as _time
+                    try:
+                        grace = float(os.environ.get('RUN_START_GRACE', '0.5'))
+                    except Exception:
+                        grace = 0.5
+                    try:
+                        _time.sleep(grace)
+                    except Exception:
+                        pass
+                    try:
+                        try:
+                            _tasks.celery_app.send_task('execute_workflow', args=(run_db_id,))
+                            logger.info('scheduled execute_workflow for db_run_id=%s', run_db_id)
+                        except Exception:
+                            # If Celery isn't configured or send_task fails, process inline
+                            try:
+                                _tasks.process_run(run_db_id)
+                                logger.info('processed execute_workflow inline for db_run_id=%s', run_db_id)
+                            except Exception:
+                                logger.exception('inline process_run failed for db_run_id=%s', run_db_id)
+                    except Exception:
+                        # swallow all errors; this is best-effort
+                        try:
+                            logger.exception('failed to enqueue run %s', run_db_id)
+                        except Exception:
+                            pass
+
+                import threading as _threading
+                t = _threading.Thread(target=_delayed_enqueue, args=(r.id,), daemon=True)
+                t.start()
+                try:
+                    logger.info('manual_run scheduled run_id=%s delayed_start=%s', r.id, grace)
+                except Exception:
+                    pass
             except Exception:
                 # best-effort only: ignore enqueue errors
                 pass
