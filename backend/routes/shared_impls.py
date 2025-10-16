@@ -164,11 +164,13 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                     try:
                         # Determine a workflow node id to associate with this run
                         # so persisted RunLog entries always reference a real
-                        # workflow node. Best-effort: try to load the workflow
-                        # graph from the DB and pick the first node's id. If
-                        # that fails, fall back to sending the task without an
-                        # explicit node_id which will cause the worker to detect
-                        # (previous behavior).
+                        # workflow node. Enforce that callers provide the node.id
+                        # string. We will attempt to look up the workflow graph
+                        # here and pick the first node only to ease calling
+                        # sites, but the node_id must be derived from the node's
+                        # id field. If we cannot determine a node_id we will fail
+                        # fast by enqueuing with no node_id which will cause the
+                        # worker to raise and the enqueue to be logged.
                         node_id = None
                         try:
                             if _DB_AVAILABLE:
@@ -194,11 +196,19 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
 
                         try:
                             if node_id is not None:
+                                # Always pass node_id as the second arg and prefer
+                                # to include a serialized node_graph snapshot when
+                                # available in callers. For now we only pass node_id.
                                 _tasks.celery_app.send_task('execute_workflow', args=(run_db_id, node_id))
                                 logger.info('scheduled execute_workflow for db_run_id=%s node_id=%s', run_db_id, node_id)
                             else:
+                                # No node_id could be determined: enqueue without
+                                # explicit node id so the worker will fail fast
+                                # (execute_workflow requires node_id). This makes
+                                # the problem visible instead of silently using
+                                # worker hostnames.
                                 _tasks.celery_app.send_task('execute_workflow', args=(run_db_id,))
-                                logger.info('scheduled execute_workflow for db_run_id=%s', run_db_id)
+                                logger.info('scheduled execute_workflow for db_run_id=%s without node_id (will fail on worker)', run_db_id)
                         except Exception:
                             # If Celery isn't configured or send_task fails, process inline
                             try:
@@ -206,6 +216,7 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                                     _tasks.process_run(run_db_id, node_id)
                                     logger.info('processed execute_workflow inline for db_run_id=%s node_id=%s', run_db_id, node_id)
                                 else:
+                                    # Inline processing without node_id will raise
                                     _tasks.process_run(run_db_id)
                                     logger.info('processed execute_workflow inline for db_run_id=%s', run_db_id)
                             except Exception:
