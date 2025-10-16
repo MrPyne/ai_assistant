@@ -20,6 +20,7 @@ from datetime import datetime
 import threading
 import os
 import traceback
+import json
 
 # Try to import DB/session and models but degrade gracefully to None so this
 # module is importable in environments where the DB/ORM isn't available.
@@ -88,6 +89,49 @@ except Exception:
 
 def _now_iso():
     return datetime.utcnow().isoformat()
+
+
+def _publish_redis_event(event: dict):
+    """Best-effort publish an event dict to Redis so SSE listeners using
+    pub/sub receive real-time updates. Non-fatal: swallow all errors.
+    """
+    try:
+        import redis
+        REDIS_URL = os.getenv('REDIS_URL') or os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0'
+        client = redis.from_url(REDIS_URL)
+        channel = f"run:{event.get('run_id')}:events"
+        client.publish(channel, json.dumps(event))
+    except Exception:
+        # Do not allow Redis problems to affect run processing
+        pass
+
+
+def _write_run_log(db, run_id, node_id, level, message):
+    """Create a RunLog row and attempt to publish the corresponding Redis
+    event. This centralizes error handling around DB writes and pub/sub.
+    """
+    try:
+        rl = models.RunLog(run_id=run_id, node_id=node_id, level=level, message=message)
+        db.add(rl)
+        db.commit()
+        try:
+            payload = {
+                'type': 'log',
+                'id': rl.id,
+                'run_id': run_id,
+                'node_id': node_id,
+                'timestamp': rl.timestamp.isoformat() if rl.timestamp is not None else None,
+                'level': level,
+                'message': message,
+            }
+            _publish_redis_event(payload)
+        except Exception:
+            pass
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def process_run(run_id):
@@ -167,9 +211,7 @@ def process_run(run_id):
                     # no provider specified; log and skip
                     try:
                         msg = f"LLM node {nid or '<unknown>'} skipped: no provider configured"
-                        rl = models.RunLog(run_id=run_id, node_id=nid, level='warning', message=msg)
-                        db.add(rl)
-                        db.commit()
+                        _write_run_log(db, run_id, nid, 'warning', msg)
                     except Exception:
                         try:
                             db.rollback()
@@ -181,9 +223,7 @@ def process_run(run_id):
                 if not prov:
                     try:
                         msg = f"LLM node {nid or '<unknown>'} skipped: provider id {provider_id} not found"
-                        rl = models.RunLog(run_id=run_id, node_id=nid, level='warning', message=msg)
-                        db.add(rl)
-                        db.commit()
+                        _write_run_log(db, run_id, nid, 'warning', msg)
                     except Exception:
                         try:
                             db.rollback()
@@ -214,9 +254,7 @@ def process_run(run_id):
                 if adapter is None:
                     try:
                         msg = f"LLM node {nid or '<unknown>'} skipped: no adapter for provider type {ptype}"
-                        rl = models.RunLog(run_id=run_id, node_id=nid, level='warning', message=msg)
-                        db.add(rl)
-                        db.commit()
+                        _write_run_log(db, run_id, nid, 'warning', msg)
                     except Exception:
                         try:
                             db.rollback()
@@ -244,9 +282,7 @@ def process_run(run_id):
                 outputs[nid or str(provider_id)] = text
 
                 try:
-                    rl = models.RunLog(run_id=run_id, node_id=nid, level='info', message=text)
-                    db.add(rl)
-                    db.commit()
+                    _write_run_log(db, run_id, nid, 'info', text)
                 except Exception:
                     try:
                         db.rollback()
@@ -256,9 +292,7 @@ def process_run(run_id):
             except Exception as e:
                 traceback.print_exc()
                 try:
-                    rl = models.RunLog(run_id=run_id, node_id=node.get('id') if isinstance(node, dict) else None, level='error', message=str(e))
-                    db.add(rl)
-                    db.commit()
+                    _write_run_log(db, run_id, node.get('id') if isinstance(node, dict) else None, 'error', str(e))
                 except Exception:
                     try:
                         db.rollback()
@@ -279,6 +313,12 @@ def process_run(run_id):
         db.add(r)
         db.commit()
 
+        # publish final status to Redis so live SSE clients close promptly
+        try:
+            _publish_redis_event({'type': 'status', 'run_id': run_id, 'status': r.status})
+        except Exception:
+            pass
+
         return {'status': 'success', 'run_id': run_id, 'output': outputs}
 
     except Exception:
@@ -288,6 +328,10 @@ def process_run(run_id):
                 r.status = 'failed'
                 db.add(r)
                 db.commit()
+                try:
+                    _publish_redis_event({'type': 'status', 'run_id': run_id, 'status': r.status})
+                except Exception:
+                    pass
         except Exception:
             try:
                 if db is not None:

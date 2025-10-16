@@ -18,7 +18,69 @@ def register(app, ctx):
 
     @app.get('/api/runs/{run_id}/logs')
     def get_run_logs(run_id: int):
-        return {'logs': []}
+        """Return persisted RunLog rows for a run.
+
+        This used to be a placeholder that returned an empty list; restore a
+        realistic implementation so UI code that fetches historical logs works
+        again.
+        """
+        import json
+        try:
+            # DB-backed path
+            if getattr(shared, '_DB_AVAILABLE', False):
+                db = None
+                try:
+                    db = shared.SessionLocal()
+                    from backend import models as _models
+
+                    rows = (
+                        db.query(_models.RunLog)
+                        .filter(_models.RunLog.run_id == run_id)
+                        .order_by(_models.RunLog.id.asc())
+                        .all()
+                    )
+                    out = []
+                    for rr in rows:
+                        try:
+                            payload = None
+                            try:
+                                payload = json.loads(rr.message) if rr.message else None
+                            except Exception:
+                                payload = None
+
+                            if isinstance(payload, dict) and 'type' in payload:
+                                payload.setdefault('run_id', rr.run_id)
+                                payload.setdefault('node_id', rr.node_id)
+                                payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
+                                out.append(payload)
+                            else:
+                                out.append({
+                                    'type': 'log',
+                                    'id': rr.id,
+                                    'run_id': rr.run_id,
+                                    'node_id': rr.node_id,
+                                    'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
+                                    'level': rr.level,
+                                    'message': rr.message,
+                                })
+                        except Exception:
+                            # skip problematic rows but continue
+                            continue
+                    return {'logs': out}
+                finally:
+                    try:
+                        if db is not None:
+                            db.close()
+                    except Exception:
+                        pass
+
+            # In-memory fallback
+            if hasattr(shared, '_runs') and run_id in shared._runs:
+                r = shared._runs.get(run_id)
+                return {'logs': r.get('logs', [])}
+            return {'logs': []}
+        except Exception:
+            return {'logs': []}
 
     @app.get('/api/runs/{run_id}/stream')
     async def stream_run(run_id: int, authorization: Optional[str] = Header(None)):
@@ -211,10 +273,12 @@ def register(app, ctx):
                         channel_name = f"run:{run_id}:events"
                         message_queue = asyncio.Queue()
                         redis_stop = __import__('threading').Event()
+                        redis_ready = __import__('threading').Event()
 
-                        def _redis_listener_loop(redis_url, channel, loop, q, stop_event):
+                        def _redis_listener_loop(redis_url, channel, loop, q, stop_event, ready_event):
                             import time as _time
                             import logging as _logging
+                            import json as _json
                             logger = _logging.getLogger(__name__)
                             backoff = 1.0
                             max_backoff = 60.0
@@ -235,6 +299,13 @@ def register(app, ctx):
                                     pubsub.subscribe(channel)
                                     logger.info('Subscribed to redis channel %s', channel)
 
+                                    # signal that we've successfully subscribed so the
+                                    # main loop can rely on the listener being functional
+                                    try:
+                                        ready_event.set()
+                                    except Exception:
+                                        pass
+
                                     # reset backoff after a successful subscribe
                                     backoff = 1.0
 
@@ -242,7 +313,7 @@ def register(app, ctx):
                                     while not stop_event.is_set():
                                         try:
                                             msg = pubsub.get_message(timeout=1.0)
-                                        except (redis.exceptions.ConnectionError, OSError) as exc:
+                                        except Exception as exc:
                                             # socket errors / connection closed -> break to reconnect
                                             logger.warning('Redis get_message error: %s', exc)
                                             break
@@ -254,9 +325,9 @@ def register(app, ctx):
                                         data = msg.get('data')
                                         try:
                                             if isinstance(data, bytes):
-                                                payload = json.loads(data.decode('utf-8'))
+                                                payload = _json.loads(data.decode('utf-8'))
                                             else:
-                                                payload = json.loads(data)
+                                                payload = _json.loads(data)
                                         except Exception:
                                             payload = {'type': 'raw', 'raw': data}
 
@@ -292,12 +363,34 @@ def register(app, ctx):
                                 backoff = min(backoff * 2, max_backoff)
 
                         # start the thread; it will manage reconnects internally
-                        redis_thread = __import__('threading').Thread(
+                        import threading as _threading
+                        redis_thread = _threading.Thread(
                             target=_redis_listener_loop,
-                            args=(REDIS_URL, channel_name, asyncio.get_event_loop(), message_queue, redis_stop),
+                            args=(REDIS_URL, channel_name, asyncio.get_event_loop(), message_queue, redis_stop, redis_ready),
                             daemon=True,
                         )
                         redis_thread.start()
+
+                        # wait briefly for the listener to confirm subscription
+                        try:
+                            ok = await asyncio.get_event_loop().run_in_executor(None, redis_ready.wait, 1.0)
+                            if not ok:
+                                # Listener didn't subscribe quickly -> assume Redis not usable and fall back
+                                try:
+                                    redis_stop.set()
+                                except Exception:
+                                    pass
+                                try:
+                                    redis_thread.join(timeout=0.2)
+                                except Exception:
+                                    pass
+                                redis_client = None
+                                redis_thread = None
+                                message_queue = None
+                        except Exception:
+                            redis_client = None
+                            redis_thread = None
+                            message_queue = None
                     except Exception:
                         # can't subscribe; fall back to DB polling below
                         redis_client = None
@@ -406,68 +499,3 @@ def register(app, ctx):
     @app.get('/api/runs/{run_id}')
     def get_run_detail(run_id: int, authorization: Optional[str] = Header(None)):
         return shared.get_run_detail_impl(run_id, authorization)
-    @app.get('/api/runs/{run_id}/logs')
-    def get_run_logs(run_id: int):
-        """Return persisted RunLog rows for a run.
-
-        This used to be a placeholder that returned an empty list; restore a
-        realistic implementation so UI code that fetches historical logs works
-        again.
-        """
-        import json
-        try:
-            # DB-backed path
-            if getattr(shared, '_DB_AVAILABLE', False):
-                db = None
-                try:
-                    db = shared.SessionLocal()
-                    from backend import models as _models
-
-                    rows = (
-                        db.query(_models.RunLog)
-                        .filter(_models.RunLog.run_id == run_id)
-                        .order_by(_models.RunLog.id.asc())
-                        .all()
-                    )
-                    out = []
-                    for rr in rows:
-                        try:
-                            payload = None
-                            try:
-                                payload = json.loads(rr.message) if rr.message else None
-                            except Exception:
-                                payload = None
-
-                            if isinstance(payload, dict) and 'type' in payload:
-                                payload.setdefault('run_id', rr.run_id)
-                                payload.setdefault('node_id', rr.node_id)
-                                payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
-                                out.append(payload)
-                            else:
-                                out.append({
-                                    'type': 'log',
-                                    'id': rr.id,
-                                    'run_id': rr.run_id,
-                                    'node_id': rr.node_id,
-                                    'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
-                                    'level': rr.level,
-                                    'message': rr.message,
-                                })
-                        except Exception:
-                            # skip problematic rows but continue
-                            continue
-                    return {'logs': out}
-                finally:
-                    try:
-                        if db is not None:
-                            db.close()
-                    except Exception:
-                        pass
-
-            # In-memory fallback
-            if hasattr(shared, '_runs') and run_id in shared._runs:
-                r = shared._runs.get(run_id)
-                return {'logs': r.get('logs', [])}
-            return {'logs': []}
-        except Exception:
-            return {'logs': []}
