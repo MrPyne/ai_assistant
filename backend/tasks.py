@@ -113,6 +113,70 @@ def _publish_redis_event(event: dict):
 
 # --- Minimal runner used for inline execution / fallback --------------------
 
+
+def _canonicalize_node(raw_hostname: Optional[str]) -> Optional[str]:
+    """Map a raw celery/current hostname to a canonical node identifier.
+
+    Rules:
+      - If environment var CELERY_NODE_ID or CELERY_WORKER_NAME is set, prefer it.
+      - If raw_hostname is a Celery-style name like 'celery@<workerid>', prefer
+        CELERY_NODE_ID / HOSTNAME / platform.node() instead of the 'celery@...' string.
+      - Otherwise, return raw_hostname as-is.
+
+    This function logs the mapping decisions to help diagnose why nodes look
+    like 'celery@abcd1234' in the logs.
+    """
+    try:
+        logger.debug("_canonicalize_node called raw_hostname=%s", raw_hostname)
+    except Exception:
+        pass
+
+    # Explicit override from environment (recommended for mapping workers to
+    # workflow node identifiers). This is useful when a worker should expose a
+    # human-friendly name that matches nodes in the workflow graph.
+    env_node = os.environ.get("CELERY_NODE_ID") or os.environ.get("CELERY_WORKER_NAME")
+    if env_node:
+        try:
+            logger.info("_canonicalize_node using env override CELERY_NODE_ID/CELERY_WORKER_NAME=%s for raw_hostname=%s", env_node, raw_hostname)
+        except Exception:
+            pass
+        return env_node
+
+    if not raw_hostname:
+        return None
+
+    # If Celery gives a value like 'celery@<id>', try to substitute with
+    # container/host name so node id can be mapped to workflow nodes.
+    if isinstance(raw_hostname, str) and raw_hostname.startswith("celery@"):
+        # Prefer container HOSTNAME or a platform node name
+        host = os.environ.get("HOSTNAME") or os.environ.get("CELERY_WORKER_NAME")
+        if not host:
+            try:
+                import socket
+
+                host = socket.gethostname()
+            except Exception:
+                try:
+                    import platform
+
+                    host = platform.node()
+                except Exception:
+                    host = None
+        if host:
+            try:
+                logger.info("_canonicalize_node mapped raw_hostname=%s to host=%s", raw_hostname, host)
+            except Exception:
+                pass
+            return host
+
+    # Default: return raw_hostname unchanged
+    try:
+        logger.debug("_canonicalize_node returning raw_hostname unchanged=%s", raw_hostname)
+    except Exception:
+        pass
+    return raw_hostname
+
+
 def _detect_node_id(explicit_node_id: Optional[str] = None) -> Optional[str]:
     """Return a node identifier for the current execution context.
 
@@ -141,8 +205,10 @@ def _detect_node_id(explicit_node_id: Optional[str] = None) -> Optional[str]:
                 tid = getattr(req, "id", None)
                 logger.debug("_detect_node_id extracted hostname=%s id=%s from request", hostname, tid)
                 if hostname:
-                    logger.debug("_detect_node_id returning hostname=%s", hostname)
-                    return hostname
+                    # Map raw Celery hostname into a canonical value if possible
+                    mapped = _canonicalize_node(hostname)
+                    logger.debug("_detect_node_id returning mapped hostname=%s (raw=%s)", mapped, hostname)
+                    return mapped
                 if tid:
                     logger.debug("_detect_node_id returning id=%s", tid)
                     return tid
@@ -392,39 +458,98 @@ if CELERY_BROKER_URL:
             # Wrap process_run in a thin task wrapper that extracts a node_id
             # from the Celery request and passes it as the second argument.
             @celery_app.task(name="execute_workflow")
-            def _execute_workflow_wrapper(run_db_id: int):
-                # Attempt to read Celery request hostname or id to use as node id
-                node = None
-                try:
-                    from celery import current_task  # type: ignore
-                    req = getattr(current_task, "request", None)
-                    if req is not None:
-                        node = getattr(req, "hostname", None) or getattr(req, "id", None)
-                except Exception:
-                    node = None
+            def _execute_workflow_wrapper(run_db_id: int, node_id: Optional[str] = None):
+                """
+                Celery task wrapper for execute_workflow.
 
-                # Additional fallbacks: container/host environment or socket
-                if not node:
-                    node = os.environ.get("HOSTNAME") or os.environ.get("CELERY_WORKER_NAME")
-                if not node:
+                Accepts an optional explicit node_id (the workflow node id being
+                executed). If provided, prefer it. Otherwise attempt to detect
+                the worker identity from the Celery request / environment and
+                canonicalize that value.
+
+                We also attempt a best-effort validation: if an explicit node_id
+                is provided we check the associated workflow graph (via the
+                DB) to see if a node with that id exists and log the result.
+                """
+                explicit = node_id
+
+                # If caller provided explicit node id, log and attempt to
+                # validate it against the workflow graph for the run. This helps
+                # catch cases where callers accidentally pass the worker hostname
+                # instead of the workflow node id.
+                if explicit:
                     try:
-                        import socket
-
-                        node = socket.gethostname()
+                        logger.info("Celery task execute_workflow received explicit node_id=%s for run_id=%s", explicit, run_db_id)
                     except Exception:
+                        pass
+                    try:
+                        if SessionLocal is not None and models is not None:
+                            db = SessionLocal()
+                            try:
+                                r = db.query(models.Run).filter(models.Run.id == run_db_id).first()
+                                if r and getattr(r, 'workflow_id', None):
+                                    wf = db.query(models.Workflow).filter(models.Workflow.id == r.workflow_id).first()
+                                    if wf and getattr(wf, 'graph', None) and isinstance(wf.graph, dict):
+                                        nodes = wf.graph.get('nodes') or []
+                                        found = any(str(n.get('id')) == str(explicit) for n in nodes if isinstance(n, dict))
+                                        if found:
+                                            logger.info("explicit node_id %s validated against workflow %s for run %s", explicit, getattr(wf, 'id', None), run_db_id)
+                                        else:
+                                            logger.warning("explicit node_id %s NOT found in workflow %s for run %s", explicit, getattr(wf, 'id', None), run_db_id)
+                            finally:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # Non-fatal: validation/logging best-effort only
+                        pass
+
+                # If no explicit node id, try to detect Celery worker identity
+                node = None
+                raw_host = None
+                if not explicit:
+                    try:
+                        from celery import current_task  # type: ignore
+                        req = getattr(current_task, "request", None)
+                        if req is not None:
+                            raw_host = getattr(req, "hostname", None)
+                            node = getattr(req, "hostname", None) or getattr(req, "id", None)
+                    except Exception:
+                        node = None
+
+                    # Additional fallbacks: container/host environment or socket
+                    if not node:
+                        node = os.environ.get("HOSTNAME") or os.environ.get("CELERY_WORKER_NAME")
+                    if not node:
                         try:
-                            import platform
+                            import socket
 
-                            node = platform.node()
+                            node = socket.gethostname()
                         except Exception:
-                            node = None
+                            try:
+                                import platform
 
-                try:
-                    logger.info("Celery task execute_workflow called run_id=%s node=%s", run_db_id, node)
-                except Exception:
-                    pass
+                                node = platform.node()
+                            except Exception:
+                                node = None
 
-                return process_run(run_db_id, node)
+                # Prefer explicit node id if present; otherwise canonicalize
+                # the discovered worker/node identity.
+                if explicit:
+                    mapped = explicit
+                    try:
+                        logger.info("Celery task execute_workflow using explicit node_id=%s for run_id=%s", mapped, run_db_id)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        mapped = _canonicalize_node(raw_host or node)
+                        logger.info("Celery task execute_workflow called run_id=%s raw_node=%s mapped_node=%s", run_db_id, raw_host, mapped)
+                    except Exception:
+                        mapped = node
+
+                return process_run(run_db_id, mapped)
 
             execute_workflow = _execute_workflow_wrapper
             try:

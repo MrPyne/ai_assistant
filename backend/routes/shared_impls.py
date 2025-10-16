@@ -162,14 +162,52 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                     except Exception:
                         pass
                     try:
+                        # Determine a workflow node id to associate with this run
+                        # so persisted RunLog entries always reference a real
+                        # workflow node. Best-effort: try to load the workflow
+                        # graph from the DB and pick the first node's id. If
+                        # that fails, fall back to sending the task without an
+                        # explicit node_id which will cause the worker to detect
+                        # (previous behavior).
+                        node_id = None
                         try:
-                            _tasks.celery_app.send_task('execute_workflow', args=(run_db_id,))
-                            logger.info('scheduled execute_workflow for db_run_id=%s', run_db_id)
+                            if _DB_AVAILABLE:
+                                db = SessionLocal()
+                                try:
+                                    run_obj = db.query(models.Run).filter(models.Run.id == run_db_id).first()
+                                    if run_obj and getattr(run_obj, 'workflow_id', None):
+                                        wf = db.query(models.Workflow).filter(models.Workflow.id == run_obj.workflow_id).first()
+                                        if wf and getattr(wf, 'graph', None) and isinstance(wf.graph, dict):
+                                            nodes = wf.graph.get('nodes') or []
+                                            if len(nodes) > 0 and isinstance(nodes[0], dict):
+                                                node_id = nodes[0].get('id')
+                                finally:
+                                    try:
+                                        db.close()
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            try:
+                                logger.exception('failed to determine node_id for run %s; will enqueue without explicit node_id', run_db_id)
+                            except Exception:
+                                pass
+
+                        try:
+                            if node_id is not None:
+                                _tasks.celery_app.send_task('execute_workflow', args=(run_db_id, node_id))
+                                logger.info('scheduled execute_workflow for db_run_id=%s node_id=%s', run_db_id, node_id)
+                            else:
+                                _tasks.celery_app.send_task('execute_workflow', args=(run_db_id,))
+                                logger.info('scheduled execute_workflow for db_run_id=%s', run_db_id)
                         except Exception:
                             # If Celery isn't configured or send_task fails, process inline
                             try:
-                                _tasks.process_run(run_db_id)
-                                logger.info('processed execute_workflow inline for db_run_id=%s', run_db_id)
+                                if node_id is not None:
+                                    _tasks.process_run(run_db_id, node_id)
+                                    logger.info('processed execute_workflow inline for db_run_id=%s node_id=%s', run_db_id, node_id)
+                                else:
+                                    _tasks.process_run(run_db_id)
+                                    logger.info('processed execute_workflow inline for db_run_id=%s', run_db_id)
                             except Exception:
                                 logger.exception('inline process_run failed for db_run_id=%s', run_db_id)
                     except Exception:
