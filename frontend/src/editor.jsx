@@ -326,6 +326,9 @@ function EditorInner({ initialToken = '' }) {
       await loadRuns()
       // load existing logs and then open stream
       if (runId) {
+        // clear logs while we fetch the new run's logs so UI doesn't show
+        // a mix of entries from the previous run.
+        try { editorDispatch({ type: 'CLEAR_SELECTED_RUN_LOGS' }) } catch (e) {}
         const headers2 = {}
         if (token) headers2.Authorization = `Bearer ${token}`
         const rresp = await fetch(`/api/runs/${runId}/logs`, { headers: headers2 })
@@ -349,6 +352,10 @@ function EditorInner({ initialToken = '' }) {
       if (esRef.current && typeof esRef.current.close === 'function') {
         try { esRef.current.close() } catch (e) {}
       }
+      // clear currently-displayed logs immediately so switching between
+      // runs doesn't accumulate entries from the previously-viewed run while
+      // we fetch the new run's logs / open the EventSource stream.
+      try { editorDispatch({ type: 'CLEAR_SELECTED_RUN_LOGS' }) } catch (e) {}
       const headers = {}
       if (token) headers.Authorization = `Bearer ${token}`
       const rresp = await fetch(`/api/runs/${runId}/logs`, { headers })
