@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.18
-Last updated: 2025-10-12
+Version: 1.19
+Last updated: 2025-10-17
 Maintainer: (fill in)
 
 Purpose
@@ -93,13 +93,9 @@ Architecture & tech stack (confirmed)
 - Secrets encryption: Fernet with SECRETS_KEY env variable (KMS-ready design).
 
 ---
-MVP prioritization & sprint plan (re-aligned to n8n parity)
-- Sprint 1 (P0 core): Editor MVP + Workflows CRUD + Webhook trigger + Execution engine basic runner + Run history/logs + Credentials API + Webhook trigger sample workflow. (High priority)
-- Sprint 2 (P1): Scheduler, Condition nodes, built-in connectors (one or two), node testing UI, export/import, versioning improvements.
-- Sprint 3 (P2+): Marketplace, multi-tenant features, SSO, billing, advanced observability.
 
 Sprint 1 — Immediate work items (I will start these now)
-1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.18).
+1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.19).
 2) Frontend Editor MVP: ensure react-flow canvas + node palette + node config panels can create/save/load workflows using POST/GET /api/workflows. Wire run history and logs viewer to /api/runs endpoints. Provide provider/secret selectors in node config. (I will commit the frontend scaffold and incremental UI work in small steps.)
 3) Backend hardening (in parallel, small focused tasks):
    - Harden worker redaction so decrypted secrets are never written to logs (adapter interface enforces secret_id only; adapters decrypt internally). Add unit tests.
@@ -109,31 +105,51 @@ Sprint 1 — Immediate work items (I will start these now)
 4) Secure transform: implement Jinja-like templating sandbox for transforms (MVP: restrict to Jinja templates and safe filters; JS sandboxing deferred until secure embedding available).
 5) Acceptance criteria & tests for Sprint 1: end-to-end tests that create a workflow (Webhook -> HTTP forward -> Set), trigger it via POST /api/webhook, and assert Run exists and logs are retrievable without any plaintext secrets.
 
-Milestones & deliverables (short)
-- Milestone 1 (this sprint): Editor MVP + Workflow save/load + Webhook run end-to-end (webhook -> run -> worker -> logs). Acceptance: user can build a simple HTTP-forward workflow in the editor and see a run complete with redacted logs.
-- Milestone 2: Credentials UI + Provider wiring + LLM adapter live mode toggle. Acceptance: user can create a provider referencing a secret and run an LLM node in mock/live mode.
-- Milestone 3: Control nodes (If/Condition, Loop), Scheduler. Acceptance: workflows with branching can be built and executed.
+UX & Run-logs improvements (recent updates and remaining work)
+- Completed (checked-in):
+  - Clear selected run logs immediately when switching runs or when a new run is kicked off. This prevents mixing/accumulation of logs from previously-viewed runs in the editor UI.
+    - Frontend changes: editor.jsx dispatches CLEAR_SELECTED_RUN_LOGS in viewRunLogs(runId) and after runWorkflow kick-off.
+    - Rationale: prefer immediate visual clarity when switching runs; avoids confusing interleaving of old logs while new logs are being fetched.
+  - Running/loading indicator on executing nodes in the editor canvas.
+    - Frontend changes: NodeRenderer.jsx and styles/NodeRenderer.css add a node-running class, semi-transparent overlay, and spinner. Overlay uses pointer-events: none so interactions with the inspector remain available.
+    - Detection uses runtime.status === 'running' (case-insensitive).
+  - Client-side deduplication retained for SSE/GET log duplication handling.
+    - Reducer logic preserves SET_SELECTED_RUN_LOGS and APPEND_SELECTED_RUN_LOG dedupe behavior.
 
-Sprint 1 — Immediate work items (I will start these now)
+- Remaining (open / next steps):
+  - Option A: add a loading spinner/flag in the logs view while logs are being fetched instead of instant clear (UX polish). Acceptance: when switching runs, the logs panel shows a lightweight spinner or "Loading logs..." message until the first logs response arrives; no previous run logs should be visible during this state.
+  - Add transitions/fade for node overlay appearance to reduce visual jumpiness. Acceptance: overlay fades in/out smoothly within 150–300ms and does not interfere with node interactions.
+  - Alternate node-running indicators: header-only spinner, progress bar, or "Running..." text option. Acceptance: implement at least one alternate style and expose a feature flag or CSS class switch for experimentation.
+  - Improve SSE vs GET race handling robustness: server-side stable IDs for log events are the long-term fix; acceptance: server-provided stable event IDs, and client dedupe logic assert no missing/duplicated events when SSE and fallback polling overlap.
+  - Add frontend tests:
+    - Test that switching runs clears logs immediately and shows either spinner or empty state, and that subsequent logs belong only to the selected run.
+    - Test SSE/GET dedupe scenarios: simulate duplicate events across SSE + GET and assert client deduplication handles them without dropping unique messages.
+    - Test node-running indicator rendering and that inspector interactions remain functional while overlay visible.
+  - Accessibility & docs:
+    - Add ARIA/live regions or status messaging when logs change or nodes start/stop. Acceptance: screen readers receive a single concise update when run logs are cleared and when new log streaming begins.
+    - Document the UX decision (clear immediately vs show previous logs) and the intended behavior in edge-case scenarios (race between SSE and GET).
 
-1.18 (2025-10-12)
-- Implemented frontend Scheduler UI components (Scheduler list, SchedulerForm modal, RunHistory modal) and wired RunHistory to use POST /api/runs/{run_id}/retry for manual retries from the UI.
-- Implemented backend retry endpoint POST /api/runs/{run_id}/retry and JobRunner + best-effort enqueue behavior: prefers Celery (execute_workflow.delay) but falls back to process_run in a background thread when Celery is unavailable. Added retry support and logging improvements.
-- Added croniter to backend/requirements.txt to support cron schedule parsing.
-- Notes & next steps: cron validation + timezone support and end-to-end tests for scheduler retry/enqueue flows remain. See the 'Next recommended feature' section below.
+Decisions & Notes
+- UX choice made: clearing selectedRunLogs immediately on run switch/start favors immediate visual emptiness over showing old logs while fetching new ones. This was chosen to avoid user confusion from interleaved log messages.
+- Running indicator overlay does not block the node inspector — overlay uses pointer-events: none to allow clicks to pass to the inspector area.
+- Deduplication is currently done client-side; server-stable IDs are recommended as a long-term, more robust solution.
 
-... (older entries retained)
+Suggested acceptance criteria for remaining items
+- Logs loading state: when user switches runs, logs panel shows loading state (spinner/text) until first log payload received. Previous logs are not visible during loading. Tests verify that switching runs twice in quick succession still shows the loading state for the active run only.
+- Node overlay transitions: overlay uses CSS transitions with max 300ms duration; tests verify overlay is present for nodes with runtime.status === 'running' and disappears when status changes.
+- SSE and GET dedupe: server emits stable event ids for run logs; client dedupe logic ignores already-seen ids and processes new ones. Integration test simulates both SSE and polling returning overlapping events and asserts no duplicates and no missing events.
+- Accessibility: ARIA live region with polite politeness level announces "Run logs loading" and "Run logs streaming" events; tests include a11y checks for presence of live region.
 
-Last updated: 2025-10-12
-
----
-
-N8N Compatibility (authoritative checklist)
-(abridged from N8N_COMPATIBILITY.md and merged above) — see the P0/P1/P2 checklists earlier in this document for the compatibility requirements and acceptance criteria.
+If you want, I can draft the precise spec-file diffs (lines to add/remove) to mark completed vs remaining items or produce the test cases and specific frontend test code to cover these behaviors.
 
 ---
 
 Change log (merged)
+
+1.19 (2025-10-17)
+- UX & Logs: Clear selected run logs on run switch and run start to prevent cross-run log mixing. Frontend: editor.jsx dispatches CLEAR_SELECTED_RUN_LOGS when viewing run logs and after runWorkflow kick-off. Reducer retains dedupe logic for SET_SELECTED_RUN_LOGS / APPEND_SELECTED_RUN_LOG.
+- Node UI: Added node-running indicator and styles (NodeRenderer.jsx, styles/NodeRenderer.css). Overlay uses pointer-events: none so inspector interactions remain available. Detection uses runtime.status === 'running' (case-insensitive).
+- Notes: Client-side deduplication retained; server-stable IDs recommended for long-term robustness. Remaining UX polish and tests noted in the "UX & Run-logs improvements" section above.
 
 1.18 (2025-10-12)
 - Frontend scheduler UI: added Scheduler list page, SchedulerForm modal, and RunHistory modal with retry actions.
@@ -152,8 +168,6 @@ Change log (merged)
 - Risks & next steps: only OpenAI and Ollama adapters were migrated in this change; other adapters/providers must adopt is_live_llm_enabled to preserve safety-by-default. Integration tests and CI that expect live behavior will need ENABLE_LIVE_LLM/LIVE_LLM and provider secrets configured.
 
 ... (older entries retained)
-
-Last updated: 2025-10-12
 
 ---
 

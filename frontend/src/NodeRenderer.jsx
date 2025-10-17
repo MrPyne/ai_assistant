@@ -166,9 +166,11 @@ export default function NodeRenderer(props) {
       // ignore if editor context not available
     }
   }
+  const isRunning = status === 'running'
+
   return (
     <div
-      className="node-card"
+      className={`node-card${isRunning ? ' node-running' : ''}`}
       tabIndex={0}
       // force nodes to render above edges / overlays in case the canvas
       // stacking context is unusual in some environments
@@ -226,6 +228,13 @@ export default function NodeRenderer(props) {
       ) : null}
 
       {/* Outputs */}
+      {/* Execution overlay: visual loading indicator when node is running */}
+      {isRunning && (
+        <div className="node-running-overlay" aria-hidden>
+          <div className="node-running-spinner" />
+        </div>
+      )}
+
       {isIf ? (
         <>
           <Handle

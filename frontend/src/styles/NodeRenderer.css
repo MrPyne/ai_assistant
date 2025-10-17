@@ -27,3 +27,41 @@
   border: 1px solid rgba(255,107,107,0.12);
   background: linear-gradient(90deg, rgba(255,107,107,0.04), rgba(255,107,107,0.02));
 }
+
+/* Running / executing node visual styles */
+.node-card {
+  position: relative; /* required for overlay positioning */
+}
+
+.node-running {
+  /* subtle pulsing glow to indicate active execution */
+  box-shadow: 0 0 0 0 rgba(95,176,255,0.06);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(95,176,255,0.06); }
+  70% { box-shadow: 0 0 20px 8px rgba(95,176,255,0.02); }
+  100% { box-shadow: 0 0 0 0 rgba(95,176,255,0.00); }
+}
+
+.node-running-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: rgba(95,176,255,0.03);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.node-running-spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid rgba(0,0,0,0.08);
+  border-top-color: #5fb0ff;
+  box-sizing: border-box;
+  animation: spin 1s linear infinite;
+}
