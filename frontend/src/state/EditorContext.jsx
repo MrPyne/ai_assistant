@@ -81,7 +81,21 @@ function reducer(state, action) {
     case 'SET_SELECTED_RUN_LOGS':
       return { ...state, selectedRunLogs: action.payload || [] }
     case 'APPEND_SELECTED_RUN_LOG':
-      return { ...state, selectedRunLogs: (state.selectedRunLogs || []).concat([action.payload]) }
+      try {
+        const existing = state.selectedRunLogs || []
+        const incoming = action.payload
+        // If the incoming log has an id, avoid duplicating entries we've already
+        // loaded via the logs GET endpoint (or a previous SSE replay). If it
+        // doesn't have an id (eg. some structured node lifecycle events), just
+        // append.
+        if (incoming && (incoming.id !== undefined && incoming.id !== null)) {
+          const found = existing.find((l) => String(l.id) === String(incoming.id))
+          if (found) return state
+        }
+        return { ...state, selectedRunLogs: existing.concat([incoming]) }
+      } catch (e) {
+        return { ...state, selectedRunLogs: (state.selectedRunLogs || []).concat([action.payload]) }
+      }
     case 'CLEAR_SELECTED_RUN_LOGS':
       return { ...state, selectedRunLogs: [] }
     case 'SET_LEFT_PANEL_OPEN':

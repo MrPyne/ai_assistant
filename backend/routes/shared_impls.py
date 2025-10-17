@@ -7,6 +7,7 @@ from datetime import datetime
 import threading
 import os
 from ..utils import redact_secrets
+import logging
 try:
     from ..database import SessionLocal
     from .. import models
@@ -15,6 +16,8 @@ except Exception:
     SessionLocal = None
     models = None
     _DB_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 # reuse simple in-memory stores local to this module to avoid circular imports
 _runs: Dict[int, Dict[str, Any]] = {}
@@ -179,10 +182,52 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                                     run_obj = db.query(models.Run).filter(models.Run.id == run_db_id).first()
                                     if run_obj and getattr(run_obj, 'workflow_id', None):
                                         wf = db.query(models.Workflow).filter(models.Workflow.id == run_obj.workflow_id).first()
-                                        if wf and getattr(wf, 'graph', None) and isinstance(wf.graph, dict):
-                                            nodes = wf.graph.get('nodes') or []
-                                            if len(nodes) > 0 and isinstance(nodes[0], dict):
-                                                node_id = nodes[0].get('id')
+                                        if wf and getattr(wf, 'graph', None):
+                                            graph = wf.graph
+                                            # normalize nodes into dict keyed by id
+                                            raw_nodes = graph.get('nodes') if isinstance(graph, dict) else graph
+                                            nodes_map = {}
+                                            if isinstance(raw_nodes, dict):
+                                                nodes_map = raw_nodes
+                                            else:
+                                                for n in (raw_nodes or []):
+                                                    if isinstance(n, dict) and 'id' in n:
+                                                        nodes_map[n['id']] = n
+
+                                            # build incoming edges map
+                                            incoming = {}
+                                            raw_edges = graph.get('edges') or [] if isinstance(graph, dict) else []
+                                            for e in (raw_edges or []):
+                                                try:
+                                                    src = e.get('source')
+                                                    tgt = e.get('target')
+                                                    if src and tgt:
+                                                        incoming.setdefault(tgt, []).append(src)
+                                                except Exception:
+                                                    pass
+
+                                            # prefer explicit Cron/Timer nodes, then nodes with no incoming edges
+                                            preferred = None
+                                            for nid, nd in nodes_map.items():
+                                                try:
+                                                    label = (nd.get('data') or {}).get('label') or nd.get('label') or ''
+                                                    ntype = nd.get('type') or (nd.get('data') or {}).get('label')
+                                                    if (isinstance(label, str) and 'cron' in label.lower()) or (isinstance(ntype, str) and ntype.lower() in ('timer', 'cron', 'cron trigger')):
+                                                        preferred = nid
+                                                        break
+                                                except Exception:
+                                                    continue
+
+                                            if preferred is not None:
+                                                node_id = preferred
+                                            else:
+                                                # choose node(s) with no incoming edges
+                                                starters = [nid for nid in nodes_map.keys() if nid not in incoming]
+                                                if starters:
+                                                    node_id = starters[0]
+                                                elif len(nodes_map) > 0:
+                                                    # fallback to first declared node
+                                                    node_id = next(iter(nodes_map.keys()))
                                 finally:
                                     try:
                                         db.close()
@@ -191,6 +236,34 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                         except Exception:
                             try:
                                 logger.exception('failed to determine node_id for run %s; will enqueue without explicit node_id', run_db_id)
+                            except Exception:
+                                pass
+
+                        try:
+                            logger.info('manual_run enqueue determined node_id=%s for db_run_id=%s', node_id, run_db_id)
+                        except Exception:
+                            pass
+
+                        # Publish a node-scoped 'started' event so the UI/SSE sees the
+                        # trigger node before downstream work begins. This is best-effort
+                        # and will be persisted only when node_id is present (per
+                        # _publish_redis_event invariant).
+                        try:
+                            if node_id is not None:
+                                try:
+                                    _tasks._publish_redis_event({
+                                        'type': 'node',
+                                        'run_id': run_db_id,
+                                        'node_id': node_id,
+                                        'status': 'started',
+                                        'timestamp': datetime.utcnow().isoformat(),
+                                    })
+                                    logger.info('published node.started event for run=%s node=%s', run_db_id, node_id)
+                                except Exception:
+                                    logger.exception('failed to publish node.started event for run %s node %s', run_db_id, node_id)
+                        except Exception:
+                            try:
+                                logger.exception('unexpected error while publishing start event for run %s', run_db_id)
                             except Exception:
                                 pass
 

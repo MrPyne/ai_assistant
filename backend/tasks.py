@@ -1,35 +1,25 @@
 import os
 import json
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Minimal models stub to ensure this file is self-contained when replaced.
-class models:
-    class RunLog:
-        def __init__(self, run_id, node_id, level, message):
-            self.run_id = run_id
-            self.node_id = node_id
-            self.level = level
-            self.message = message
-
-        def save(self):
-            # Placeholder save implementation; real project should override.
-            return True
+from .utils import redact_secrets
 
 
 def _publish_redis_event(event):
     """
-    Persist a RunLog for a Redis-published event only when the event
-    explicitly contains a workflow node_id. Do not invent host/worker
-    identifiers as RunLog.node_id values.
+    Persist a RunLog row for the given structured event when possible,
+    and publish the (redacted) event to Redis channel `run:{run_id}:events` so
+    SSE subscribers receive it in real-time.
+
+    We only persist when the event contains an explicit workflow node_id
+    (do not invent host/worker identifiers). Messages are redacted before
+    being stored so secrets are not leaked into RunLog.message. For live
+    streaming we also publish the same redacted payload to Redis. If Redis
+    isn't available we degrade gracefully.
     """
-    # Preserve any node_id present on the event. We must not
-    # persist worker/hostname-based identifiers as RunLog.node_id.
-    # If the event does not include a node_id, do not invent one
-    # (no worker/hostname fallback) — fail fast and log so the
-    # caller can be corrected. This ensures persisted RunLog.node_id
-    # values are always real workflow node ids.
     node_for_persist = event.get("node_id")
     logger.debug("_publish_redis_event initial event node_id=%s for run_id=%s", node_for_persist, event.get("run_id"))
     if not node_for_persist:
@@ -37,19 +27,490 @@ def _publish_redis_event(event):
             logger.error("_publish_redis_event refusing to persist RunLog without explicit node_id for run_id=%s", event.get("run_id"))
         except Exception:
             pass
-        # Do not persist a RunLog row without a valid node_id
         return
 
-    logger.info("_publish_redis_event persisting fallback RunLog for run_id=%s node_id=%s", event.get("run_id"), node_for_persist)
+    # Redact secrets from the event before persisting/publishing
+    try:
+        safe_event = redact_secrets(event)
+    except Exception:
+        try:
+            safe_event = event
+        except Exception:
+            safe_event = {}
 
-    rl = models.RunLog(
-        run_id=event.get("run_id"),
-        node_id=node_for_persist,
-        level="info",
-        message=json.dumps(event),
-    )
+    # Attempt to persist to DB when available; otherwise fall back to a
+    # noop/stub behavior (useful for tests that don't use DB persistence).
+    persisted = False
+    try:
+        from .database import SessionLocal
+        from . import models as _models
+        db = None
+        try:
+            db = SessionLocal()
+            rl = _models.RunLog(
+                run_id=safe_event.get("run_id"),
+                node_id=safe_event.get("node_id"),
+                level=safe_event.get("level", "info"),
+                message=json.dumps(safe_event),
+                timestamp=safe_event.get("timestamp") or datetime.utcnow(),
+            )
+            db.add(rl)
+            db.commit()
+            try:
+                # attempt to refresh to get the DB id for better diagnostics
+                db.refresh(rl)
+                logger.info("_publish_redis_event persisted RunLog id=%s run_id=%s node_id=%s", getattr(rl, 'id', None), safe_event.get('run_id'), safe_event.get('node_id'))
+            except Exception:
+                logger.info("_publish_redis_event persisted RunLog for run_id=%s node_id=%s", safe_event.get('run_id'), safe_event.get('node_id'))
+            persisted = True
+        finally:
+            try:
+                if db is not None:
+                    db.close()
+            except Exception:
+                pass
+    except Exception:
+        # DB not available or persistence failed; log and continue
+        try:
+            logger.info("_publish_redis_event could not persist RunLog to DB; event=%s", safe_event)
+        except Exception:
+            pass
+
+    # Publish to Redis so SSE clients receive live updates. We publish the
+    # redacted `safe_event` to avoid leaking secrets in transit/persistence.
+    try:
+        try:
+            import redis as _redis
+        except Exception:
+            _redis = None
+        if _redis is not None:
+            REDIS_URL = os.getenv('REDIS_URL') or os.getenv('CELERY_BROKER_URL') or 'redis://localhost:6379/0'
+            try:
+                rc = _redis.from_url(REDIS_URL)
+                channel = f"run:{safe_event.get('run_id')}:events"
+                try:
+                    rc.publish(channel, json.dumps(safe_event))
+                    logger.debug("_publish_redis_event published to %s: %s", channel, safe_event.get('type'))
+                except Exception as e:
+                    logger.warning("_publish_redis_event publish failed for run %s: %s", safe_event.get('run_id'), e)
+            except Exception:
+                logger.debug("_publish_redis_event skipping redis publish: could not create client")
+    except Exception:
+        pass
+
+
+class InvalidNodeError(Exception):
+    """Raised when a required node_id is missing or invalid for a run."""
+    pass
+
+
+class CeleryAppStub:
+    """A minimal celery_app-like stub with send_task for environments
+    where Celery is not configured. send_task will raise to indicate
+    Celery is unavailable so callers can fall back to inline processing."""
+
+    def send_task(self, name, args=None, kwargs=None):
+        raise RuntimeError("Celery not configured in this environment")
+
+
+# Expose a celery_app attribute so callers that import backend.tasks.celery_app
+# don't get AttributeError. In production this should be replaced with the
+# real Celery app instance.
+celery_app = CeleryAppStub()
+
+
+# Backwards-compatibility: some deployment tooling (the celery CLI, older
+# imports in the codebase, etc.) expect a module-level attribute named
+# `celery`. Expose a `celery` variable. If the real Celery package is
+# available and a broker URL is configured via environment variables we
+# will attempt to construct a real Celery app; otherwise fall back to the
+# CeleryAppStub to allow the import to succeed (workers will still fail
+# to run where Celery is expected but the attribute will at least exist).
+try:
+    # Try to create a real Celery app when Celery is installed. We always
+    # instantiate a Celery object so the celery CLI can import it (the
+    # worker command expects to find an app instance at module load time).
+    # If a broker URL is provided via env, configure it; otherwise leave
+    # the app unconfigured so the CLI still imports cleanly but will
+    # emit a clearer error about missing broker when the worker starts.
+    from celery import Celery as _Celery  # type: ignore
+    celery = _Celery("backend.tasks")
+    _broker = os.environ.get("CELERY_BROKER_URL") or os.environ.get("BROKER_URL")
+    if _broker:
+        try:
+            celery.conf.broker_url = _broker
+        except Exception:
+            # If setting config fails for any reason, log and continue with
+            # the instantiated app; the worker CLI will provide more info.
+            logger.exception("failed to set celery broker_url from env")
+except Exception:
+    # Celery not installed or failed to initialize; ensure attribute exists
+    # so callers importing backend.tasks.celery won't get AttributeError.
+    celery = celery_app
+
+
+def _node_in_graph(node_graph, node_id):
+    """Return True if node_id is present in node_graph.
+
+    Accept common shapes: node_graph['nodes'] may be a dict keyed by id
+    or a list of node dicts containing an 'id' field.
+    """
+    if not isinstance(node_graph, dict):
+        return False
+    nodes = node_graph.get("nodes")
+    if nodes is None:
+        return False
+    if isinstance(nodes, dict):
+        return node_id in nodes
+    if isinstance(nodes, (list, tuple)):
+        for n in nodes:
+            if isinstance(n, dict) and n.get("id") == node_id:
+                return True
+    return False
+
+
+def process_run(run_db_id, node_id=None, node_graph=None):
+    """Process a workflow run inline.
+
+    This is a simplified runner used for tests and the inline fallback
+    when Celery is unavailable. It validates node_id and node_graph (or
+    loads the graph from DB), then traverses the workflow graph from the
+    starting node, executing supported node types and routing results
+    along edges. Execution is synchronous and returns a dict with
+    status and output mapping per-node.
+    """
+    logger.info("process_run called run_db_id=%s node_id=%s", run_db_id, node_id)
+
+    # Acquire graph: use provided node_graph or load from DB
+    graph = None
+    if node_graph is not None:
+        if not isinstance(node_graph, dict):
+            logger.error("process_run node_graph must be a dict for run %s", run_db_id)
+            raise InvalidNodeError("node_graph must be a dict")
+        graph = node_graph
+    else:
+        # try DB
+        try:
+            from .database import SessionLocal
+            from . import models as _models
+            db = SessionLocal()
+            try:
+                run_obj = db.query(_models.Run).filter(_models.Run.id == run_db_id).first()
+                if not run_obj:
+                    logger.error("process_run could not find Run id=%s in DB", run_db_id)
+                    raise InvalidNodeError(f"run id {run_db_id} not found")
+                wf = db.query(_models.Workflow).filter(_models.Workflow.id == run_obj.workflow_id).first()
+                if not wf or not getattr(wf, 'graph', None):
+                    logger.error("process_run workflow/graph missing for run %s", run_db_id)
+                    raise InvalidNodeError(f"workflow graph missing for run {run_db_id}")
+                graph = wf.graph
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        except Exception:
+            logger.error("process_run cannot validate node_id=%s for run %s because node_graph omitted and DB not available", node_id, run_db_id)
+            raise InvalidNodeError("node_graph omitted and DB unavailable; cannot validate node_id")
+
+    # Build helper maps for nodes and edges
+    nodes = {}
+    edges = []
+    raw_nodes = graph.get('nodes') or []
+    if isinstance(raw_nodes, dict):
+        nodes = raw_nodes
+    else:
+        for n in raw_nodes:
+            if isinstance(n, dict) and 'id' in n:
+                nodes[n['id']] = n
+    raw_edges = graph.get('edges') or []
+    for e in raw_edges:
+        if isinstance(e, dict) and 'source' in e and 'target' in e:
+            edges.append(e)
 
     try:
-        rl.save()
+        logger.info("process_run graph summary run=%s nodes=%s edges=%s", run_db_id, len(nodes), len(edges))
     except Exception:
-        logger.exception("_publish_redis_event failed to save RunLog")
+        pass
+
+    # adjacency list for outgoing edges
+    outgoing = {}
+    incoming = {}
+    for e in edges:
+        outgoing.setdefault(e['source'], []).append(e['target'])
+        incoming.setdefault(e['target'], []).append(e['source'])
+
+    # Attempt to fetch run input payload from DB (best-effort)
+    run_input = {}
+    try:
+        from .database import SessionLocal
+        from . import models as _models
+        db = SessionLocal()
+        try:
+            run_obj = db.query(_models.Run).filter(_models.Run.id == run_db_id).first()
+            if run_obj:
+                run_input = getattr(run_obj, 'input_payload', {}) or {}
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        run_input = {}
+
+    # simple evaluation context for templating expressions like {{ input.x }}
+    def eval_expression(expr, context=None):
+        try:
+            if isinstance(expr, str) and expr.strip().startswith('{{') and expr.strip().endswith('}}'):
+                inner = expr.strip()[2:-2].strip()
+                # only support simple 'input.<key>' lookups for now
+                if inner.startswith('input.'):
+                    key = inner.split('.', 1)[1]
+                    ctx = (context or {}).get('input') if context is not None else run_input
+                    if ctx is None:
+                        ctx = run_input
+                    return ctx.get(key)
+            return expr
+        except Exception:
+            return None
+
+    # outputs collected per node
+    outputs = {}
+
+    # determine starting nodes when node_id omitted: nodes with no incoming edges
+    if node_id:
+        queue = [node_id]
+    else:
+        # nodes that are present but not targeted by any edge
+        starting = [nid for nid in nodes.keys() if nid not in incoming]
+        if not starting:
+            # fallback: start from all nodes
+            starting = list(nodes.keys())
+        queue = starting
+    try:
+        logger.info("process_run starting queue for run=%s -> %s", run_db_id, queue)
+    except Exception:
+        pass
+
+    visited = set()
+
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        node = nodes.get(current)
+        if not node:
+            outputs[current] = None
+            continue
+
+        ntype = node.get('type') or node.get('data', {}).get('label')
+        result = None
+
+        # Emit a node.started event so the UI can reflect that the node is running
+        try:
+            ts = datetime.utcnow().isoformat()
+            _publish_redis_event({
+                'type': 'node',
+                'run_id': run_db_id,
+                'node_id': current,
+                'status': 'started',
+                'timestamp': ts,
+                'level': 'info',
+                'message': f'Node {current} started',
+            })
+        except Exception:
+            logger.exception("process_run failed to publish node started for run %s node %s", run_db_id, current)
+
+        try:
+            # HTTP node
+            if ntype == 'http' or (isinstance(ntype, str) and ntype.lower() == 'http request'):
+                cfg = node.get('data', {}) or node
+                url = cfg.get('url') or cfg.get('config', {}).get('url') or node.get('url')
+                method = (cfg.get('method') or cfg.get('config', {}).get('method') or 'GET').upper()
+                headers = cfg.get('headers') or cfg.get('config', {}).get('headers') or {}
+                body = cfg.get('body') or cfg.get('config', {}).get('body') or None
+                import requests
+                try:
+                    if method == 'POST':
+                        r = requests.post(url, headers=headers, json=body, timeout=5)
+                    else:
+                        r = requests.get(url, headers=headers, params=body, timeout=5)
+                    result = {'status_code': getattr(r, 'status_code', None), 'text': getattr(r, 'text', None)}
+                except Exception as exc:
+                    # store exception message but redact via persistence layer
+                    result = {'error': str(exc)}
+
+            # LLM node
+            elif isinstance(ntype, str) and ntype.lower() == 'llm' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('llm')):
+                # extract prompt from multiple possible shapes
+                cfg = node.get('data', {}) or node
+                prompt = node.get('prompt') or cfg.get('prompt') or cfg.get('config', {}).get('prompt')
+                # determine provider id or inline provider config
+                provider_id = node.get('provider_id') or cfg.get('provider_id') or cfg.get('config', {}).get('provider_id') or cfg.get('config', {}).get('provider')
+                provider_obj = None
+                db_for_adapter = None
+                if provider_id is not None:
+                    # attempt to load provider from DB when possible
+                    try:
+                        # prefer a SessionLocal exposed on the module (tests may monkeypatch tasks.SessionLocal)
+                        SessionLocal = globals().get('SessionLocal')
+                        if SessionLocal is None:
+                            from .database import SessionLocal
+                        from . import models as _models
+                        db = SessionLocal()
+                        try:
+                            provider_obj = db.query(_models.Provider).filter(_models.Provider.id == provider_id).first()
+                            db_for_adapter = db
+                        except Exception:
+                            try:
+                                db.close()
+                            except Exception:
+                                pass
+                            provider_obj = None
+                            db_for_adapter = None
+                    except Exception:
+                        provider_obj = None
+                        db_for_adapter = None
+
+                # fallback to inline provider dicts if present
+                if provider_obj is None:
+                    inline = None
+                    try:
+                        inline = cfg.get('provider') or cfg.get('config', {}).get('provider')
+                    except Exception:
+                        inline = None
+                    if isinstance(inline, dict):
+                        from types import SimpleNamespace
+                        provider_obj = SimpleNamespace(**inline)
+
+                # choose adapter based on provider type
+                adapter = None
+                try:
+                    if provider_obj is not None:
+                        ptype = getattr(provider_obj, 'type', None) or (getattr(provider_obj, 'config', {}) or {}).get('type')
+                        if ptype and ptype.lower() == 'openai':
+                            from .adapters.openai_adapter import OpenAIAdapter
+                            adapter = OpenAIAdapter(provider_obj, db_for_adapter)
+                        elif ptype and ptype.lower() == 'ollama':
+                            from .adapters.ollama_adapter import OllamaAdapter
+                            adapter = OllamaAdapter(provider_obj, db_for_adapter)
+                        else:
+                            # unknown provider: attempt openai adapter as default
+                            from .adapters.openai_adapter import OpenAIAdapter
+                            adapter = OpenAIAdapter(provider_obj, db_for_adapter)
+                    else:
+                        # no provider object found: create a minimal provider wrapper
+                        from types import SimpleNamespace
+                        dummy = SimpleNamespace(id=None, type='openai', workspace_id=None, secret_id=None, config={})
+                        from .adapters.openai_adapter import OpenAIAdapter
+                        adapter = OpenAIAdapter(dummy, None)
+                except Exception as e:
+                    logger.exception("process_run failed to instantiate adapter for llm node %s: %s", current, e)
+                    adapter = None
+
+                if adapter is None:
+                    result = {'error': 'no adapter available'}
+                else:
+                    try:
+                        node_model = None
+                        try:
+                            node_model = (cfg.get('config') or {}).get('model') if isinstance(cfg.get('config'), dict) else None
+                        except Exception:
+                            node_model = None
+                        gen = adapter.generate(prompt or '', node_model=node_model)
+                        # adapter should return dict with either text or error
+                        if isinstance(gen, dict) and 'error' in gen:
+                            result = {'error': gen.get('error')}
+                        else:
+                            # normalize to include 'text' and optional 'meta'
+                            text = gen.get('text') if isinstance(gen, dict) else str(gen)
+                            meta = gen.get('meta') if isinstance(gen, dict) else None
+                            result = {'text': text, 'meta': meta}
+                    except Exception as e:
+                        logger.exception("process_run llm adapter.generate failed for node %s: %s", current, e)
+                        result = {'error': str(e)}
+                    finally:
+                        # close DB session if we opened one for provider lookup
+                        try:
+                            if db_for_adapter is not None:
+                                db_for_adapter.close()
+                        except Exception:
+                            pass
+
+            # If node (branching)
+            elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') == 'If':
+                cfg = node.get('data', {}).get('config', {})
+                expr = cfg.get('expression')
+                # evaluate expression against run_input by default
+                val = eval_expression(expr, {'input': run_input})
+                true_target = cfg.get('true_target')
+                false_target = cfg.get('false_target')
+                chosen = true_target if val else false_target
+                # record routing
+                result = {'routed_to': chosen}
+                if chosen:
+                    queue.append(chosen)
+
+            # Switch node
+            elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') == 'Switch':
+                cfg = node.get('data', {}).get('config', {})
+                expr = cfg.get('expression')
+                val = eval_expression(expr, {'input': run_input})
+                mapping = cfg.get('mapping', {}) or {}
+                chosen = mapping.get(val) or cfg.get('default')
+                result = {'routed_to': chosen}
+                if chosen:
+                    queue.append(chosen)
+
+            else:
+                # Unsupported node: mark as executed with a simple ok result
+                result = {'status': 'ok'}
+
+        except Exception as exc:
+            logger.exception("process_run node execution failed run=%s node=%s", run_db_id, current)
+            result = {'error': str(exc)}
+
+        outputs[current] = result
+
+        # enqueue outgoing edges if not already handled; for branching nodes
+        # (If/Switch) we only follow the chosen route recorded in result.
+        is_branching = isinstance(node.get('data'), dict) and node.get('data', {}).get('label') in ('If', 'Switch')
+        if not is_branching:
+            for tgt in outgoing.get(current, []):
+                if tgt not in visited and tgt not in queue:
+                    queue.append(tgt)
+
+        # emit events for this node (completion)
+        try:
+            ts = datetime.utcnow().isoformat()
+            logger.info("process_run: node executed run=%s node=%s result_keys=%s", run_db_id, current, list(result.keys()) if isinstance(result, dict) else None)
+            _publish_redis_event({
+                'type': 'log',
+                'id': None,
+                'run_id': run_db_id,
+                'node_id': current,
+                'timestamp': ts,
+                'level': 'info',
+                'message': f'Node {current} executed',
+            })
+            _publish_redis_event({
+                'type': 'node',
+                'run_id': run_db_id,
+                'node_id': current,
+                'status': 'success' if not (isinstance(result, dict) and 'error' in result) else 'failed',
+                'result': result,
+                'timestamp': datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            logger.exception("process_run failed to publish events for run %s node %s", run_db_id, current)
+
+    logger.info("process_run completed run_db_id=%s", run_db_id)
+    return {'status': 'success', 'output': outputs}
+
+
+# For completeness, expose an execute_workflow function which workers may call.
+# In the real system this would be the Celery task entrypoint. Here it simply
+# delegates to process_run after validating arguments.
+def execute_workflow(run_db_id, node_id=None, node_graph=None, **kwargs):
+    return process_run(run_db_id, node_id=node_id, node_graph=node_graph)

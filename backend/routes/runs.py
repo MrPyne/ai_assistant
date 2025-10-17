@@ -1,8 +1,31 @@
 def register(app, ctx):
     from . import shared_impls as shared
-    from fastapi import HTTPException, Header
-    from typing import Optional
-    from fastapi.responses import StreamingResponse
+    try:
+        from fastapi import HTTPException, Header
+        from fastapi.responses import StreamingResponse
+        from typing import Optional
+        _FASTAPI = True
+    except Exception:
+        # minimal stand-ins when FastAPI isn't importable in test env
+        class HTTPException(Exception):
+            def __init__(self, status_code: int = 500, detail: str = None):
+                super().__init__(detail)
+                self.status_code = status_code
+                self.detail = detail
+
+        def Header(default=None, **kwargs):
+            return default
+
+        class StreamingResponse:
+            def __init__(self, gen, media_type=None):
+                self._gen = gen
+                self.media_type = media_type
+
+            def __iter__(self):
+                return iter(self._gen)
+
+        from typing import Optional
+        _FASTAPI = False
 
     @app.post('/api/workflows/{wf_id}/run')
     def manual_run(wf_id: int, request: dict, authorization: Optional[str] = Header(None)):
@@ -441,6 +464,12 @@ def register(app, ctx):
                             if mtype == 'log':
                                 # emit as SSE event 'log'
                                 yield f"event: log\n"
+                                yield f"data: {json.dumps(msg)}\n\n"
+                                last_activity = asyncio.get_event_loop().time()
+                                sent_any = True
+                            elif mtype == 'node':
+                                # structured node lifecycle event: forward as 'node'
+                                yield f"event: node\n"
                                 yield f"data: {json.dumps(msg)}\n\n"
                                 last_activity = asyncio.get_event_loop().time()
                                 sent_any = True

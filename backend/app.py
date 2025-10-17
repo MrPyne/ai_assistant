@@ -63,8 +63,11 @@ _ctx = {
 try:
     register_all(app, _ctx)
 except Exception:
-    # avoid breaking constrained imports
-    pass
+    # Avoid silently swallowing errors during route registration; print
+    # traceback to aid debugging in test environments.
+    import traceback
+
+    traceback.print_exc()
 
 # expose helpers expected by tests
 from .routes import _shared

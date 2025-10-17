@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
 import NodeRenderer from './NodeRenderer'
 import TemplatesModal from './components/TemplatesModal'
-import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'react-flow-renderer'
+import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge, MarkerType } from 'react-flow-renderer'
 
 // Keep node types as a stable reference so React Flow doesn't warn or
 // reinitialize node renderers on every render. Defining this at module
@@ -43,6 +43,7 @@ function EditorInner({ initialToken = '' }) {
 
   // runs & eventsource handling
   const esRef = useRef(null)
+  const runIdRef = useRef(null)
 
   // keep refs up-to-date for event handlers
   useEffect(() => { nodesRef.current = nodes }, [nodes])
@@ -226,6 +227,10 @@ function EditorInner({ initialToken = '' }) {
         ? new ESImpl(`/api/runs/${runId}/stream`)
         : new ESImpl(`/api/runs/${runId}/stream`, { headers: { Authorization: `Bearer ${token}` } })
 
+      // remember which run this EventSource is for so other handlers can
+      // inspect it (used to auto-open logs when lifecycle events arrive)
+      try { runIdRef.current = runId } catch (e) {}
+
       // Generic log events (emitted as SSE event 'log')
       es.addEventListener('log', (ev) => {
         try {
@@ -240,6 +245,17 @@ function EditorInner({ initialToken = '' }) {
           const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
           // append to run logs view so users still see structured node events
           editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload })
+          // Auto-open the right panel and switch to the Runs tab when this
+          // run emits lifecycle events (started/completed) so users see
+          // live updates without clicking "View logs".
+          try {
+            // payload.run_id may be number or string depending on source
+            const currentRun = runIdRef.current
+            if (payload && currentRun && String(payload.run_id) === String(currentRun) && (payload.status === 'started' || payload.status === 'success' || payload.status === 'failed')) {
+              editorDispatch({ type: 'SET_RIGHT_PANEL_OPEN', payload: true })
+              editorDispatch({ type: 'SET_ACTIVE_RIGHT_TAB', payload: 'runs' })
+            }
+          } catch (e) {}
           // update node visual state in the editor canvas
           try {
             const nid = payload && payload.node_id ? String(payload.node_id) : null
@@ -275,6 +291,13 @@ function EditorInner({ initialToken = '' }) {
         // ignore for tests; real UI might show reconnect/backoff here
       }
       esRef.current = es
+      // attach a cleanup hook so when the EventSource is closed we clear the
+      // runIdRef to avoid stale associations
+      const origClose = es.close && es.close.bind(es)
+      es.close = () => {
+        try { runIdRef.current = null } catch (e) {}
+        try { if (origClose) origClose() } catch (e) {}
+      }
       return es
     } catch (e) {
       return null
@@ -552,6 +575,22 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [loadWorkflows, token])
 
+  // ensure runs list is loaded whenever the selected workflow changes (or
+  // when the editor first mounts and loadWorkflows set a workflowId). This
+  // populates the Runs dropdown in the left panel on first load so users
+  // don't have to manually click "Refresh Runs".
+  useEffect(() => {
+    try {
+      // loadRuns is safe to call even when workflowId is null (it will list
+      // all runs). Prefer calling the memoized callback directly so tests
+      // and callers observe the same behavior.
+      loadRuns()
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadRuns])
+
   // react-flow instance ref so we can call fitView after nodes/edges are loaded
   const rfInstanceRef = useRef(null)
 
@@ -694,6 +733,9 @@ function EditorInner({ initialToken = '' }) {
                 maxZoom={2}
                 fitView={false}
                 fitViewOptions={{ padding: 0.12 }}
+                // show an arrow head at the end of each edge for better
+                // directionality. MarkerType is provided by react-flow v10.
+                defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed } }}
                 style={{ width: '100%', height: '100%' }}
               >
                 <Background gap={16} />

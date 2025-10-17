@@ -99,8 +99,25 @@ def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, 
     return
 
 # Auth route implementations extracted for test reuse
-from fastapi.responses import JSONResponse
-from fastapi import HTTPException
+try:
+    from fastapi.responses import JSONResponse
+    from fastapi import HTTPException
+    _FASTAPI_HEADERS = True
+except Exception:
+    # lightweight stand-ins for test environment when FastAPI isn't installed
+    class HTTPException(Exception):
+        def __init__(self, status_code: int = 500, detail: str = None):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class JSONResponse:  # very small stand-in used by tests
+        def __init__(self, content=None, status_code: int = 200):
+            self.content = content
+            self.status_code = status_code
+
+    _FASTAPI_HEADERS = False
+
 
 def auth_register_db(body: dict, db):
     try:
@@ -234,6 +251,7 @@ def auth_resend(body: dict):
     except Exception:
         pass
     return JSONResponse(status_code=200, content={'status': 'ok'})
+
 def node_test_impl(body: dict, authorization: Optional[str] = None):
     """Simple node test handler used by the compatibility layer and tests.
 

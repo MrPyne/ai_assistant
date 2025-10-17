@@ -1,7 +1,22 @@
 def register(app, ctx):
     from . import shared_impls as shared
-    from fastapi import HTTPException, Header
-    from typing import Optional
+    try:
+        from fastapi import HTTPException, Header
+        from typing import Optional
+        _FASTAPI = True
+    except Exception:
+        # provide minimal stand-ins when FastAPI is not available (tests use this)
+        class HTTPException(Exception):
+            def __init__(self, status_code: int = 500, detail: str = None):
+                super().__init__(detail)
+                self.status_code = status_code
+                self.detail = detail
+
+        def Header(default=None, **kwargs):
+            return default
+
+        from typing import Optional  # still available in stdlib
+        _FASTAPI = False
 
     @app.post('/api/scheduler')
     def create_scheduler(body: dict, authorization: Optional[str] = Header(None)):
