@@ -343,7 +343,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
     return list
   }, [templates, category, tagFilters, query, sortBy])
 
-  // Do not early-return before all hooks have been declared � hooks must run
+  // Do not early-return before all hooks have been declared — hooks must run
   // in the same order on every render. We only skip rendering the modal when
   // `open` is false, but we keep all hooks/derived memos above so React's
   // rules-of-hooks are satisfied.
@@ -351,89 +351,97 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
 
   return (
     <div className="templates-overlay" role="dialog" aria-modal="true">
-      <div className="templates-modal" style={{ display: 'flex', gap: 16, padding: 12 }}>
-        <div style={{ width: 260, borderRight: '1px solid var(--muted)', paddingRight: 12 }}>
+      <div className="templates-modal" style={{ display: 'flex', gap: 16, padding: 12, maxHeight: '80vh', boxSizing: 'border-box' }}>
+        {/* LEFT: fixed-width filter column with its own scroll container */}
+        <div style={{ width: 260, borderRight: '1px solid var(--muted)', paddingRight: 12, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Templates</h3>
             <button onClick={onClose} className="secondary">Close</button>
           </div>
-          <div style={{ marginTop: 12 }}>
-            <input placeholder="Search templates" value={query} onChange={e => setQuery(e.target.value)} style={{ width: '100%', padding: '8px' }} />
-          </div>
 
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Categories</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {categories.map(cat => (
-                <button key={cat} onClick={() => setCategory(cat)} className={category === cat ? 'active' : 'link'} style={{ textAlign: 'left' }}>{cat}</button>
-              ))}
+          {/* Scrollable area for filters */}
+          <div style={{ marginTop: 12, overflowY: 'auto', paddingRight: 6, flex: 1 }}>
+            <div>
+              <input placeholder="Search templates" value={query} onChange={e => setQuery(e.target.value)} style={{ width: '100%', padding: '8px' }} />
             </div>
-          </div>
 
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Tags</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {allTags.map(tg => (
-                <button key={tg} onClick={() => toggleTag(tg)} className={tagFilters.includes(tg) ? 'active' : 'chip'} style={{ fontSize: 12 }}>{tg}</button>
-              ))}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Categories</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {categories.map(cat => (
+                  <button key={cat} onClick={() => setCategory(cat)} className={category === cat ? 'active' : 'link'} style={{ textAlign: 'left' }}>{cat}</button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Sort</div>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ width: '100%', padding: 6 }}>
-              <option value="relevance">Relevance</option>
-              <option value="title">Title</option>
-            </select>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Tags</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {allTags.map(tg => (
+                  <button key={tg} onClick={() => toggleTag(tg)} className={tagFilters.includes(tg) ? 'active' : 'chip'} style={{ fontSize: 12 }}>{tg}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Sort</div>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ width: '100%', padding: 6 }}>
+                <option value="relevance">Relevance</option>
+                <option value="title">Title</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <div style={{ flex: 1 }}>
+        {/* RIGHT: main content area with its own scroll container */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ marginBottom: 8 }}>
             {loading && <div>Loading templates…</div>}
             {!loading && err ? <div style={{ color: 'var(--muted)' }}>Using built-in templates ({String(err)})</div> : null}
           </div>
 
-          <div className="templates-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
-            {filtered.map(t => (
-              <div key={t.id} className="template-card" style={{ padding: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                  <div>
-                    <h4 style={{ margin: '2px 0' }}>{t.title}</h4>
-                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
-                    <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {(t.tags || []).map(tag => <span key={tag} className="chip" style={{ fontSize: 11 }}>{tag}</span>)}
-                      {t.category ? <span className="chip" style={{ fontSize: 11 }}>{t.category}</span> : null}
+          <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 6 }}>
+            <div className="templates-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
+              {filtered.map(t => (
+                <div key={t.id} className="template-card" style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <div>
+                      <h4 style={{ margin: '2px 0' }}>{t.title}</h4>
+                      <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
+                      <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {(t.tags || []).map(tag => <span key={tag} className="chip" style={{ fontSize: 11 }}>{tag}</span>)}
+                        {t.category ? <span className="chip" style={{ fontSize: 11 }}>{t.category}</span> : null}
+                      </div>
+                    </div>
+                    <div style={{ minWidth: 120, textAlign: 'right' }}>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.note}</div>
                     </div>
                   </div>
-                  <div style={{ minWidth: 120, textAlign: 'right' }}>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.note}</div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={120} />
+                  </div>
+
+                  <div className="template-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                    <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
+                    <button onClick={() => {
+                      try {
+                        onApply && onApply(t.graph)
+                        // allow the editor to apply nodes, then call a global run helper
+                        setTimeout(() => {
+                          try {
+                            if (window.__editor_runWorkflow) window.__editor_runWorkflow()
+                          } catch (e) {}
+                        }, 120)
+                      } finally {
+                        try { onClose && onClose() } catch (e) {}
+                      }
+                    }} className="secondary">Load & Run</button>
+                    <button className="secondary" onClick={() => setPreview(t)}>Preview</button>
                   </div>
                 </div>
-
-                <div style={{ marginTop: 8 }}>
-                  <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={120} />
-                </div>
-
-                <div className="template-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                  <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
-                  <button onClick={() => {
-                    try {
-                      onApply && onApply(t.graph)
-                      // allow the editor to apply nodes, then call a global run helper
-                      setTimeout(() => {
-                        try {
-                          if (window.__editor_runWorkflow) window.__editor_runWorkflow()
-                        } catch (e) {}
-                      }, 120)
-                    } finally {
-                      try { onClose && onClose() } catch (e) {}
-                    }
-                  }} className="secondary">Load & Run</button>
-                  <button className="secondary" onClick={() => setPreview(t)}>Preview</button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </div>
