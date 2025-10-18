@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import React, { useEffect, useRef } from 'react'
 import ReactFlow from 'react-flow-renderer'
 import NodeRenderer from '../NodeRenderer'
 
@@ -8,8 +7,6 @@ const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
 export default function TemplatePreview({ graph, height = 160 }) {
   const instRef = useRef(null)
   const hostRef = useRef(null)
-  const portalRef = useRef(null)
-  const [mountedPortal, setMountedPortal] = useState(false)
 
   const nodes = (graph.nodes || []).map(n => ({
     id: String(n.id),
@@ -41,170 +38,33 @@ export default function TemplatePreview({ graph, height = 160 }) {
     }
   }, [graph])
 
-
-  // Create a portal element attached to the Templates modal root when
-  // available, otherwise fall back to document.body. Attaching the portal
-  // inside the same modal root avoids crossing stacking-context boundaries
-  // (e.g. isolation/transform on ancestors) which prevents z-index from
-  // taking effect and causes the preview to render underneath the modal.
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-
-    let createdEl = null
-    try {
-      const el = document.createElement('div')
-      el.className = 'template-preview-portal'
-      el.style.position = 'fixed'
-      el.style.top = '0px'
-      el.style.left = '0px'
-      el.style.width = '100px'
-      el.style.height = '100px'
-      el.style.overflow = 'visible'
-      el.style.pointerEvents = 'auto'
-      el.style.transform = 'none'
-      // Use a very large z-index so the portal sits above most overlays in
-      // the same stacking context. We no longer rely on a body-only
-      // attachment so this is safer than forcing a global body portal.
-      el.style.setProperty('z-index', '2147483647')
-      el.setAttribute('data-portal-generated', 'true')
-
-      const parent = document.querySelector('.templates-modal') || document.body
-      parent.appendChild(el)
-      createdEl = el
-      portalRef.current = el
-      setMountedPortal(true)
-
-      // If we attached to body, keep the portal at the end so it paints
-      // after other overlays. When attached to the modal root this is not
-      // necessary.
-      if (parent === document.body) {
-        const mo = new MutationObserver(() => {
-          try {
-            if (portalRef.current && document.body.lastElementChild !== portalRef.current) {
-              document.body.appendChild(portalRef.current)
-            }
-          } catch (e) {}
-        })
-        mo.observe(document.body, { childList: true })
-        createdEl.__mo = mo
-      }
-    } catch (e) {
-      portalRef.current = null
-      setMountedPortal(false)
-    }
-
-    // Diagnostic logging to help identify why the portal could be occluded
-    try {
-      const p = portalRef.current
-      if (p) {
-        setTimeout(() => {
-          try {
-            const portalStyle = window.getComputedStyle(p)
-            const overlay = document.querySelector('.templates-overlay')
-            const overlayStyle = overlay ? window.getComputedStyle(overlay) : null
-            console.warn('[TemplatePreview] portal mounted', { portalParent: p.parentElement, portalZ: portalStyle.zIndex, overlayZ: overlayStyle && overlayStyle.zIndex })
-            console.warn('[TemplatePreview] portal computed styles', portalStyle)
-            if (overlay) console.warn('[TemplatePreview] templates overlay computed styles', overlayStyle)
-            if (window.__logStackingContexts) {
-              try { window.__logStackingContexts(p) } catch (e) {}
-              try { if (overlay) window.__logStackingContexts(overlay) } catch (e) {}
-            }
-          } catch (e) {}
-        }, 50)
-      }
-    } catch (e) {}
-
-    return () => {
-      try {
-        if (createdEl) {
-          try { if (createdEl.__mo) createdEl.__mo.disconnect() } catch (e) {}
-          if (createdEl.parentNode) createdEl.parentNode.removeChild(createdEl)
-        }
-      } catch (e) {}
-      portalRef.current = null
-      setMountedPortal(false)
-    }
-  }, [])
-
-  // Keep the portal positioned over the host element (only needed when
-  // we're using a body-attached portal). When rendering inline inside the
-  // modal this effect is skipped which prevents the preview from "escaping"
-  // the dialog during scroll.
-  useEffect(() => {
-    if (!portalRef.current || !hostRef.current) return
-    let raf = 0
-    const update = () => {
-      try {
-        const r = hostRef.current.getBoundingClientRect()
-        const el = portalRef.current
-        el.style.top = `${r.top}px`
-        el.style.left = `${r.left}px`
-        el.style.width = `${r.width}px`
-        el.style.height = `${r.height}px`
-      } catch (e) {}
-      raf = requestAnimationFrame(update)
-    }
-    update()
-    window.addEventListener('resize', update)
-    window.addEventListener('scroll', update, true)
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
-    }
-  }, [mountedPortal])
-
-  // Prevent wheel events inside the preview from bubbling up to parent
-  // containers (like the TemplatesModal) which can cause the whole
-  // modal/sidebar to scroll when the user intends to interact with the
-  // embedded ReactFlow preview. We stop propagation here but allow the
-  // ReactFlow instance to handle pointer interaction normally.
-  // Host wrapper remains in-flow (keeps layout) but the actual flow canvas
-  // is rendered into a body-attached portal so it can appear above the modal.
+  // Render inline always. This keeps the preview contained inside the
+  // Templates modal (or wherever the TemplatePreview is used) so it scrolls
+  // with the modal and does not escape due to a fixed-position portal.
+  // It also avoids crossing stacking-context boundaries which made the
+  // preview render underneath the modal in some environments.
   return (
     <div
       ref={hostRef}
       onWheel={(e) => { e.stopPropagation() }}
       style={{ width: '100%', height, overflow: 'visible', position: 'relative' }}
     >
-      {mountedPortal && portalRef.current ? createPortal(
-        <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={NODE_TYPES}
-            onInit={(inst) => { instRef.current = inst }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            panOnScroll={false}
-            zoomOnScroll={false}
-            panOnDrag={false}
-            elementsSelectable={false}
-            fitView={false}
-            style={{ width: '100%', height: '100%', position: 'relative' }}
-          />
-        </div>
-      , portalRef.current) : (
-        // Inline render path: render ReactFlow directly inside the host so it
-        // stays contained and scrolls with the modal. This avoids portal
-        // positioning issues when the modal itself is portaled to body.
-        <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={NODE_TYPES}
-            onInit={(inst) => { instRef.current = inst }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            panOnScroll={false}
-            zoomOnScroll={false}
-            panOnDrag={false}
-            elementsSelectable={false}
-            fitView={false}
-            style={{ width: '100%', height: '100%', position: 'relative' }}
-          />
-        </div>
-      )}
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={NODE_TYPES}
+          onInit={(inst) => { instRef.current = inst }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          panOnScroll={false}
+          zoomOnScroll={false}
+          panOnDrag={false}
+          elementsSelectable={false}
+          fitView={false}
+          style={{ width: '100%', height: '100%', position: 'relative' }}
+        />
+      </div>
     </div>
   )
 }
