@@ -1,0 +1,60 @@
+{
+  "id": "infra-cost-optimization",
+  "title": "Infrastructure: Cost Optimization",
+  "description": "Analyze cloud spend, identify idle resources and create tickets to right-size or terminate.",
+  "category": "Infrastructure",
+  "tags": ["infra", "cost", "cloud"],
+  "sample_input": {"period": "2025-07"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Monthly"}
+      },
+      {
+        "id": "fetch_billing",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch billing",
+          "config": {
+            "method": "GET",
+            "url": "https://cloud.api/billing?period={{ trigger.period }}"
+          }
+        }
+      },
+      {
+        "id": "find_idle",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Find idle",
+          "config": {
+            "language": "python",
+            "code": "# find idle resources\nreturn {'idle': []}"
+          }
+        }
+      },
+      {
+        "id": "create_tickets",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Create tickets",
+          "config": {
+            "method": "POST",
+            "url": "https://tasks.api/create",
+            "body": "{{ node_results.find_idle }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_billing"},
+      {"id": "e2", "source": "fetch_billing", "target": "find_idle"},
+      {"id": "e3", "source": "find_idle", "target": "create_tickets"}
+    ]
+  }
+}

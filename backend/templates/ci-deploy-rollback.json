@@ -1,0 +1,73 @@
+{
+  "id": "ci-deploy-rollback",
+  "title": "CI: Deploy Rollback",
+  "description": "If a deployment health check fails after release, automatically rollback to previous stable version and notify on-call.",
+  "category": "CI/CD",
+  "tags": ["ci","deploy","rollback"],
+  "sample_input": {"deploy_id":"d-1"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x":0,"y":0},
+        "data": {"label":"Deployment event"}
+      },
+      {
+        "id": "health_check",
+        "type": "http",
+        "position": {"x":220,"y":0},
+        "data": {
+          "label":"Check Health",
+          "config": {
+            "method":"GET",
+            "url":"https://k8s.api/deploys/{{ trigger.deploy_id }}/health"
+          }
+        }
+      },
+      {
+        "id": "eval",
+        "type": "action",
+        "position": {"x":440,"y":0},
+        "data": {
+          "label":"Evaluate",
+          "config": {
+            "language":"python",
+            "code":"h = json.loads(input.get('body','{}'))\nif not h.get('ok',True):\n    return {'rollback': True}\nreturn {'rollback': False}"
+          }
+        }
+      },
+      {
+        "id": "rollback",
+        "type": "http",
+        "position": {"x":660,"y":0},
+        "data": {
+          "label":"Rollback",
+          "config": {
+            "method":"POST",
+            "url":"https://k8s.api/deploys/{{ trigger.deploy_id }}/rollback"
+          }
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "position": {"x":660,"y":120},
+        "data": {
+          "label":"Notify Oncall",
+          "config": {
+            "method":"POST",
+            "url":"https://hooks.slack.com/services/...",
+            "body":"Deployment {{ trigger.deploy_id }} rolled back"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"health_check"},
+      {"id":"e2","source":"health_check","target":"eval"},
+      {"id":"e3","source":"eval","target":"rollback"},
+      {"id":"e4","source":"eval","target":"notify"}
+    ]
+  }
+}

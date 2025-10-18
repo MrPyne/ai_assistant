@@ -1,0 +1,74 @@
+{
+  "id": "procurement-stock-audit",
+  "title": "Procurement: Stock Audit",
+  "description": "Audit physical stock records against system counts and create discrepancies report.",
+  "category": "Procurement",
+  "tags": ["procurement", "inventory", "audit"],
+  "sample_input": {"warehouse": "wh-1"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduled"}
+      },
+      {
+        "id": "fetch_sys",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch system counts",
+          "config": {
+            "method": "GET",
+            "url": "https://erp.api/inventory?warehouse={{ trigger.warehouse }}"
+          }
+        }
+      },
+      {
+        "id": "fetch_phys",
+        "type": "http",
+        "position": {"x": 220, "y": 120},
+        "data": {
+          "label": "Fetch physical counts",
+          "config": {
+            "method": "GET",
+            "url": "https://inventory.api/audit?warehouse={{ trigger.warehouse }}"
+          }
+        }
+      },
+      {
+        "id": "compare",
+        "type": "action",
+        "position": {"x": 440, "y": 60},
+        "data": {
+          "label": "Compare",
+          "config": {
+            "language": "python",
+            "code": "# compare lists\\nreturn {'discrepancies': []}"
+          }
+        }
+      },
+      {
+        "id": "report",
+        "type": "http",
+        "position": {"x": 660, "y": 60},
+        "data": {
+          "label": "Send report",
+          "config": {
+            "method": "POST",
+            "url": "https://email.api/send",
+            "body": "{{ node_results.compare }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_sys"},
+      {"id": "e2", "source": "in", "target": "fetch_phys"},
+      {"id": "e3", "source": "fetch_sys", "target": "compare"},
+      {"id": "e4", "source": "fetch_phys", "target": "compare"},
+      {"id": "e5", "source": "compare", "target": "report"}
+    ]
+  }
+}

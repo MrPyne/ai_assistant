@@ -1,0 +1,50 @@
+{
+  "id": "hr-benefits-enrollment",
+  "title": "HR: Benefits Enrollment Reminder",
+  "description": "Notify employees during open enrollment, collect elections and update HRIS.",
+  "category": "HR",
+  "tags": ["hr", "benefits", "enrollment"],
+  "sample_input": {"enrollment_period": "2025"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduler"}
+      },
+      {
+        "id": "fetch_employees",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {"label": "Fetch Employees", "config": {"method": "GET", "url": "https://hr.api/employees"}}
+      },
+      {
+        "id": "send_emails",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Send Enrollment Email",
+          "config": {
+            "language": "python",
+            "code": "emps = json.loads(input.get('body','[]'))\nfor e in emps:\n    # send email\n    pass\nreturn {'sent': len(emps)}"
+          }
+        }
+      },
+      {
+        "id": "collect_responses",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Collect Responses",
+          "config": {"method": "GET", "url": "https://hr.api/enrollment/responses?period={{ trigger.enrollment_period }}"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "trigger", "target": "fetch_employees"},
+      {"id": "e2", "source": "fetch_employees", "target": "send_emails"},
+      {"id": "e3", "source": "send_emails", "target": "collect_responses"}
+    ]
+  }
+}

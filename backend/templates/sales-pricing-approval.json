@@ -1,0 +1,9 @@
+{
+  "id": "sales-pricing-approval",
+  "title": "Sales: Pricing Approval",
+  "description": "Route custom pricing requests to finance for approval with automated reminders.",
+  "category": "Sales",
+  "tags": ["sales","approval","finance"],
+  "sample_input": {"request_id":"req-1"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Request"}},{"id":"fetch","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch request","config":{"method":"GET","url":"https://sales.api/requests/{{ trigger.request_id }}"}}},{"id":"send_approval","type":"http","position":{"x":440,"y":0},"data":{"label":"Send to Finance","config":{"method":"POST","url":"https://finance.api/approvals","body":"{{ node_results.fetch }}"}}},{"id":"reminder","type":"scheduler","position":{"x":660,"y":0},"data":{"label":"Approval reminder","data":{"interval":"24h","action":"recheck"}}}],"edges":[{"id":"e1","source":"in","target":"fetch"},{"id":"e2","source":"fetch","target":"send_approval"},{"id":"e3","source":"send_approval","target":"reminder"}]}
+}

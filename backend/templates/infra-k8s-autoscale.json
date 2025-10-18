@@ -1,0 +1,53 @@
+{
+  "id": "infra-k8s-autoscale",
+  "title": "Infrastructure: K8s Autoscale",
+  "description": "Analyze metrics and adjust HPA/cluster autoscaler settings automatically during load spikes.",
+  "category": "Infrastructure",
+  "tags": ["infra", "k8s", "autoscale"],
+  "sample_input": {"cluster": "prod"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Metric tick"}
+      },
+      {
+        "id": "fetch_metrics",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch metrics",
+          "config": {"method": "GET", "url": "https://metrics.api/cluster/{{ trigger.cluster }}"}
+        }
+      },
+      {
+        "id": "decide",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Decide scale",
+          "config": {
+            "language": "python",
+            "code": "m = node_results.fetch_metrics\nif m.get('cpu', 0) > 0.8:\n  return {'scale_up': True}\nreturn {'scale_up': False}"
+          }
+        }
+      },
+      {
+        "id": "apply",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Apply scaling",
+          "config": {"method": "POST", "url": "https://k8s.api/scale", "body": "{{ node_results.decide }}"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_metrics"},
+      {"id": "e2", "source": "fetch_metrics", "target": "decide"},
+      {"id": "e3", "source": "decide", "target": "apply"}
+    ]
+  }
+}

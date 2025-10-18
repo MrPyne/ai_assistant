@@ -1,0 +1,23 @@
+{
+  "id": "data-ingest-monitor",
+  "title": "Data: Ingest Monitor",
+  "description": "Monitor data ingestion pipelines for latency/failure and notify data engineers; optionally restart jobs.",
+  "category": "Data",
+  "tags": ["data","monitoring","etl"],
+  "sample_input": {"pipeline_id":"p-1"},
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler"}},
+      {"id":"fetch_status","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch Pipeline Status","config":{"method":"GET","url":"https://etl.api/pipelines/{{ trigger.pipeline_id }}/status"}}},
+      {"id":"eval","type":"action","position":{"x":440,"y":0},"data":{"label":"Evaluate","config":{"language":"python","code":"s = json.loads(input.get('body','{}'))\nif s.get('status')!='running':\n    return {'alert': True,'status': s.get('status')}\nreturn {'alert': False}"}}},
+      {"id":"restart","type":"http","position":{"x":660,"y":0},"data":{"label":"Restart Job","config":{"method":"POST","url":"https://etl.api/pipelines/{{ trigger.pipeline_id }}/restart"}}},
+      {"id":"notify","type":"http","position":{"x":660,"y":120},"data":{"label":"Notify Engineers","config":{"method":"POST","url":"https://hooks.slack.com/services/...","body":"Pipeline {{ trigger.pipeline_id }} status={{ node_results.eval.status }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"fetch_status"},
+      {"id":"e2","source":"fetch_status","target":"eval"},
+      {"id":"e3","source":"eval","target":"restart"},
+      {"id":"e4","source":"eval","target":"notify"}
+    ]
+  }
+}

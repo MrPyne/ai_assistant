@@ -1,0 +1,61 @@
+{
+  "id": "procurement-supplier-eval",
+  "title": "Procurement: Supplier Evaluation",
+  "description": "Run automated checks on new suppliers (financial, compliance) and recommend approval or rejection.",
+  "category": "Procurement",
+  "tags": ["procurement", "supplier", "due-diligence"],
+  "sample_input": {"supplier_id": "s-1"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "New supplier"}
+      },
+      {
+        "id": "financial_check",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Financial check",
+          "config": {"method": "GET", "url": "https://finance.api/suppliers/{{ trigger.supplier_id }}/check"}
+        }
+      },
+      {
+        "id": "compliance_check",
+        "type": "http",
+        "position": {"x": 220, "y": 120},
+        "data": {
+          "label": "Compliance check",
+          "config": {"method": "GET", "url": "https://compliance.api/suppliers/{{ trigger.supplier_id }}/check"}
+        }
+      },
+      {
+        "id": "decide",
+        "type": "action",
+        "position": {"x": 440, "y": 60},
+        "data": {
+          "label": "Decide",
+          "config": {"language": "python", "code": "# simple rule\\nreturn {\"approved\": true}"}
+        }
+      },
+      {
+        "id": "record",
+        "type": "http",
+        "position": {"x": 660, "y": 60},
+        "data": {
+          "label": "Record decision",
+          "config": {"method": "POST", "url": "https://procure.api/decisions", "body": "{{ node_results.decide }}"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "financial_check"},
+      {"id": "e2", "source": "in", "target": "compliance_check"},
+      {"id": "e3", "source": "financial_check", "target": "decide"},
+      {"id": "e4", "source": "compliance_check", "target": "decide"},
+      {"id": "e5", "source": "decide", "target": "record"}
+    ]
+  }
+}

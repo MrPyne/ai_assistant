@@ -1,0 +1,9 @@
+{
+  "id": "marketing-a-b-test-analysis",
+  "title": "Marketing: A/B Test Analysis",
+  "description": "Collect experiment results, run statistical analysis and notify stakeholders if variant is significant.",
+  "category": "Marketing",
+  "tags": ["analytics","ab-test","report"],
+  "sample_input": {"experiment_id":"exp_001"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Manual Trigger"}},{"id":"fetch","type":"http","position":{"x":200,"y":0},"data":{"label":"Fetch Results","config":{"method":"GET","url":"https://analytics/api/experiments/{{ trigger.experiment_id }}/results"}}},{"id":"analyze","type":"action","position":{"x":420,"y":0},"data":{"label":"Analyze","config":{"language":"python","code":"import math,scipy.stats as stats\nresults = json.loads(input.get('body','{}'))\n# expect results={'A':{'conversions':10,'visitors':100}, 'B':{...}}\na = results.get('A',{})\nb = results.get('B',{})\n# simple z-test placeholder\nreturn {'p_value':0.03,'winner':'B'}"}}},{"id":"notify","type":"email","position":{"x":640,"y":0},"data":{"label":"Email Results","config":{"to":["pm@example.com"],"subject":"A/B Test {{ trigger.experiment_id }} Results","body":"p={{ node_results.analyze.p_value }}, winner={{ node_results.analyze.winner }}"}}}],"edges":[{"id":"e1","source":"in","target":"fetch"},{"id":"e2","source":"fetch","target":"analyze"},{"id":"e3","source":"analyze","target":"notify"}]}
+}

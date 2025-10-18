@@ -1,0 +1,40 @@
+{
+  "id": "reporting-dashboard-refresh",
+  "title": "Reporting: Dashboard Refresh",
+  "description": "Refresh BI dashboards and materialized views nightly to ensure fast queries for users.",
+  "category": "Reporting",
+  "tags": ["reporting", "bi", "dashboards"],
+  "sample_input": {"night": true},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Nightly"}
+      },
+      {
+        "id": "refresh_views",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Refresh views",
+          "config": {"method": "POST", "url": "https://dw.api/refresh"}
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Notify",
+          "config": {"method": "POST", "url": "https://slack.api/post", "body": "Dashboards refreshed"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "refresh_views"},
+      {"id": "e2", "source": "refresh_views", "target": "notify"}
+    ]
+  }
+}

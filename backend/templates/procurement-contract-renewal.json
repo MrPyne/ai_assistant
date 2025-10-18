@@ -1,0 +1,61 @@
+{
+  "id": "procurement-contract-renewal",
+  "title": "Procurement: Contract Renewal",
+  "description": "Notify stakeholders ahead of supplier contract renewal, prepare negotiation checklist and create renewal tasks.",
+  "category": "Procurement",
+  "tags": ["procurement", "contracts", "renewal"],
+  "sample_input": {"supplier_id": "S-1", "days_before": 60},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduler"}
+      },
+      {
+        "id": "fetch_contract",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch Contract",
+          "config": {
+            "method": "GET",
+            "url": "https://proc.api/contracts?supplier={{ trigger.supplier_id }}"
+          }
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Notify Stakeholders",
+          "config": {
+            "method": "POST",
+            "url": "https://hooks.slack.com/services/...",
+            "body": "Contract renewal approaching for supplier {{ trigger.supplier_id }}"
+          }
+        }
+      },
+      {
+        "id": "create_task",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Create Renewal Task",
+          "config": {
+            "method": "POST",
+            "url": "https://tasks.api/tasks",
+            "body": "{{ node_results.fetch_contract }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_contract"},
+      {"id": "e2", "source": "fetch_contract", "target": "notify"},
+      {"id": "e3", "source": "notify", "target": "create_task"}
+    ]
+  }
+}

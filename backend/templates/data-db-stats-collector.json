@@ -1,0 +1,47 @@
+{
+  "id": "data-db-stats-collector",
+  "title": "Data: DB Stats Collector",
+  "description": "Collect table stats, row counts and send to metrics store for monitoring growth and anomalies.",
+  "category": "Data/Analytics",
+  "tags": ["data", "monitoring", "analytics"],
+  "sample_input": {"schema": "public"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Schedule"}
+      },
+      {
+        "id": "query",
+        "type": "action",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Run stats query",
+          "config": {
+            "language": "sql",
+            "code": "SELECT table_name, n_live_tup FROM pg_stat_user_tables WHERE schemaname='{{ trigger.schema }}'"
+          }
+        }
+      },
+      {
+        "id": "push",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Push to metrics",
+          "config": {
+            "method": "POST",
+            "url": "https://metrics.api/push",
+            "body": "{{ node_results.query }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "query"},
+      {"id": "e2", "source": "query", "target": "push"}
+    ]
+  }
+}

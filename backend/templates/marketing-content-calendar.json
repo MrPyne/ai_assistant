@@ -1,0 +1,9 @@
+{
+  "id": "marketing-content-calendar",
+  "title": "Marketing: Content Calendar Auto-Publish",
+  "description": "Read scheduled content entries from a CMS and publish them at scheduled times; notify Slack and update CMS status.",
+  "category": "Marketing",
+  "tags": ["cms","schedule","slack"],
+  "sample_input": {"calendar_id":"main"},
+  "graph": {"nodes":[{"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler"}},{"id":"fetch_due","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch Due Posts","config":{"method":"GET","url":"https://cms.example/api/calendar/{{ trigger.calendar_id }}/due"}}},{"id":"publish_loop","type":"action","position":{"x":440,"y":0},"data":{"label":"Publish Loop","config":{"language":"python","code":"posts = json.loads(input.get('body','[]'))\nresults=[]\nfor p in posts:\n    # call CMS publish endpoint (placeholder)\n    results.append({'id':p.get('id'),'published':True})\nreturn {'published': results}"}}},{"id":"notify","type":"http","position":{"x":660,"y":0},"data":{"label":"Notify Slack","config":{"method":"POST","url":"https://hooks.slack.com/services/T/...","body":"Published {{ node_results.publish_loop.published|length }} posts"}}}],"edges":[{"id":"e1","source":"trigger","target":"fetch_due"},{"id":"e2","source":"fetch_due","target":"publish_loop"},{"id":"e3","source":"publish_loop","target":"notify"}]}
+}

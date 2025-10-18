@@ -1,0 +1,9 @@
+{
+  "id": "sales-lead-scoring",
+  "title": "Sales: Lead Scoring",
+  "description": "Score incoming leads using behavioral signals and firmographics; update CRM with score and route high-value leads to SDRs via Slack.",
+  "category": "Sales",
+  "tags": ["crm","scoring","slack"],
+  "sample_input": {"lead_id":"L-1000"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Webhook"}},{"id":"fetch","type":"http","position":{"x":200,"y":-40},"data":{"label":"Fetch Lead","config":{"method":"GET","url":"https://crm/api/leads/{{ trigger.lead_id }}"}}},{"id":"score","type":"action","position":{"x":420,"y":-40},"data":{"label":"Score Lead","config":{"language":"python","code":"p = json.loads(input.get('body','{}'))\nscore = 0\nif p.get('company_size',0) > 100: score += 30\nif 'pricing' in p.get('recent_pages',[]): score += 20\nif p.get('email','').endswith('@gmail.com'): score -= 5\nreturn {'score': score}"}}},{"id":"update_crm","type":"http","position":{"x":640,"y":-40},"data":{"label":"Update CRM","config":{"method":"POST","url":"https://crm/api/leads/{{ trigger.lead_id }}/score","body":"{\"score\": {{ node_results.score.score }} }"}}},{"id":"route","type":"http","position":{"x":640,"y":80},"data":{"label":"Notify Sales","config":{"method":"POST","url":"https://hooks.slack.com/services/...","body":"Lead {{ trigger.lead_id }} scored {{ node_results.score.score }}"}}}],"edges":[{"id":"e1","source":"in","target":"fetch"},{"id":"e2","source":"fetch","target":"score"},{"id":"e3","source":"score","target":"update_crm"},{"id":"e4","source":"score","target":"route"}]}
+}

@@ -1,0 +1,24 @@
+{
+  "id": "fin-reconcile-payments",
+  "title": "Finance: Reconcile Payments",
+  "description": "Match payment provider transactions with ledger entries and produce a reconciliation report.",
+  "category": "Finance",
+  "tags": ["finance","reconcile","payments"],
+  "sample_input": {"date":"2025-07-31"},
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Daily run"}},
+      {"id":"fetch_gateway","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch gateway txns","config":{"method":"GET","url":"https://payments.api/txns?date={{ trigger.date }}"}}},
+      {"id":"fetch_ledger","type":"http","position":{"x":220,"y":120},"data":{"label":"Fetch ledger","config":{"method":"GET","url":"https://erp.api/ledger?date={{ trigger.date }}"}}},
+      {"id":"match","type":"action","position":{"x":440,"y":60},"data":{"label":"Match records","config":{"language":"python","code":"# simplified matching\\nreturn {\"missing_in_ledger\": [], \"missing_in_gateway\": []}"}}},
+      {"id":"report","type":"http","position":{"x":660,"y":60},"data":{"label":"Upload report","config":{"method":"POST","url":"https://files.api/upload","body":"{{ node_results.match }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"fetch_gateway"},
+      {"id":"e2","source":"in","target":"fetch_ledger"},
+      {"id":"e3","source":"fetch_gateway","target":"match"},
+      {"id":"e4","source":"fetch_ledger","target":"match"},
+      {"id":"e5","source":"match","target":"report"}
+    ]
+  }
+}

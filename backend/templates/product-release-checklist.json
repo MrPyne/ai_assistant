@@ -1,0 +1,58 @@
+{
+  "id": "product-release-checklist",
+  "title": "Product: Release Checklist",
+  "description": "Run pre-release checks (docs, changelog, smoke tests) and produce a release note draft.",
+  "category": "Product",
+  "tags": ["product", "release", "checklist"],
+  "sample_input": {"release": "v2.0.0"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Release prep"}
+      },
+      {
+        "id": "check_docs",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Check docs",
+          "config": {
+            "method": "GET",
+            "url": "https://docs.api/check?release={{ trigger.release }}"
+          }
+        }
+      },
+      {
+        "id": "run_smoke",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Run smoke",
+          "config": {
+            "method": "POST",
+            "url": "https://ci.api/smoke?release={{ trigger.release }}"
+          }
+        }
+      },
+      {
+        "id": "draft_notes",
+        "type": "llm",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Draft release notes",
+          "config": {
+            "prompt": "Draft release notes from these inputs: {{ node_results.check_docs }}, {{ node_results.run_smoke }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "check_docs"},
+      {"id": "e2", "source": "check_docs", "target": "run_smoke"},
+      {"id": "e3", "source": "run_smoke", "target": "draft_notes"}
+    ]
+  }
+}

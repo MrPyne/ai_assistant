@@ -1,0 +1,9 @@
+{
+  "id": "marketing-customer-lifecycle",
+  "title": "Marketing: Customer Lifecycle Campaigns",
+  "description": "Schedule and trigger lifecycle emails (welcome, activation nudges, retention) based on user milestones.",
+  "category": "Marketing",
+  "tags": ["marketing","lifecycle","campaigns"],
+  "sample_input": {"user_id":"u-100","event":"signed_up"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"User event"}},{"id":"milestone","type":"action","position":{"x":220,"y":0},"data":{"label":"Determine Milestone","config":{"language":"python","code":"e = trigger.get('event')\nif e=='signed_up':\n  return {'milestone':'welcome'}\nif e=='first_purchase':\n  return {'milestone':'activation'}\nreturn {'milestone':'generic'}"}}},{"id":"choose","type":"switch","position":{"x":440,"y":0},"data":{"label":"Choose Campaign","config":{"cases":[{"when":"milestone=='welcome'","target":"welcome_email"},{"when":"milestone=='activation'","target":"activation_series"},{"when":"True","target":"generic_nudge"}]}}},{"id":"welcome_email","type":"http","position":{"x":660,"y":-60},"data":{"label":"Send Welcome","config":{"method":"POST","url":"https://email.api/send","body":"Welcome to our product, {{ trigger.user_id }}"}}},{"id":"activation_series","type":"http","position":{"x":660,"y":60},"data":{"label":"Start Activation Series","config":{"method":"POST","url":"https://campaign.api/start","body":"{\"user\":\"{{ trigger.user_id }}\",\"series\":\"activation\"}"}}},{"id":"generic_nudge","type":"http","position":{"x":660,"y":160},"data":{"label":"Send Nudge","config":{"method":"POST","url":"https://email.api/send","body":"Try these tips..."}}}],"edges":[{"id":"e1","source":"in","target":"milestone"},{"id":"e2","source":"milestone","target":"choose"},{"id":"e3","source":"choose","target":"welcome_email"},{"id":"e4","source":"choose","target":"activation_series"},{"id":"e5","source":"choose","target":"generic_nudge"}]}
+}

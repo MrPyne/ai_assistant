@@ -1,0 +1,57 @@
+{
+  "id": "hr-performance-review-reminder",
+  "title": "HR: Performance Review Reminder",
+  "description": "Send scheduled reminders to managers to complete performance reviews and aggregate completions for HR.",
+  "category": "HR",
+  "tags": ["hr", "reminder", "schedule"],
+  "sample_input": {"review_cycle": "2025-Q4"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduler"}
+      },
+      {
+        "id": "fetch_managers",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {"label": "Fetch Managers", "config": {"method": "GET", "url": "https://hr.api/managers"}}
+      },
+      {
+        "id": "send_reminders",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Send Reminders",
+          "config": {
+            "language": "python",
+            "code": "managers = json.loads(input.get('body','[]'))\nfor m in managers:\n    # send email placeholder\n    pass\nreturn {'sent': len(managers)}"
+          }
+        }
+      },
+      {
+        "id": "aggregate",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Update HR Dashboard",
+          "config": {
+            "method": "POST",
+            "url": "https://hr.api/dashboard/reviews",
+            "body": {
+              "cycle": "{{ trigger.review_cycle }}",
+              "reminders_sent": "{{ node_results.send_reminders.sent }}"
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "trigger", "target": "fetch_managers"},
+      {"id": "e2", "source": "fetch_managers", "target": "send_reminders"},
+      {"id": "e3", "source": "send_reminders", "target": "aggregate"}
+    ]
+  }
+}

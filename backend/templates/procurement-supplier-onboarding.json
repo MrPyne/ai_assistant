@@ -1,0 +1,23 @@
+{
+  "id": "procurement-supplier-onboarding",
+  "title": "Procurement: Supplier Onboarding",
+  "description": "Collect supplier documents, validate W9/insurance, create vendor profile and notify procurement team.",
+  "category": "Procurement",
+  "tags": ["procurement","supplier","onboarding"],
+  "sample_input": {"supplier_email":"vendor@example.com"},
+  "graph": {
+    "nodes": [
+      {"id": "in", "type": "input", "position": {"x": 0, "y": 0}, "data": {"label": "Signup form"}},
+      {"id": "collect_docs", "type": "http", "position": {"x": 220, "y": 0}, "data": {"label": "Request Documents", "config": {"method": "POST", "url": "https://docs.api/request", "body": "{{ trigger }}"}}},
+      {"id": "validate", "type": "action", "position": {"x": 440, "y": 0}, "data": {"label": "Validate Docs", "config": {"language": "python", "code": "# validate W9/insurance and return status\\nreturn {'valid': True}"}}},
+      {"id": "create_vendor", "type": "http", "position": {"x": 660, "y": 0}, "data": {"label": "Create Vendor", "config": {"method": "POST", "url": "https://proc.api/vendors", "body": "{{ trigger }}"}}},
+      {"id": "notify", "type": "http", "position": {"x": 660, "y": 120}, "data": {"label": "Notify Procurement", "config": {"method": "POST", "url": "https://hooks.slack.com/services/...", "body": "Supplier onboarded {{ trigger.supplier_email }}"}}}
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "collect_docs"},
+      {"id": "e2", "source": "collect_docs", "target": "validate"},
+      {"id": "e3", "source": "validate", "target": "create_vendor"},
+      {"id": "e4", "source": "create_vendor", "target": "notify"}
+    ]
+  }
+}

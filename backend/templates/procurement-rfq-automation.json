@@ -1,0 +1,60 @@
+{
+  "id": "procurement-rfq-automation",
+  "title": "Procurement: RFQ Automation",
+  "description": "Create RFQs from purchase needs, send to approved suppliers and collate responses.",
+  "category": "Procurement",
+  "tags": ["procurement", "rfq", "suppliers"],
+  "sample_input": {"request_id": "req-99"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Purchase need"}
+      },
+      {
+        "id": "fetch_suppliers",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch suppliers",
+          "config": {"method": "GET", "url": "https://procure.api/suppliers?category=it"}
+        }
+      },
+      {
+        "id": "send_rfq",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Send RFQs",
+          "config": {"method": "POST", "url": "https://suppliers.api/rfq", "body": "{{ node_results.fetch_suppliers }}"}
+        }
+      },
+      {
+        "id": "collate",
+        "type": "action",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Collate responses",
+          "config": {"language": "python", "code": "# collate responses\\nreturn {\"responses\": []}"}
+        }
+      },
+      {
+        "id": "choose",
+        "type": "http",
+        "position": {"x": 880, "y": 0},
+        "data": {
+          "label": "Choose vendor",
+          "config": {"method": "POST", "url": "https://procure.api/choose", "body": "{{ node_results.collate }}"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_suppliers"},
+      {"id": "e2", "source": "fetch_suppliers", "target": "send_rfq"},
+      {"id": "e3", "source": "send_rfq", "target": "collate"},
+      {"id": "e4", "source": "collate", "target": "choose"}
+    ]
+  }
+}

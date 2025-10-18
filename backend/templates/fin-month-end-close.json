@@ -1,0 +1,61 @@
+{
+  "id": "fin-month-end-close",
+  "title": "Finance: Month-End Close Checklist",
+  "description": "Run month-end tasks: reconcile accounts, run reports, lock GL entries and notify stakeholders.",
+  "category": "Finance",
+  "tags": ["finance", "close", "report"],
+  "sample_input": {"period": "2025-09"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduler"}
+      },
+      {
+        "id": "reconcile",
+        "type": "action",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Reconcile",
+          "config": {
+            "language": "python",
+            "code": "# placeholder to run reconciliation\nreturn {'reconciled': True}"
+          }
+        }
+      },
+      {
+        "id": "generate_reports",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Generate Reports",
+          "config": {
+            "method": "POST",
+            "url": "https://reports.api/generate",
+            "body": "{\"period\":\"{{ trigger.period }}\"}"
+          }
+        }
+      },
+      {
+        "id": "notify",
+        "type": "email",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Notify Stakeholders",
+          "config": {
+            "to": ["finance@example.com"],
+            "subject": "Month-end close {{ trigger.period }} complete",
+            "body": "All done"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "reconcile"},
+      {"id": "e2", "source": "reconcile", "target": "generate_reports"},
+      {"id": "e3", "source": "generate_reports", "target": "notify"}
+    ]
+  }
+}

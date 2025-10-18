@@ -1,0 +1,24 @@
+{
+  "id": "sec-threat-intel-enrich",
+  "title": "Security: Threat Intelligence Enrichment",
+  "description": "Enrich suspicious IPs and domains with threat intel and add high-risk indicators to SIEM.",
+  "category": "Security",
+  "tags": ["security", "threat-intel", "siem"],
+  "sample_input": {"ip": "1.2.3.4", "domain": "bad.example"},
+  "graph": {
+    "nodes": [
+      {"id": "in", "type": "input", "position": {"x": 0, "y": 0}, "data": {"label": "Alert"}},
+      {"id": "enrich_ip", "type": "http", "position": {"x": 220, "y": -40}, "data": {"label": "Enrich IP", "config": {"method": "GET", "url": "https://threat.api/ip/{{ trigger.ip }}"}}},
+      {"id": "enrich_domain", "type": "http", "position": {"x": 220, "y": 40}, "data": {"label": "Enrich Domain", "config": {"method": "GET", "url": "https://threat.api/domain/{{ trigger.domain }}"}}},
+      {"id": "merge", "type": "action", "position": {"x": 440, "y": 0}, "data": {"label": "Merge results", "config": {"language": "python", "code": "return {'merged':[node_results.enrich_ip,node_results.enrich_domain]}"}}},
+      {"id": "siem", "type": "http", "position": {"x": 660, "y": 0}, "data": {"label": "Write to SIEM", "config": {"method": "POST", "url": "https://siem.api/events", "body": "{{ node_results.merge }}"}}}
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "enrich_ip"},
+      {"id": "e2", "source": "in", "target": "enrich_domain"},
+      {"id": "e3", "source": "enrich_ip", "target": "merge"},
+      {"id": "e4", "source": "enrich_domain", "target": "merge"},
+      {"id": "e5", "source": "merge", "target": "siem"}
+    ]
+  }
+}

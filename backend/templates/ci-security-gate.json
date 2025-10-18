@@ -1,0 +1,53 @@
+{
+  "id": "ci-security-gate",
+  "title": "CI: Security Gate",
+  "description": "Run security checks in pipeline and block promotion on critical findings.",
+  "category": "CI/CD",
+  "tags": ["ci", "security", "sca"],
+  "sample_input": {"build_id": "b-900"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Build event"}
+      },
+      {
+        "id": "sca",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Run SCA",
+          "config": {"method": "POST", "url": "https://sca.api/scan", "body": "{{ trigger.build_id }}"}
+        }
+      },
+      {
+        "id": "evaluate",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Evaluate findings",
+          "config": {
+            "language": "python",
+            "code": "r = node_results.sca\\ncrit = [f for f in r.get(\\\"findings\\\",[]) if f.get(\\\"severity\\\")==\\\"critical\\\"]\\nreturn {\\\"block\\\": bool(crit)}"
+          }
+        }
+      },
+      {
+        "id": "block",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Block promotion",
+          "config": {"method": "POST", "url": "https://ci.api/block", "body": "{{ node_results.evaluate }}"}
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "sca"},
+      {"id": "e2", "source": "sca", "target": "evaluate"},
+      {"id": "e3", "source": "evaluate", "target": "block"}
+    ]
+  }
+}

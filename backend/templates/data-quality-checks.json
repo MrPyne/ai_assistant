@@ -1,0 +1,47 @@
+{
+  "id": "data-quality-checks",
+  "title": "Data: Quality Checks",
+  "description": "Run scheduled quality checks on critical datasets and report anomalies to data owners.",
+  "category": "Data",
+  "tags": ["data", "quality", "checks"],
+  "sample_input": {"dataset": "users_db"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Scheduler"}
+      },
+      {
+        "id": "run_checks",
+        "type": "action",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Run Checks",
+          "config": {
+            "language": "python",
+            "code": "# run checks like null pct, unique keys\nreturn {\"anomalies\": []}"
+          }
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Notify Owners",
+          "config": {
+            "method": "POST",
+            "url": "https://hooks.slack.com/services/...",
+            "body": "Data anomalies found: {{ node_results.run_checks.anomalies }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "run_checks"},
+      {"id": "e2", "source": "run_checks", "target": "notify"}
+    ]
+  }
+}

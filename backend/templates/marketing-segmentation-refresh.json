@@ -1,0 +1,9 @@
+{
+  "id": "marketing-segmentation-refresh",
+  "title": "Marketing: Segmentation Refresh",
+  "description": "Run nightly segmentation queries and update audiences in the marketing platform.",
+  "category": "Marketing",
+  "tags": ["marketing","data","audience"],
+  "sample_input": {"run_date":"2025-01-01"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduled trigger"}},{"id":"query","type":"action","position":{"x":220,"y":0},"data":{"label":"Run SQL","config":{"language":"sql","code":"SELECT user_id FROM users WHERE last_active &gt; NOW() - INTERVAL '30 days'"}}},{"id":"upload","type":"http","position":{"x":440,"y":0},"data":{"label":"Upload Audience","config":{"method":"POST","url":"https://marketing.api/audiences/{{ trigger.run_date }}","body":"{{ node_results.query }}"}}}],"edges":[{"id":"e1","source":"in","target":"query"},{"id":"e2","source":"query","target":"upload"}]}
+}

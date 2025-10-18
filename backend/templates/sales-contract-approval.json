@@ -1,0 +1,74 @@
+{
+  "id": "sales-contract-approval",
+  "title": "Sales: Contract Approval Flow",
+  "description": "When a contract is uploaded, send for legal and management approval; collect signatures and store the executed contract.",
+  "category": "Sales",
+  "tags": ["contracts", "approval", "esign"],
+  "sample_input": {"contract_id": "C-900"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Upload webhook"}
+      },
+      {
+        "id": "fetch_contract",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Get Contract",
+          "config": {
+            "method": "GET",
+            "url": "https://docs.api/contracts/{{ trigger.contract_id }}"
+          }
+        }
+      },
+      {
+        "id": "send_for_approval",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Create Approval Tasks",
+          "config": {
+            "language": "python",
+            "code": "# create approval tasks for legal and manager\nreturn {\"approvals\": [\"legal\", \"manager\"]}"
+          }
+        }
+      },
+      {
+        "id": "collect_signatures",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Request Signatures",
+          "config": {
+            "method": "POST",
+            "url": "https://esign.example/api/request",
+            "body": "{\"contract_id\": \"{{ trigger.contract_id }}\"}"
+          }
+        }
+      },
+      {
+        "id": "store",
+        "type": "http",
+        "position": {"x": 880, "y": 0},
+        "data": {
+          "label": "Store Executed",
+          "config": {
+            "method": "POST",
+            "url": "https://docs.api/contracts/{{ trigger.contract_id }}/store",
+            "body": "{\"status\": \"executed\"}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_contract"},
+      {"id": "e2", "source": "fetch_contract", "target": "send_for_approval"},
+      {"id": "e3", "source": "send_for_approval", "target": "collect_signatures"},
+      {"id": "e4", "source": "collect_signatures", "target": "store"}
+    ]
+  }
+}

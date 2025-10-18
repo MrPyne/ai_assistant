@@ -1,0 +1,47 @@
+{
+  "id": "it-software-provisioning",
+  "title": "IT: Software Provisioning",
+  "description": "When a new hire is onboarded, provision required software licenses and notify the user with setup instructions.",
+  "category": "IT",
+  "tags": ["it", "provisioning", "onboarding"],
+  "sample_input": {"employee_id": "E-55", "apps": ["slack", "jira"]},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Onboard event"}
+      },
+      {
+        "id": "provision",
+        "type": "action",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Provision Apps",
+          "config": {
+            "language": "python",
+            "code": "apps = input.get('apps',[])\n# call provisioning APIs per app\nresults = [{'app':a,'status':'ok'} for a in apps]\nreturn {'results': results}"
+          }
+        }
+      },
+      {
+        "id": "notify",
+        "type": "email",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Notify User",
+          "config": {
+            "to": ["user@example.com"],
+            "subject": "Your accounts are ready",
+            "body": "Your apps: {{ node_results.provision.results }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "provision"},
+      {"id": "e2", "source": "provision", "target": "notify"}
+    ]
+  }
+}

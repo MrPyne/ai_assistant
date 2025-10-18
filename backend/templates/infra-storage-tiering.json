@@ -1,0 +1,57 @@
+{
+  "id": "infra-storage-tiering",
+  "title": "Infrastructure: Storage Tiering",
+  "description": "Identify cold data and move to cheaper storage tiers based on access patterns and retention policy.",
+  "category": "Infrastructure",
+  "tags": ["infra", "storage", "cost"],
+  "sample_input": {"policy": "cold-90d"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Daily"}
+      },
+      {
+        "id": "fetch_usage",
+        "type": "http",
+        "position": {"x": 220, "y": 0},
+        "data": {
+          "label": "Fetch object usage",
+          "config": {"method": "GET", "url": "https://storage.api/usage"}
+        }
+      },
+      {
+        "id": "select_cold",
+        "type": "action",
+        "position": {"x": 440, "y": 0},
+        "data": {
+          "label": "Select cold",
+          "config": {
+            "language": "python",
+            "code": "# select objects not accessed in 90 days\nreturn {'objects': []}"
+          }
+        }
+      },
+      {
+        "id": "move",
+        "type": "http",
+        "position": {"x": 660, "y": 0},
+        "data": {
+          "label": "Move to cold tier",
+          "config": {
+            "method": "POST",
+            "url": "https://storage.api/move",
+            "body": "{{ node_results.select_cold }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "fetch_usage"},
+      {"id": "e2", "source": "fetch_usage", "target": "select_cold"},
+      {"id": "e3", "source": "select_cold", "target": "move"}
+    ]
+  }
+}

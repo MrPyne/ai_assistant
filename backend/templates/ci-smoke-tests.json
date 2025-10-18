@@ -1,0 +1,9 @@
+{
+  "id": "ci-smoke-tests",
+  "title": "CI: Smoke Tests",
+  "description": "Execute smoke tests after a deployment and report results to team channels.",
+  "category": "CI/CD",
+  "tags": ["ci","tests","smoke"],
+  "sample_input": {"build_id":"b-123"},
+  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Build complete"}},{"id":"run_tests","type":"http","position":{"x":220,"y":0},"data":{"label":"Run smoke","config":{"method":"POST","url":"https://ci.api/smoke","body":"{{ trigger.build_id }}"}}},{"id":"notify","type":"http","position":{"x":440,"y":0},"data":{"label":"Notify","config":{"method":"POST","url":"https://slack.api/post","body":"Smoke results: {{ node_results.run_tests }}"}}}],"edges":[{"id":"e1","source":"in","target":"run_tests"},{"id":"e2","source":"run_tests","target":"notify"}]}
+}

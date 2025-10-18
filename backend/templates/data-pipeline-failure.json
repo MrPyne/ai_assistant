@@ -1,0 +1,23 @@
+{
+  "id": "data-pipeline-failure",
+  "title": "Data: Pipeline Failure Handler",
+  "description": "On pipeline failure, collect logs, run root cause heuristics, open incident and add remediation steps.",
+  "category": "Data",
+  "tags": ["data","failure","incident"],
+  "sample_input": {"run_id":"run-123"},
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Failure webhook"}},
+      {"id":"fetch_logs","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch Logs","config":{"method":"GET","url":"https://etl.api/runs/{{ trigger.run_id }}/logs"}}},
+      {"id":"analyze","type":"llm","position":{"x":440,"y":0},"data":{"label":"Analyze Logs","config":{"provider":"openai","prompt":"Identify probable root cause: {{ node_results.fetch_logs }}"}}},
+      {"id":"create_incident","type":"http","position":{"x":660,"y":0},"data":{"label":"Create Incident","config":{"method":"POST","url":"https://it.ticketing/api/incidents","body":"{{ node_results.analyze }}"}}},
+      {"id":"notify","type":"http","position":{"x":660,"y":120},"data":{"label":"Notify Data Team","config":{"method":"POST","url":"https://hooks.slack.com/services/...","body":"Pipeline {{ trigger.run_id }} failed: {{ node_results.analyze }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"fetch_logs"},
+      {"id":"e2","source":"fetch_logs","target":"analyze"},
+      {"id":"e3","source":"analyze","target":"create_incident"},
+      {"id":"e4","source":"analyze","target":"notify"}
+    ]
+  }
+}

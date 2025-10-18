@@ -1,0 +1,21 @@
+{
+  "id": "hr-training-compliance",
+  "title": "HR: Training Compliance",
+  "description": "Check mandatory training status, send reminders and escalate non-compliance.",
+  "category": "HR",
+  "tags": ["hr","compliance","training"],
+  "sample_input": {"due_date":"2025-09-01"},
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Schedule"}},
+      {"id":"fetch","type":"http","position":{"x":220,"y":0},"data":{"label":"Fetch statuses","config":{"method":"GET","url":"https://lms.api/compliance?due={{ trigger.due_date }}"}}},
+      {"id":"remind","type":"http","position":{"x":440,"y":0},"data":{"label":"Send reminders","config":{"method":"POST","url":"https://email.api/bulk","body":"{{ node_results.fetch }}"}}},
+      {"id":"escalate","type":"action","position":{"x":660,"y":0},"data":{"label":"Escalate","config":{"language":"python","code":"# escalate if still non-compliant after 3 reminders\nreturn {'escalated': []}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"fetch"},
+      {"id":"e2","source":"fetch","target":"remind"},
+      {"id":"e3","source":"remind","target":"escalate"}
+    ]
+  }
+}

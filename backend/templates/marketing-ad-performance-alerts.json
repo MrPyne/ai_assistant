@@ -1,0 +1,9 @@
+{
+  "id": "marketing-ad-performance-alerts",
+  "title": "Marketing: Ad Performance Alerts",
+  "description": "Monitor ad campaign metrics and alert marketing Slack channel when CPL or CPA exceeds thresholds.",
+  "category": "Marketing",
+  "tags": ["monitoring","ads","slack"],
+  "sample_input": {"campaign_id":"camp_001","threshold_cpl":50},
+  "graph": {"nodes":[{"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler"}},{"id":"fetch_metrics","type":"http","position":{"x":200,"y":0},"data":{"label":"Fetch Metrics","config":{"method":"GET","url":"https://ads.api/campaigns/{{ trigger.campaign_id }}/metrics"}}},{"id":"eval","type":"action","position":{"x":420,"y":0},"data":{"label":"Evaluate","config":{"language":"python","code":"metrics = json.loads(input.get('body','{}'))\ncpl = metrics.get('cpl',0)\nif cpl > input.get('threshold_cpl'):\n    return {'alert': True, 'cpl': cpl}\nreturn {'alert': False}"}}},{"id":"notify","type":"http","position":{"x":640,"y":0},"data":{"label":"Notify Slack","config":{"method":"POST","url":"https://hooks.slack.com/services/T/.....","body":"Campaign {{ trigger.campaign_id }} CPL={{ node_results.eval.cpl }} exceeded threshold"}}}],"edges":[{"id":"e1","source":"trigger","target":"fetch_metrics"},{"id":"e2","source":"fetch_metrics","target":"eval"},{"id":"e3","source":"eval","target":"notify"}]}
+}
