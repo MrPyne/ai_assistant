@@ -11,7 +11,7 @@ const NODE_TYPES = { default: NodeRenderer, input: NodeRenderer }
  * remains contained inside the calling modal (prevents React Portal escape
  * issues with ReactFlow nodes).
  */
-export default function TemplatePreview({ graph = { nodes: [], edges: [] }, height = 160, className = '' }) {
+function TemplatePreview({ graph = { nodes: [], edges: [] }, height = 160, className = '' }) {
   const instRef = useRef(null)
   const hostRef = useRef(null)
 
@@ -39,9 +39,12 @@ export default function TemplatePreview({ graph = { nodes: [], edges: [] }, heig
   // fitView calls (and ReactFlow internal viewport updates) from creating a
   // re-render loop when parents re-render without changing the graph.
   const previewKey = useMemo(() => {
-    const nIds = (nodes || []).map(n => n.id).join(',')
+    // Include node positions in the preview key so visual/layout changes
+    // (not just id churn) will trigger a re-fit. Round positions to
+    // integers to avoid tiny floating point jitter causing spurious updates.
+    const nKeys = (nodes || []).map(n => `${n.id}@${Math.round(n.position.x)}:${Math.round(n.position.y)}`).join(',')
     const eIds = (edges || []).map(e => e.id).join(',')
-    return `${nIds}|${eIds}`
+    return `${nKeys}|${eIds}`
   }, [nodes, edges])
 
   // Fit view after mount / graph changes. Use requestAnimationFrame + timeouts
@@ -50,6 +53,8 @@ export default function TemplatePreview({ graph = { nodes: [], edges: [] }, heig
   const lastFitKey = useRef(null)
   useEffect(() => {
     let cancelled = false
+    // Log when previewKey changes so we can detect frequent refits/remounts
+    console.debug('[TemplatePreview] previewKey effect', { previewKey, nodesCount: nodes.length, edgesCount: edges.length })
 
     const runFit = () => {
       if (cancelled) return
@@ -57,6 +62,7 @@ export default function TemplatePreview({ graph = { nodes: [], edges: [] }, heig
         if (!instRef.current || typeof instRef.current.fitView !== 'function') return
         // Only fit when the graph content changed since the last fit
         if (lastFitKey.current === previewKey) return
+        console.debug('[TemplatePreview] calling fitView', { previewKey, nodesCount: nodes.length, edgesCount: edges.length })
         instRef.current.fitView({ padding: 0.32 })
         lastFitKey.current = previewKey
       } catch (e) {
@@ -75,6 +81,15 @@ export default function TemplatePreview({ graph = { nodes: [], edges: [] }, heig
       clearTimeout(t2)
     }
   }, [previewKey])
+
+  // Log mount / unmount so we can confirm whether the preview is being
+  // remounted frequently (which would indicate parent-level keying/unmounting)
+  useEffect(() => {
+    console.debug('[TemplatePreview] mount', { previewKey, nodesCount: nodes.length, edgesCount: edges.length })
+    return () => {
+      console.debug('[TemplatePreview] unmount', { previewKey, nodesCount: nodes.length, edgesCount: edges.length })
+    }
+  }, [])
 
   return (
     <div
@@ -103,3 +118,36 @@ export default function TemplatePreview({ graph = { nodes: [], edges: [] }, heig
     </div>
   )
 }
+
+// Wrap the component in React.memo with a custom comparator so parent
+// re-renders (filters, search input, etc.) do not cause the preview to
+// re-render or re-initialize ReactFlow unless the underlying graph
+// content (node/edge ids) or size actually changes. This prevents the
+// preview canvas from repeatedly reloading when the templates dialog
+// updates frequently.
+const arePropsEqual = (prev, next) => {
+  if (prev.height !== next.height) return false
+  if (prev.className !== next.className) return false
+
+  const prevNodes = (prev.graph && prev.graph.nodes) || []
+  const nextNodes = (next.graph && next.graph.nodes) || []
+  if (prevNodes.length !== nextNodes.length) return false
+  for (let i = 0; i < prevNodes.length; i++) {
+    if (String(prevNodes[i].id) !== String(nextNodes[i].id)) return false
+  }
+
+  const prevEdges = (prev.graph && prev.graph.edges) || []
+  const nextEdges = (next.graph && next.graph.edges) || []
+  if (prevEdges.length !== nextEdges.length) return false
+  for (let i = 0; i < prevEdges.length; i++) {
+    const p = prevEdges[i]
+    const n = nextEdges[i]
+    const pid = p && (p.id ? String(p.id) : `${p.source}-${p.target}`)
+    const nid = n && (n.id ? String(n.id) : `${n.source}-${n.target}`)
+    if (pid !== nid) return false
+  }
+
+  return true
+}
+
+export default React.memo(TemplatePreview, arePropsEqual)
