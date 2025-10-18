@@ -70,6 +70,8 @@ class RunLog(Base):
     id = Column(Integer, primary_key=True)
     run_id = Column(Integer, ForeignKey('runs.id'))
     node_id = Column(String, nullable=True)
+    # stable server-generated event id to help clients dedupe across SSE/polling
+    event_id = Column(String, nullable=True, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
     level = Column(String, default='info')
     message = Column(String)

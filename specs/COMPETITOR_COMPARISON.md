@@ -45,7 +45,7 @@ Current implementation status (project -> feature mapping)
   - LLM prompt node: Done (P0) — LLM adapter model in place (OpenAI/Ollama) with mock/live gating via backend/llm_utils.
   - Transform/templating node: Partial (P0) — raw JSON editor present; secure Jinja-like sandbox planned and partially supported.
   - Set/Assign/Output nodes: Done (P0) — basic set and logging nodes implemented.
-  - Condition/If and Switch nodes: Not implemented (P1) — next recommended P1 feature; planning docs in COMBINED_SPEC.
+  - Condition/If and Switch nodes: Done (P1) — Branching implemented in backend.process_run; frontend exposes handles for If/Switch nodes.
   - Loop/Parallel (SplitInBatches): Not implemented (P1) — planned for future sprints.
 
 - Credentials & Providers
@@ -57,7 +57,7 @@ Current implementation status (project -> feature mapping)
   - Visual editor (react-flow): Done (P0) — drag-and-drop editor implemented.
   - Run history & logs viewer: Done (P0) — run list + logs wired; streaming via SSE/poll fallback present.
   - Run-logs UX improvements: In progress — immediate clear on run switch (done), node-running overlay added (done); spinner/loading state for logs and transitions are pending.
-  - Node testing UI: Not implemented (P1) — UI modal for single-node testing planned.
+  - Node testing UI: Done (P1) — NodeTestModal implemented and backend /api/node_test connected.
   - Export/import & version rollback: Not implemented (P1) — basic save/load exists; richer versioning planned.
 
 - Execution & Reliability
@@ -71,15 +71,13 @@ Current implementation status (project -> feature mapping)
   - RBAC & workspaces: Done (P0) — workspace scoping and basic RBAC implemented.
 
 Actionable next steps (prioritized)
-1. Implement Condition/If and Switch nodes (P1) — highest-impact P1 item for branching workflows.
-2. Add Node Testing UI (P1) — allow executing a single node with sample input to iterate quickly.
-3. Ship a small set of high-value connectors (GitHub, Slack) using API-key flows; add OAuth later as needed (P1).
-4. UX polish for run logs: add loading indicator for logs fetch, overlay transitions, and accessibility live regions (a11y) (low-effort, high-impact).
-5. Improve SSE vs GET log race robustness: add server-stable event IDs and add integration tests for dedupe behavior (medium effort).
-6. Add frontend tests that cover run-switching, SSE/poll dedupe, and node-running overlay behavior (P1).
-7. Harden retry/DLQ behavior and add end-to-end tests for scheduler enqueuing and retry flows.
+1. Implement Loop/Serial and Parallel nodes (SplitInBatches) (P1) — enables batch processing and parallelism.
+2. Ship a small set of high-value connectors (GitHub, Slack) using API-key flows; add OAuth later as needed (P1).
+3. UX polish for run logs: add loading indicator for logs fetch, overlay transitions, and accessibility live regions (a11y) (low-effort, high-impact).
+4. Improve SSE vs GET log race robustness: add server-stable event IDs and add integration tests for dedupe behavior (medium effort).
+5. Add frontend tests that cover run-switching, SSE/poll dedupe, and node-running overlay behavior (P1).
+6. Harden retry/DLQ behavior and add end-to-end tests for scheduler enqueuing and retry flows.
 
 Next steps
 - Map the prioritized items above to the sprint backlog and break into actionable issues (UI, API, worker, tests).
-- If helpful, I can open PRs or draft individual task-specs for the top 3 items (Condition nodes, Node test modal, GitHub/Slack connectors).
-
+- If helpful, I can open PRs or draft individual task-specs for the top 3 items (SplitInBatches, Connectors, Run-logs UX polish).

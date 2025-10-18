@@ -2,6 +2,8 @@ import os
 import json
 import logging
 from datetime import datetime
+import uuid
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,60 @@ def _publish_redis_event(event):
         except Exception:
             safe_event = {}
 
+    # Generate a stable deterministic event_id for this event so clients
+    # can dedupe across SSE and polling. We compute a namespaced UUID5 over
+    # a canonical representation of the event excluding volatile fields like
+    # 'timestamp'. This keeps the change small and backwards-compatible.
+    try:
+        def _canonicalize(ev):
+            # Make a shallow copy excluding timestamp
+            if not isinstance(ev, dict):
+                return str(ev)
+            c = {k: ev.get(k) for k in sorted(ev.keys()) if k != 'timestamp'}
+            # Ensure determinism for non-JSON-serializable values
+            try:
+                return json.dumps(c, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                # Fallback: stringify values
+                items = []
+                for k in sorted(c.keys()):
+                    v = c.get(k)
+                    try:
+                        items.append(f"{k}:{json.dumps(v, sort_keys=True, default=str)}")
+                    except Exception:
+                        items.append(f"{k}:{str(v)}")
+                return "|".join(items)
+
+        try:
+            canon = _canonicalize(safe_event)
+            namespace = uuid.NAMESPACE_URL
+            eid = str(uuid.uuid5(namespace, canon))
+        except Exception:
+            # best-effort fallback to a hash-based id
+            try:
+                h = hashlib.sha1()
+                h.update(repr(safe_event).encode('utf-8'))
+                eid = h.hexdigest()
+            except Exception:
+                eid = None
+        if eid:
+            safe_event['event_id'] = eid
+            try:
+                # also opportunistically set on the original event dict when
+                # it's the same object so callers that reuse the dict can see
+                # the generated id. This is best-effort and won't affect
+                # callers that passed copies.
+                if isinstance(event, dict):
+                    event['event_id'] = eid
+            except Exception:
+                pass
+    except Exception:
+        # do not fail persistence due to event id generation
+        try:
+            pass
+        except Exception:
+            pass
+
     # Attempt to persist to DB when available; otherwise fall back to a
     # noop/stub behavior (useful for tests that don't use DB persistence).
     persisted = False
@@ -50,6 +106,7 @@ def _publish_redis_event(event):
             rl = _models.RunLog(
                 run_id=safe_event.get("run_id"),
                 node_id=safe_event.get("node_id"),
+                event_id=safe_event.get('event_id'),
                 level=safe_event.get("level", "info"),
                 message=json.dumps(safe_event),
                 timestamp=safe_event.get("timestamp") or datetime.utcnow(),
@@ -451,6 +508,50 @@ def process_run(run_db_id, node_id=None, node_graph=None):
                 result = {'routed_to': chosen}
                 if chosen:
                     queue.append(chosen)
+
+            # Execute sub-workflow / ExecuteWorkflow node
+            elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') in ('ExecuteWorkflow', 'SubWorkflow'):
+                # config may contain either an inline workflow graph under 'workflow'
+                # or a 'workflow_id' to fetch from the DB. We run the child workflow
+                # inline via process_run/execute_workflow and return its output as
+                # the result for this node.
+                cfg = node.get('data', {}).get('config', {}) or {}
+                child_graph = cfg.get('workflow') or cfg.get('graph')
+                child_wf_id = cfg.get('workflow_id')
+                child_result = None
+                try:
+                    if child_graph:
+                        # Run the child graph inline. Use a synthetic run id so
+                        # persistence (when attempted) can still attribute events.
+                        synthetic_run_id = f"{run_db_id}.{current}"
+                        child_result = process_run(synthetic_run_id, node_id=None, node_graph=child_graph)
+                    elif child_wf_id is not None:
+                        # try to fetch workflow graph from DB and execute it
+                        try:
+                            from .database import SessionLocal
+                            from . import models as _models
+                            db = SessionLocal()
+                            try:
+                                wf = db.query(_models.Workflow).filter(_models.Workflow.id == child_wf_id).first()
+                                if wf and getattr(wf, 'graph', None):
+                                    synthetic_run_id = f"{run_db_id}.{current}"
+                                    child_result = process_run(synthetic_run_id, node_id=None, node_graph=wf.graph)
+                                else:
+                                    child_result = {'error': f'workflow id {child_wf_id} not found or has no graph'}
+                            finally:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            child_result = {'error': 'could not load child workflow from DB'}
+                    else:
+                        child_result = {'error': 'no child workflow specified'}
+                except Exception as exc:
+                    logger.exception("process_run sub-workflow execution failed run=%s node=%s", run_db_id, current)
+                    child_result = {'error': str(exc)}
+
+                result = {'subworkflow_result': child_result}
 
             # Switch node
             elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') == 'Switch':

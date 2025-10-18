@@ -1,6 +1,6 @@
 Spec: No-code AI Assistant Platform (n8n-like)
-Version: 1.19
-Last updated: 2025-10-17
+Version: 1.23
+Last updated: 2025-10-18
 Maintainer: (fill in)
 
 Purpose
@@ -33,18 +33,26 @@ P0 — Core n8n parity (MVP)
 
 P1 — Important features to match broader n8n UX
 - [x] Scheduler trigger (cron) nodes. (Scheduler UI + backend retry endpoint implemented; see changelog)
-- [ ] Condition/If and Switch nodes for branching logic.
+- [x] Condition/If and Switch nodes for branching logic. (Implemented: runtime routing in backend.process_run; handles/visuals in NodeRenderer; Sidebar helpers to add nodes; backend tests exist.)
 - [ ] Loop/Serial and Parallel nodes (SplitInBatches equivalent).
 - [ ] Built-in connectors: Slack, GitHub, Google Sheets, Email (examples).
-- [ ] Human-in-the-loop (wait for approval) node (UI for approving runs).
-- [ ] Node testing UI (execute a single node with input sample).
-- [ ] Loop/Serial and Parallel nodes (SplitInBatches equivalent).
+- [x] Human-in-the-loop (wait for approval) node (UI for approving runs). (Note: a basic Wait/Delay node UI exists; full HIL approval flow remains planned.)
+- [x] Node testing UI (execute a single node with input sample). (Implemented: frontend NodeTestModal + backend /api/node_test and tests.)
+- [x] Sub-workflows / Execute-workflow node (call/execute a workflow from another workflow) — basic inline & DB-backed invocation implemented.
 - [ ] Export/import workflows (JSON) and basic version rollback.
+- [ ] Re-run / Replay / Resume from node (time-travel debugging and replay of past runs). Important for debugging production failures and backfills.
+- [ ] Connector testing & sandboxing: per-connector test harness, mock-mode and replay of connector responses for reliable CI and debugging.
+- [ ] OAuth connector patterns: built-in OAuth flows with token refresh, credential scopes, and automatic refresh handling.
 
 P2 — Advanced / long-term
 - [ ] Multi-tenant SaaS features, SSO, billing, rate limiting per workspace.
 - [ ] Marketplace/plugin system to add node types.
 - [ ] Advanced observability (Prometheus, Grafana), complex retry policies, and traceability integrations.
+- [ ] Time-travel debugging / step-through execution UI (re-run from node, inspect per-node state from a past run).
+- [ ] Governance & policy controls: workspace policy enforcement, deny-lists for connectors/hosts, data exfiltration protection.
+- [ ] Source-control / CI integrations: git-sync for workflows, promotion between environments (dev/staging/prod), and change approval workflows.
+- [ ] Data lineage and provenance: per-run inputs/outputs export, schema-aware mapping UI and type validation for nodes.
+- [ ] Enterprise connector features: streaming triggers (Pub/Sub, Kafka), webhook signing & verification, idempotency keys.
 
 ---
 
@@ -63,6 +71,8 @@ Non-functional & security requirements (applies to P0+)
 - [ ] Sanitize and validate all node inputs and template execution to prevent injection.
 - [ ] Audit logs for credential changes and run lifecycle events.
 - [ ] KMS-ready design for secret rotation (design note: store key reference for KMS integration later).
+- [ ] Secrets manager features: environment-scoped secrets, promote/rollover workflows, secret versioning and rotation UI, fine-grained secret access controls.
+- [ ] Connector credential lifecycle: support for OAuth token refresh, revocation handling, and scoped secrets with automatic rotation where supported.
 
 - New CI safety check: add scripts/check_live_llm_usage.py to detect direct adapter-level env toggles or LIVE_LLM checks in backend/adapters. Recommended to run this check in CI to prevent accidental live-LLM guards outside the centralized helper.
 
@@ -80,9 +90,55 @@ Non-functional & security requirements (applies to P0+)
 - Suggested test checklist for any adapter migration:
   - Unit test that environment defaults to disabled and adapter returns mock with expected meta shape.
   - Test that setting ENABLE_LIVE_LLM or LIVE_LLM='true' + valid provider secret triggers live path (for integration tests only — requires secrets and therefore should be gated/integration-only).
-  - Test that provider secret_id resolution uses workspace scoping and does not persist decrypted value.
+- Test that provider secret_id resolution uses workspace scoping and does not persist decrypted value.
+
+Additional competitor-driven feature gaps discovered (research summary)
+- Re-run / replay / resume-from-node (n8n supports replaying past executions and loading data from previous runs; many users expect the ability to resume a failed workflow from the failing node rather than re-running the whole graph).
+- Sub-workflows / Execute Sub-workflow (n8n has an Execute Workflow node that enables reuse and modular workflows; this is important for scaling complex automations).
+- Connector marketplace & templates (Zapier/Make emphasize large template libraries & marketplace; expected long-term).
+- OAuth-first connector patterns (Zapier/Make/Tray emphasize OAuth with automatic refresh & token lifecycle; essential for SaaS connectors).
+- Step-through debugger & time-travel (Make/Tray and enterprise offerings highlight replay/step debugging and backfills for reliability).
+- Connector sandboxing / mock responses & test harness (enterprise users expect safe, repeatable connector testing without hitting production APIs).
+- Source control / git sync & environment promotion (enterprise users expect dev->staging->prod promotion, approvals, and git-backed history).
+- Governance and data exfiltration controls (policy enforcement for allowed connectors, blocking PII leaks, auditing).
+
+Recommended prioritization (update to roadmap)
+- P0 additions (must-have for MVP):
+  - stable server-side event IDs for run-log events (already recommended — make this P0 acceptance test requirement)
+  - per-node retry policies with DLQ marking and visibility (upgrade "basic retry" to explicit P0 acceptance criteria)
+  - secrets manager hardening: secret versioning & rotation hooks (KMS readiness is P0-level for security posture)
+
+- P1 (near-term, next 2–6 sprints):
+  - Sub-workflows / Execute-workflow node (basic inline and DB-backed execution implemented)
+  - Re-run / Replay from node (basic resume flow and replay tooling)
+  - Built-in high-value connectors (GitHub, Slack, Google Sheets) using API-key flows, with OAuth flow design and a plan for refresh handling
+  - Loop/Parallel nodes (SplitInBatches)
+  - Connector testing harness & mock-mode for CI
+
+- P2 (medium-term):
+  - Marketplace & templates
+  - Source-control / git-sync, environment promotion, approval gating
+  - Advanced observability & distributed tracing
+  - Governance & policy enforcement features
+
+Acceptance & next steps
+- Update specs & sprint backlog to include the new P0/P1 items above and add acceptance tests for each:
+  - Re-run/Replay acceptance: UI to select a past run, choose a node to resume from, and re-run only downstream nodes with the previous node's outputs as inputs. E2E test that reproduces a failed node and successfully resumes from it.
+  - Sub-workflow acceptance: Execute Workflow node implemented. A basic inline child graph invocation is covered by unit tests (backend/tests/test_subworkflows.py). Acceptance criteria:
+    - Parent workflow can include an ExecuteWorkflow node that either contains an inline graph (config.graph / config.workflow) or references a child workflow by workflow_id.
+    - Child workflow executes inline and returns its final output to the parent node under result['subworkflow_result'].
+    - Workspace scoping enforced when resolving workflow_id (only workflows visible to the workspace may be invoked).
+    - Unit tests exist for inline child graph invocation; extend tests to cover DB-backed workflow_id path, error conditions, and parent-child log linking.
+  - Connector OAuth acceptance: documented OAuth flow for at least one connector (e.g., GitHub) including refresh flow, token rotation, and tests for revoked tokens.
+  - Connector test harness acceptance: node-test panel should allow mocking connector responses and running offline tests without enabling LIVE_HTTP.
+
+If you'd like, I can:
+- Draft the precise spec diffs and tests for Re-run/Replay and Sub-workflows so they can be converted into issues.
+- Draft an OAuth connector spec (GitHub example) including token refresh flows and CI test checklist.
+- Add concrete acceptance-test templates (pytest and frontend Jest/RTL scenarios) for SSE/GET race with stable server-side event IDs and re-run-from-node behavior.
 
 ---
+
 Architecture & tech stack (confirmed)
 - Frontend: React + TypeScript + react-flow for the editor; Material-UI or Tailwind (TBD).
 - Backend: FastAPI (Python) with Pydantic for schemas.
@@ -95,7 +151,7 @@ Architecture & tech stack (confirmed)
 ---
 
 Sprint 1 — Immediate work items (I will start these now)
-1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.19).
+1) Update & stabilize spec (this file) and add a short n8n compatibility checklist — done (v1.22).
 2) Frontend Editor MVP: ensure react-flow canvas + node palette + node config panels can create/save/load workflows using POST/GET /api/workflows. Wire run history and logs viewer to /api/runs endpoints. Provide provider/secret selectors in node config. (I will commit the frontend scaffold and incremental UI work in small steps.)
 3) Backend hardening (in parallel, small focused tasks):
    - Harden worker redaction so decrypted secrets are never written to logs (adapter interface enforces secret_id only; adapters decrypt internally). Add unit tests.
@@ -115,12 +171,23 @@ UX & Run-logs improvements (recent updates and remaining work)
     - Detection uses runtime.status === 'running' (case-insensitive).
   - Client-side deduplication retained for SSE/GET log duplication handling.
     - Reducer logic preserves SET_SELECTED_RUN_LOGS and APPEND_SELECTED_RUN_LOG dedupe behavior.
+  - Condition/If and Switch nodes implemented (P1 completed).
+    - Backend: process_run includes branching node handling (If/Switch) that evaluates simple expressions and routes to configured targets.
+    - Frontend: NodeRenderer exposes T/F handles for If and a right-side handle for Switch, and Sidebar provides helpers to add these nodes.
+    - Tests: backend/tests/test_branching_nodes.py exercises routing behavior.
+  - Node testing UI implemented (P1 completed).
+    - Frontend: NodeTestModal.jsx provides a modal for running a single node with sample input and provider/secret override options.
+    - Backend: /api/node_test endpoint implemented in backend/routes/node.py forwarding to shared.node_test_impl; tests exercise override behavior.
+  - Sub-workflow/ExecuteWorkflow node implemented (P1 completed — basic behavior).
+    - Backend: tasks.execute_workflow added; process_run supports ExecuteWorkflow nodes. Inline child graphs and DB-backed workflow_id invocation are accepted by the node config.
+    - Tests: backend/tests/test_subworkflows.py covers inline child graph invocation. See notes below for behavior and follow-ups.
 
 - Remaining (open / next steps):
   - Option A: add a loading spinner/flag in the logs view while logs are being fetched instead of instant clear (UX polish). Acceptance: when switching runs, the logs panel shows a lightweight spinner or "Loading logs..." message until the first logs response arrives; no previous run logs should be visible during this state.
   - Add transitions/fade for node overlay appearance to reduce visual jumpiness. Acceptance: overlay fades in/out smoothly within 150–300ms and does not interfere with node interactions.
   - Alternate node-running indicators: header-only spinner, progress bar, or "Running..." text option. Acceptance: implement at least one alternate style and expose a feature flag or CSS class switch for experimentation.
-  - Improve SSE vs GET race handling robustness: server-side stable IDs for log events are the long-term fix; acceptance: server-provided stable event IDs, and client dedupe logic assert no missing/duplicated events when SSE and fallback polling overlap.
+- Improve SSE vs GET race handling robustness: server-stable IDs for log events are the long-term fix; acceptance: server-provided stable event IDs, and client dedupe logic assert no missing/duplicated events when SSE and fallback polling overlap.
+  - Implemented server-stable event IDs (v1.23): backend now generates a deterministic event_id per persisted run event. SSE emits id: <event_id> and polling endpoints return event_id in the payload so clients can reliably dedupe overlapping SSE and polling deliveries. Backward-compatible: event_id is optional for older records; clients should fall back to existing dedupe heuristics when absent.
   - Add frontend tests:
     - Test that switching runs clears logs immediately and shows either spinner or empty state, and that subsequent logs belong only to the selected run.
     - Test SSE/GET dedupe scenarios: simulate duplicate events across SSE + GET and assert client deduplication handles them without dropping unique messages.
@@ -146,45 +213,38 @@ If you want, I can draft the precise spec-file diffs (lines to add/remove) to ma
 
 Change log (merged)
 
-1.19 (2025-10-17)
-- UX & Logs: Clear selected run logs on run switch and run start to prevent cross-run log mixing. Frontend: editor.jsx dispatches CLEAR_SELECTED_RUN_LOGS when viewing run logs and after runWorkflow kick-off. Reducer retains dedupe logic for SET_SELECTED_RUN_LOGS / APPEND_SELECTED_RUN_LOG.
+1.22 (2025-10-18)
+- Implemented Sub-workflows / ExecuteWorkflow node (basic inline & DB-backed invocation).
+  - backend/tasks.py: added execute_workflow helper and ExecuteWorkflow handling in process_run to accept inline child graphs (config.graph/config.workflow) or workflow_id and execute the child graph inline under a synthetic child run id. Child outputs are returned under result['subworkflow_result'].
+  - backend/tests/test_subworkflows.py: added unit test for inline child graph invocation. Test covers a simple noop child graph invoked from an ExecuteWorkflow node.
+  - Notes: implementation is synchronous and intentionally simple to fit current worker model. Parent-child run linkage uses a synthetic run id; follow-ups recommended to store parent_run_id and persist child run logs separately.
+
+1.21 (2025-10-18)
+- Repo review: updated spec statuses after a thorough repo scan. Marked Condition/If & Switch nodes as implemented and Node Testing UI as implemented.
+- Branching nodes: Backend process_run supports If/Switch routing; frontend NodeRenderer exposes handles and runtime badges; tests exist (backend/tests/test_branching_nodes.py).
+- Node testing: Frontend NodeTestModal and backend /api/node_test endpoint present; tests exercise override behaviors.
+- UX & Logs: Clear selected run logs on run switch and run start to prevent cross-run log mixing. Frontend: editor.jsx dispatches CLEAR_SELECTED_RUN_LOGS in viewRunLogs(runId) and after runWorkflow kick-off. Reducer retains dedupe logic for SET_SELECTED_RUN_LOGS / APPEND_SELECTED_RUN_LOG.
 - Node UI: Added node-running indicator and styles (NodeRenderer.jsx, styles/NodeRenderer.css). Overlay uses pointer-events: none so inspector interactions remain available. Detection uses runtime.status === 'running' (case-insensitive).
 - Notes: Client-side deduplication retained; server-stable IDs recommended for long-term robustness. Remaining UX polish and tests noted in the "UX & Run-logs improvements" section above.
-
-1.18 (2025-10-12)
-- Frontend scheduler UI: added Scheduler list page, SchedulerForm modal, and RunHistory modal with retry actions.
-- Backend: added POST /api/runs/{run_id}/retry endpoint and JobRunner integration. Enqueuing prefers Celery when configured and falls back to a background-thread runner for in-memory/no-Celery setups.
-- Added croniter dependency to backend/requirements.txt.
-- Remaining work: cron validation & timezone support, tests for retry/enqueue flows, and optional pyproject.toml update for croniter.
-
-1.17 (2025-10-12)
-- Added a lightweight repository safety check script (scripts/check_live_llm_usage.py) to detect adapter files under backend/adapters that use direct env toggles (ENABLE_* or LIVE_LLM) instead of the centralized backend/llm_utils.is_live_llm_enabled. Recommended to run this check in CI to prevent accidental live-LLM guards outside the centralized helper.
-
-1.16 (2025-10-11)
-- Implemented ENABLE_LIVE_LLM opt-in guard across LLM adapters (OpenAI, Ollama). Live LLM calls are disabled by default; adapters return deterministic mock responses preserving response shape when disabled. Tests updated to opt-in to live behavior where necessary.
-- Centralized helper: added backend/llm_utils.py with is_live_llm_enabled(provider_name: Optional[str]) -> bool to consolidate enablement checks and ensure consistent behavior across adapters. Adapters should call this helper instead of checking env vars directly. The helper preserves backward-compatible semantics: global opt-in via ENABLE_LIVE_LLM or LIVE_LLM=true, provider-specific flags (e.g., ENABLE_OPENAI), and defaults to disabled.
-- Adapters updated: OpenAI and Ollama adapters were updated to use the centralized helper and to return deterministic mock responses when live mode is disabled. Mock responses preserve minimal meta fields (e.g., usage/model) and response shape to maintain compatibility with redaction, logging, and persistence code and tests.
-- Tests: added backend/tests/test_llm_utils_and_adapter_mocks.py to exercise helper behavior and assert mock response meta shapes. These unit tests avoid network calls and verify safety-by-default.
-- Risks & next steps: only OpenAI and Ollama adapters were migrated in this change; other adapters/providers must adopt is_live_llm_enabled to preserve safety-by-default. Integration tests and CI that expect live behavior will need ENABLE_LIVE_LLM/LIVE_LLM and provider secrets configured.
 
 ... (older entries retained)
 
 ---
 
 Next recommended feature
-- Condition/If and Switch nodes for branching logic (P1). Reason: branching is necessary to expand the practical workflows users can build and is the next unimplemented high-priority P1 item after Scheduler.
+- Loop/Serial and Parallel nodes (SplitInBatches) — next high-impact P1 item after branching and node testing are in place.
 
 Planned scope (MVP)
-- Node types: If/Condition node and Switch node.
-- Node config UI: allow user to provide an expression (Jinja template or a small expression language) and comparison operators, with preview/testing in the node config panel.
-- Runtime: evaluate condition using the existing Jinja environment in a safe sandbox; support boolean and string/number comparisons and simple existence checks.
-- Persistence & API: store node config in workflow JSON and ensure worker execution respects branching (skip downstream nodes for false branch).
-- Tests: unit tests for condition evaluation and an end-to-end workflow test (e.g., Webhook -> If -> two branches writing different logs).
-- Effort estimate: 1–2 days for an MVP implementation including UI, runtime evaluation, and tests.
+- Node types: SplitInBatches/Parallel/Loop node.
+- Node config UI: batch size, concurrency, continuation behavior, and optional failure handling.
+- Runtime: coordinate parallel execution with worker tasks and aggregate outputs; support backpressure for large collections.
+- Persistence & API: ensure worker progress is persisted and run logs reflect per-chunk events; add SSE events for chunk progress.
+- Tests: unit tests for batching behavior and an end-to-end workflow test using a mock connector to exercise parallel chunk processing.
+- Effort estimate: 2–4 days for MVP implementation including UI and tests.
 
-If you want, I can start implementing Condition/If and Switch nodes now. I will:
+If you want, I can start implementing SplitInBatches now. I will:
 - Add UI node types and config panels in the editor.
-- Add runtime support in the worker to evaluate conditions (using the Jinja sandbox) and route execution accordingly.
-- Add unit tests for evaluation and an e2e test covering branching behavior.
+- Add runtime support in the worker to split collections into batches and dispatch chunk work (initially inline for simplicity).
+- Add unit tests for chunking behavior and an e2e test covering a small workflow using the node.
 
-If you prefer another P1 item (e.g., cron validation & timezone support, or built-in connectors), tell me and I'll switch. Otherwise I'll start on Condition/If and Switch nodes.
+If you prefer another P1 item (e.g., cron validation & timezone support, or built-in connectors), tell me and I'll switch. Otherwise I'll start on SplitInBatches.

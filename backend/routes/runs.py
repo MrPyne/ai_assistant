@@ -89,6 +89,11 @@ def register(app, ctx):
                                 payload.setdefault('run_id', rr.run_id)
                                 payload.setdefault('node_id', rr.node_id)
                                 payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
+                                # include event_id when present to help client dedupe
+                                try:
+                                    payload.setdefault('event_id', getattr(rr, 'event_id', None))
+                                except Exception:
+                                    pass
                                 out.append(payload)
                             else:
                                 out.append({
@@ -96,6 +101,7 @@ def register(app, ctx):
                                     'id': rr.id,
                                     'run_id': rr.run_id,
                                     'node_id': rr.node_id,
+                                    'event_id': getattr(rr, 'event_id', None),
                                     'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
                                     'level': rr.level,
                                     'message': rr.message,
@@ -275,12 +281,17 @@ def register(app, ctx):
                                     payload.setdefault('run_id', rr.run_id)
                                     payload.setdefault('node_id', rr.node_id)
                                     payload.setdefault('timestamp', rr.timestamp.isoformat() if rr.timestamp is not None else None)
+                                    try:
+                                        payload.setdefault('event_id', getattr(rr, 'event_id', None))
+                                    except Exception:
+                                        pass
                                 else:
                                     payload = {
                                         'type': 'log',
                                         'id': rr.id,
                                         'run_id': rr.run_id,
                                         'node_id': rr.node_id,
+                                        'event_id': getattr(rr, 'event_id', None),
                                         'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
                                         'level': rr.level,
                                         'message': rr.message,
@@ -299,6 +310,15 @@ def register(app, ctx):
                         logger.info("SSE replayed %s existing DB logs for run_id=%s", len(out), run_id)
                         for event_name, item in out:
                             # emit explicit SSE event name for structured DB rows
+                            # When available include the event_id as the SSE id field so
+                            # EventSource clients can use built-in last-event-id semantics
+                            # and stable dedupe. Fall back to no id when absent.
+                            try:
+                                eid = item.get('event_id')
+                            except Exception:
+                                eid = None
+                            if eid:
+                                yield f"id: {eid}\n"
                             yield f"event: {event_name}\n"
                             yield f"data: {json.dumps(item)}\n\n"
                             last_activity = asyncio.get_event_loop().time()
@@ -463,12 +483,24 @@ def register(app, ctx):
                             mtype = msg.get('type') if isinstance(msg, dict) else None
                             if mtype == 'log':
                                 # emit as SSE event 'log'
+                                try:
+                                    eid = msg.get('event_id') if isinstance(msg, dict) else None
+                                except Exception:
+                                    eid = None
+                                if eid:
+                                    yield f"id: {eid}\n"
                                 yield f"event: log\n"
                                 yield f"data: {json.dumps(msg)}\n\n"
                                 last_activity = asyncio.get_event_loop().time()
                                 sent_any = True
                             elif mtype == 'node':
                                 # structured node lifecycle event: forward as 'node'
+                                try:
+                                    eid = msg.get('event_id') if isinstance(msg, dict) else None
+                                except Exception:
+                                    eid = None
+                                if eid:
+                                    yield f"id: {eid}\n"
                                 yield f"event: node\n"
                                 yield f"data: {json.dumps(msg)}\n\n"
                                 last_activity = asyncio.get_event_loop().time()
@@ -503,12 +535,19 @@ def register(app, ctx):
                                         'id': rr.id,
                                         'run_id': rr.run_id,
                                         'node_id': rr.node_id,
+                                        'event_id': getattr(rr, 'event_id', None),
                                         'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None,
                                         'level': rr.level,
                                         'message': rr.message,
                                     }
                                     last_id = max(last_id, getattr(rr, 'id', 0))
                                     # emit explicit SSE event name 'log' for each DB row
+                                    try:
+                                        eid = item.get('event_id')
+                                    except Exception:
+                                        eid = None
+                                    if eid:
+                                        yield f"id: {eid}\n"
                                     yield f"event: log\n"
                                     yield f"data: {json.dumps(item)}\n\n"
                                     sent_any = True

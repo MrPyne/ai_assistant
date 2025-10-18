@@ -74,6 +74,7 @@ def upgrade():
         sa.Column('id', sa.Integer, primary_key=True),
         sa.Column('run_id', sa.Integer, sa.ForeignKey('runs.id')),
         sa.Column('node_id', sa.String, nullable=True),
+        sa.Column('event_id', sa.String, nullable=True),
         sa.Column('timestamp', sa.DateTime, nullable=True),
         sa.Column('level', sa.String, nullable=True),
         sa.Column('message', sa.String, nullable=True),
