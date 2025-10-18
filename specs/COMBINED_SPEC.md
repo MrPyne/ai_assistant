@@ -35,6 +35,7 @@ P1 â€” Important features to match broader n8n UX
 - [x] Scheduler trigger (cron) nodes. (Scheduler UI + backend retry endpoint implemented; see changelog)
 - [x] Condition/If and Switch nodes for branching logic. (Implemented: runtime routing in backend.process_run; handles/visuals in NodeRenderer; Sidebar helpers to add nodes; backend tests exist.)
 - [ ] Loop/Serial and Parallel nodes (SplitInBatches equivalent).
+ - [x] Loop/Serial and Parallel nodes (SplitInBatches equivalent) — MVP runtime implemented (backend tasks.process_run supports SplitInBatches/Loop/Parallel labels with serial and parallel modes, chunking, per-chunk synthetic run ids, and SSE/RunLog events). Frontend UI remaining.
 - [ ] Built-in connectors: Slack, GitHub, Google Sheets, Email (examples).
 - [x] Human-in-the-loop (wait for approval) node (UI for approving runs). (Note: a basic Wait/Delay node UI exists; full HIL approval flow remains planned.)
 - [x] Node testing UI (execute a single node with input sample). (Implemented: frontend NodeTestModal + backend /api/node_test and tests.)

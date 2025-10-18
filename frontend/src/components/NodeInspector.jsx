@@ -87,6 +87,16 @@ export default function NodeInspector({
         reset({ language: cfg.language || 'jinja', template: cfg.template || '' })
       } else if (selectedNode.data && selectedNode.data.label === 'Wait') {
         reset({ seconds: cfg.seconds || 60 })
+      } else if (selectedNode.data && ['SplitInBatches', 'Loop', 'Parallel'].includes(selectedNode.data.label)) {
+        // friendly form for batch/split nodes
+        reset({
+          input_path: cfg.input_path || 'input',
+          batch_size: cfg.batch_size || 10,
+          mode: cfg.mode || 'serial',
+          concurrency: cfg.concurrency || 4,
+          fail_behavior: cfg.fail_behavior || 'stop_on_error',
+          max_chunks: cfg.max_chunks || ''
+        })
       } else {
         reset({ rawJsonText: JSON.stringify(selectedNode.data || {}, null, 2) })
       }
@@ -108,7 +118,7 @@ export default function NodeInspector({
           const body = watched.body || ''
           updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), method, url, headers, body })
           markDirty()
-        } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
+      } else if (selectedNode.data && selectedNode.data.label === 'LLM') {
           const prompt = watched.prompt || ''
           const provider_id = watched.provider_id ? (Number(watched.provider_id) || null) : null
           const model = watched.model || ''
@@ -154,6 +164,19 @@ export default function NodeInspector({
         const seconds = Number(watched.seconds) || 0
         updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), seconds })
         markDirty()
+      } else if (selectedNode.data && ['SplitInBatches', 'Loop', 'Parallel'].includes(selectedNode.data.label)) {
+        try {
+          const input_path = watched.input_path || 'input'
+          const batch_size = Number(watched.batch_size) || 1
+          const mode = watched.mode === 'parallel' ? 'parallel' : 'serial'
+          const concurrency = Number(watched.concurrency) || 1
+          const fail_behavior = watched.fail_behavior === 'continue_on_error' ? 'continue_on_error' : 'stop_on_error'
+          const max_chunks = watched.max_chunks === '' || watched.max_chunks === undefined ? null : (Number(watched.max_chunks) || null)
+          updateNodeConfig(selectedNodeId, { ...(selectedNode.data.config || {}), input_path, batch_size, mode, concurrency, fail_behavior, max_chunks })
+          markDirty()
+        } catch (e) {
+          // ignore sync errors
+        }
       } else {
         // for raw JSON edits we don't use this path
       }
@@ -205,6 +228,36 @@ export default function NodeInspector({
               <button onClick={() => { editorDispatch({ type: 'SET_WEBHOOK_TEST_PAYLOAD', payload: '{}' }) }} className="secondary">Reset</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {selectedNode.data && ['SplitInBatches', 'Loop', 'Parallel'].includes(selectedNode.data.label) && (
+        <div>
+          <div style={{ marginBottom: 8, fontWeight: 600 }}>Split / Batch configuration</div>
+
+          <label>Input path (dotted)</label>
+          <input {...register('input_path')} style={{ width: '100%', marginBottom: 8 }} />
+
+          <label>Batch size</label>
+          <input type="number" {...register('batch_size')} style={{ width: '100%', marginBottom: 8 }} />
+
+          <label>Mode</label>
+          <select {...register('mode')} style={{ width: '100%', marginBottom: 8 }}>
+            <option value="serial">Serial (default)</option>
+            <option value="parallel">Parallel</option>
+          </select>
+
+          <label>Concurrency (parallel only)</label>
+          <input type="number" {...register('concurrency')} style={{ width: '100%', marginBottom: 8 }} />
+
+          <label>Fail behavior</label>
+          <select {...register('fail_behavior')} style={{ width: '100%', marginBottom: 8 }}>
+            <option value="stop_on_error">Stop on first error</option>
+            <option value="continue_on_error">Continue on error</option>
+          </select>
+
+          <label>Max chunks (optional)</label>
+          <input type="number" {...register('max_chunks')} style={{ width: '100%', marginBottom: 8 }} />
         </div>
       )}
 

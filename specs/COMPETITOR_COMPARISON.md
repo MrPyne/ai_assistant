@@ -46,7 +46,7 @@ Current implementation status (project -> feature mapping)
   - Transform/templating node: Partial (P0) — raw JSON editor present; secure Jinja-like sandbox planned and partially supported.
   - Set/Assign/Output nodes: Done (P0) — basic set and logging nodes implemented.
   - Condition/If and Switch nodes: Done (P1) — Branching implemented in backend.process_run; frontend exposes handles for If/Switch nodes.
-  - Loop/Parallel (SplitInBatches): Not implemented (P1) — planned for future sprints.
+ - Loop/Parallel (SplitInBatches): Implemented (P1 - MVP runtime) — backend runtime supports SplitInBatches/Loop/Parallel labels with configurable batch_size, mode (serial|parallel), concurrency, and fail_behavior. Frontend node UI & editor controls remain to be added; tests to cover end-to-end behavior planned.
 
 - Credentials & Providers
   - Secrets UI/API: Done (P0) — secrets stored encrypted; backend uses Fernet; secrets not persisted in plaintext.

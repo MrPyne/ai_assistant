@@ -226,7 +226,7 @@ def _node_in_graph(node_graph, node_id):
     return False
 
 
-def process_run(run_db_id, node_id=None, node_graph=None):
+def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
     """Process a workflow run inline.
 
     This is a simplified runner used for tests and the inline fallback
@@ -297,23 +297,26 @@ def process_run(run_db_id, node_id=None, node_graph=None):
         outgoing.setdefault(e['source'], []).append(e['target'])
         incoming.setdefault(e['target'], []).append(e['source'])
 
-    # Attempt to fetch run input payload from DB (best-effort)
-    run_input = {}
-    try:
-        from .database import SessionLocal
-        from . import models as _models
-        db = SessionLocal()
-        try:
-            run_obj = db.query(_models.Run).filter(_models.Run.id == run_db_id).first()
-            if run_obj:
-                run_input = getattr(run_obj, 'input_payload', {}) or {}
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-    except Exception:
+    # Attempt to fetch run input payload from DB (best-effort) unless
+    # an explicit run_input override was provided (used by SplitInBatches
+    # to pass per-chunk context into downstream execution).
+    if run_input is None:
         run_input = {}
+        try:
+            from .database import SessionLocal
+            from . import models as _models
+            db = SessionLocal()
+            try:
+                run_obj = db.query(_models.Run).filter(_models.Run.id == run_db_id).first()
+                if run_obj:
+                    run_input = getattr(run_obj, 'input_payload', {}) or {}
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        except Exception:
+            run_input = {}
 
     # simple evaluation context for templating expressions like {{ input.x }}
     def eval_expression(expr, context=None):
@@ -508,6 +511,200 @@ def process_run(run_db_id, node_id=None, node_graph=None):
                 result = {'routed_to': chosen}
                 if chosen:
                     queue.append(chosen)
+
+            # SplitInBatches / Loop node
+            elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') in ('SplitInBatches', 'Loop', 'Parallel'):
+                # Config shape (MVP):
+                # {
+                #   'input_path': 'input.items',
+                #   'batch_size': 10,
+                #   'mode': 'serial'|'parallel',
+                #   'concurrency': 4,
+                #   'fail_behavior': 'stop_on_error'|'continue_on_error',
+                # }
+                cfg = node.get('data', {}).get('config', {}) or {}
+                input_path = cfg.get('input_path') or cfg.get('path') or 'input'
+                batch_size = int(cfg.get('batch_size') or cfg.get('size') or 1)
+                mode = (cfg.get('mode') or 'serial').lower()
+                concurrency = int(cfg.get('concurrency') or 1)
+                fail_behavior = (cfg.get('fail_behavior') or 'stop_on_error')
+
+                # helper to resolve dotted path from run_input
+                def _get_by_path(obj, path):
+                    if not path:
+                        return obj
+                    parts = path.split('.')
+                    cur = obj
+                    for p in parts:
+                        if cur is None:
+                            return None
+                        if isinstance(cur, dict):
+                            cur = cur.get(p)
+                        else:
+                            try:
+                                cur = getattr(cur, p)
+                            except Exception:
+                                return None
+                    return cur
+
+                seq = _get_by_path({'input': run_input}, input_path)
+                # Accept either the list itself or a single-key dict containing the list
+                if seq is None:
+                    seq = []
+                # Chunk the sequence
+                chunks = [seq[i:i + batch_size] for i in range(0, len(seq), batch_size)] if isinstance(seq, (list, tuple)) else [seq]
+                total = len(chunks)
+                chunk_results = []
+                errors = []
+
+                # Determine outgoing targets to process for each chunk; we'll
+                # start execution at those nodes with a synthetic run id so
+                # downstream nodes can run using the chunk as their input.
+                targets = outgoing.get(current, [])
+
+                # Emit a split.started event
+                try:
+                    _publish_redis_event({
+                        'type': 'split',
+                        'run_id': run_db_id,
+                        'node_id': current,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'level': 'info',
+                        'message': f'Split node {current} starting {total} chunks',
+                        'total_chunks': total,
+                    })
+                except Exception:
+                    pass
+
+                # worker to process a single chunk (used in serial and parallel)
+                def _process_chunk(idx, chunk):
+                    synthetic_run_id = f"{run_db_id}.{current}.{idx}"
+                    # prepare a run_input override where the input path points
+                    # to the chunk; consumers can reference {{ input }} or
+                    # the original dotted path depending on implementation.
+                    # We'll provide a top-level 'input' mapping with the same
+                    # structure as the parent but with the input_path key
+                    # replaced by the chunk value when possible.
+                    local_input = dict(run_input) if isinstance(run_input, dict) else {'input': run_input}
+                    # attempt to set nested value by walking path
+                    try:
+                        parts = input_path.split('.')
+                        if parts and parts[0] == 'input':
+                            tgt = local_input.get('input', {}) if isinstance(local_input.get('input'), dict) else local_input.get('input') or {}
+                            if isinstance(tgt, dict):
+                                # set remaining path
+                                sub = tgt
+                                for p in parts[1:-1]:
+                                    if p not in sub or not isinstance(sub.get(p), dict):
+                                        sub[p] = {}
+                                    sub = sub[p]
+                                # final assign
+                                if parts[-1]:
+                                    sub[parts[-1]] = chunk
+                            else:
+                                # fallback: overwrite input
+                                local_input['input'] = chunk
+                        else:
+                            # non-input root: simply place at 'input'
+                            local_input['input'] = chunk
+                    except Exception:
+                        local_input = {'input': chunk}
+
+                    # Emit per-chunk started event
+                    try:
+                        _publish_redis_event({
+                            'type': 'split_chunk',
+                            'run_id': run_db_id,
+                            'node_id': current,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'level': 'info',
+                            'message': f'Chunk {idx+1}/{total} started',
+                            'chunk_index': idx,
+                            'total_chunks': total,
+                            'chunk_preview': repr(chunk)[:200],
+                        })
+                    except Exception:
+                        pass
+
+                    # If there are no downstream targets, just return the chunk
+                    if not targets:
+                        return {'chunk_index': idx, 'result': None}
+
+                    # execute downstream starting at each target node and
+                    # collect their outputs; we'll call process_run recursively
+                    # with run_input override so downstream nodes can reference
+                    # the chunk via {{ input }}.
+                    aggregated = {}
+                    for t in targets:
+                        try:
+                            subres = process_run(synthetic_run_id, node_id=t, node_graph=graph, run_input=local_input)
+                            aggregated[t] = subres
+                        except Exception as e:
+                            aggregated[t] = {'error': str(e)}
+
+                    # Emit per-chunk completion
+                    try:
+                        _publish_redis_event({
+                            'type': 'split_chunk',
+                            'run_id': run_db_id,
+                            'node_id': current,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'level': 'info',
+                            'message': f'Chunk {idx+1}/{total} completed',
+                            'chunk_index': idx,
+                            'total_chunks': total,
+                        })
+                    except Exception:
+                        pass
+
+                    return {'chunk_index': idx, 'result': aggregated}
+
+                # Execute chunks
+                if mode == 'parallel' and total > 0:
+                    try:
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+                        max_workers = max(1, min(concurrency or 1, total))
+                        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                            futures = {ex.submit(_process_chunk, i, c): i for i, c in enumerate(chunks)}
+                            for fut in as_completed(futures):
+                                idx = futures[fut]
+                                try:
+                                    res = fut.result()
+                                    chunk_results.append(res)
+                                except Exception as e:
+                                    errors.append({'chunk_index': idx, 'error': str(e)})
+                                    if fail_behavior == 'stop_on_error':
+                                        # attempt to cancel remaining futures
+                                        for f in futures:
+                                            try:
+                                                f.cancel()
+                                            except Exception:
+                                                pass
+                                        break
+                    except Exception:
+                        # fallback to serial if thread execution fails
+                        for i, c in enumerate(chunks):
+                            try:
+                                chunk_results.append(_process_chunk(i, c))
+                            except Exception as e:
+                                errors.append({'chunk_index': i, 'error': str(e)})
+                                if fail_behavior == 'stop_on_error':
+                                    break
+                else:
+                    # serial processing
+                    for i, c in enumerate(chunks):
+                        try:
+                            chunk_results.append(_process_chunk(i, c))
+                        except Exception as e:
+                            errors.append({'chunk_index': i, 'error': str(e)})
+                            if fail_behavior == 'stop_on_error':
+                                break
+
+                result = {
+                    'chunks': total,
+                    'chunk_results': chunk_results,
+                    'errors': errors,
+                }
 
             # Execute sub-workflow / ExecuteWorkflow node
             elif isinstance(node.get('data'), dict) and node.get('data', {}).get('label') in ('ExecuteWorkflow', 'SubWorkflow'):
