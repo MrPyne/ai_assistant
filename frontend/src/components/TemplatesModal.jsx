@@ -142,6 +142,120 @@ const BUILTIN_TEMPLATES = [
       ],
       edges: [ { id: 'ce1', source: 'c1', target: 'c2' }, { id: 'ce2', source: 'c2', target: 'c3' }, { id: 'ce3', source: 'c3', target: 'c4' } ]
     }
+  },
+
+  {
+    id: 'webhook-to-db',
+    title: 'Webhook -> Transform -> DB upsert',
+    description: 'Ingest webhook payload, transform and upsert into a database',
+    category: 'Integrations',
+    tags: ['webhook', 'db', 'etl'],
+    note: 'Common pattern for accepting external events and persisting normalized records.',
+    sample_input: { event: { id: 'evt_123', payload: { user: { id: 42, name: 'Alice' } } } },
+    graph: {
+      nodes: [
+        { id: 'w1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Webhook Trigger', config: {} } },
+        { id: 'w2', type: 'action', position: { x: 220, y: 0 }, data: { label: 'Transform (normalize)', config: { language: 'jinja', template: "{{ event.payload.user | tojson }}" } } },
+        { id: 'w3', type: 'action', position: { x: 440, y: 0 }, data: { label: 'DB Upsert', config: { query: 'UPSERT INTO users ...' } } },
+      ],
+      edges: [ { id: 'we1', source: 'w1', target: 'w2' }, { id: 'we2', source: 'w2', target: 'w3' } ]
+    }
+  },
+
+  {
+    id: 'scheduled-report-slack',
+    title: 'Cron -> DB Query -> LLM Summary -> Slack',
+    description: 'Run a scheduled report: query DB, summarize with LLM, send to Slack',
+    category: 'Automation',
+    tags: ['cron', 'report', 'slack', 'llm'],
+    note: 'Useful for nightly summaries or digest notifications.',
+    sample_input: { run: { period: 'daily' } },
+    graph: {
+      nodes: [
+        { id: 'r1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Cron Trigger', config: { schedule: '0 6 * * *' } } },
+        { id: 'r2', type: 'action', position: { x: 220, y: 0 }, data: { label: 'DB Query', config: { sql: 'SELECT count(*) as cnt, avg(duration) as avg_d FROM runs WHERE ts > now() - interval 1 day' } } },
+        { id: 'r3', type: 'llm', position: { x: 440, y: 0 }, data: { label: 'LLM (summarize)', config: { model: 'gpt', prompt: 'Create a short report from: {{ rows }}' } } },
+        { id: 'r4', type: 'action', position: { x: 660, y: 0 }, data: { label: 'Slack - Post', config: { channel: '#alerts', text: 'Report: {{ summary }}' } } },
+      ],
+      edges: [ { id: 're1', source: 'r1', target: 'r2' }, { id: 're2', source: 'r2', target: 'r3' }, { id: 're3', source: 'r3', target: 'r4' } ]
+    }
+  },
+
+  {
+    id: 's3-llm-extract',
+    title: 'S3 Ingest -> LLM Extract -> DB',
+    description: 'Process files from S3: extract text with LLM and store results',
+    category: 'Data pipelines',
+    tags: ['s3', 'llm', 'extract', 'db'],
+    note: 'Ideal for document ingestion workflows (OCR/LLM extraction)',
+    sample_input: { s3: { bucket: 'uploads', key: 'invoices/2025/01/01.pdf' } },
+    graph: {
+      nodes: [
+        { id: 's31', type: 'input', position: { x: 0, y: 0 }, data: { label: 'S3 Event', config: {} } },
+        { id: 's32', type: 'action', position: { x: 220, y: 0 }, data: { label: 'Download from S3', config: { bucket: '{{ s3.bucket }}', key: '{{ s3.key }}' } } },
+        { id: 's33', type: 'llm', position: { x: 440, y: 0 }, data: { label: 'LLM - Extract Text', config: { model: 'gpt', prompt: 'Extract structured data: {{ file_text }}' } } },
+        { id: 's34', type: 'action', position: { x: 660, y: 0 }, data: { label: 'DB Insert', config: { table: 'documents', fields: ['title','summary','entities'] } } },
+      ],
+      edges: [ { id: 's3e1', source: 's31', target: 's32' }, { id: 's3e2', source: 's32', target: 's33' }, { id: 's3e3', source: 's33', target: 's34' } ]
+    }
+  },
+
+  {
+    id: 'http-parallel-enrich-aggregate',
+    title: 'HTTP -> Parallel Enrich -> Aggregate',
+    description: 'Call external API for items, enrich each in parallel with LLM, then combine',
+    category: 'Data pipelines',
+    tags: ['http', 'llm', 'parallel', 'aggregation'],
+    note: 'Demonstrates parallel SplitInBatches followed by an aggregation step.',
+    sample_input: { items: ['item1','item2','item3','item4'] },
+    graph: {
+      nodes: [
+        { id: 'h1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
+        { id: 'h2', type: 'action', position: { x: 220, y: 0 }, data: { label: 'SplitInBatches', config: { input_path: 'items', batch_size: 10, mode: 'parallel', concurrency: 4 } } },
+        { id: 'h3', type: 'llm', position: { x: 440, y: -20 }, data: { label: 'LLM Enrich', config: { model: 'gpt', prompt: 'Enrich: {{ item }}' } } },
+        { id: 'h4', type: 'action', position: { x: 660, y: 0 }, data: { label: 'Aggregate Results', config: { language: 'jinja', template: 'Aggregated {{ results|length }} items' } } },
+      ],
+      edges: [ { id: 'he1', source: 'h1', target: 'h2' }, { id: 'he2', source: 'h2', target: 'h3' }, { id: 'he3', source: 'h3', target: 'h4' } ]
+    }
+  },
+
+  {
+    id: 'webhook-routing-branch',
+    title: 'Webhook -> If routing -> Email / Slack',
+    description: 'Route incoming webhooks to channels based on payload conditions',
+    category: 'Notifications',
+    tags: ['webhook', 'routing', 'email', 'slack', 'condition'],
+    note: 'Shows conditional routing using an If/Condition node.',
+    sample_input: { event: { type: 'signup', user: { email: 'a@b.com' } } },
+    graph: {
+      nodes: [
+        { id: 'br1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Webhook Trigger', config: {} } },
+        { id: 'br2', type: 'action', position: { x: 220, y: 0 }, data: { label: 'If', config: { condition: "event.type == 'signup'" } } },
+        { id: 'br3', type: 'action', position: { x: 440, y: -40 }, data: { label: 'Send Email', config: { to: "{{ event.user.email }}", subject: 'Welcome' } } },
+        { id: 'br4', type: 'action', position: { x: 440, y: 40 }, data: { label: 'Slack - Post', config: { channel: '#events', text: 'Event: {{ event.type }}' } } },
+      ],
+      edges: [ { id: 'bre1', source: 'br1', target: 'br2' }, { id: 'bre2', source: 'br2', target: 'br3' }, { id: 'bre3', source: 'br2', target: 'br4' } ]
+    }
+  },
+
+  {
+    id: 'http-retry-backoff',
+    title: 'HTTP call with retry/backoff',
+    description: 'Attempt an HTTP request, retry with delay on transient errors',
+    category: 'Reliability',
+    tags: ['http', 'retry', 'backoff'],
+    note: 'Pattern for robust external calls with retry and wait/delay nodes.',
+    sample_input: { url: 'https://api.example.com/slow' },
+    graph: {
+      nodes: [
+        { id: 'rt1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
+        { id: 'rt2', type: 'http', position: { x: 220, y: 0 }, data: { label: 'HTTP Request', config: { method: 'POST', url: '{{ url }}' } } },
+        { id: 'rt3', type: 'action', position: { x: 440, y: 0 }, data: { label: 'If (error?)', config: { condition: 'response.status >= 500' } } },
+        { id: 'rt4', type: 'action', position: { x: 660, y: -20 }, data: { label: 'Wait 5s', config: { seconds: 5 } } },
+        { id: 'rt5', type: 'action', position: { x: 880, y: 0 }, data: { label: 'Retry HTTP', config: { attempts: 3 } } },
+      ],
+      edges: [ { id: 'rte1', source: 'rt1', target: 'rt2' }, { id: 'rte2', source: 'rt2', target: 'rt3' }, { id: 'rte3', source: 'rt3', target: 'rt4' }, { id: 'rte4', source: 'rt4', target: 'rt5' } ]
+    }
   }
 ]
 
@@ -193,7 +307,6 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
     return () => { mounted = false }
   }, [open, token])
 
-  if (!open) return null
 
   const categories = useMemo(() => {
     const set = new Set(['All'])
@@ -229,6 +342,12 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
     if (sortBy === 'title') list.sort((a,b) => (a.title||'').localeCompare(b.title||''))
     return list
   }, [templates, category, tagFilters, query, sortBy])
+
+  // Do not early-return before all hooks have been declared � hooks must run
+  // in the same order on every render. We only skip rendering the modal when
+  // `open` is false, but we keep all hooks/derived memos above so React's
+  // rules-of-hooks are satisfied.
+  if (!open) return null
 
   return (
     <div className="templates-overlay" role="dialog" aria-modal="true">

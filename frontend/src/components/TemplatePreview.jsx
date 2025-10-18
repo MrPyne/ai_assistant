@@ -37,20 +37,34 @@ export default function TemplatePreview({ graph, height = 160 }) {
     }
   }, [graph])
 
+  // Prevent wheel events inside the preview from bubbling up to parent
+  // containers (like the TemplatesModal) which can cause the whole
+  // modal/sidebar to scroll when the user intends to interact with the
+  // embedded ReactFlow preview. We stop propagation here but allow the
+  // ReactFlow instance to handle pointer interaction normally.
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={NODE_TYPES}
-      onInit={(inst) => { instRef.current = inst }}
-      nodesDraggable={false}
-      nodesConnectable={false}
-      panOnScroll={false}
-      zoomOnScroll={false}
-      panOnDrag={false}
-      elementsSelectable={false}
-      fitView={false}
-      style={{ width: '100%', height }}
-    />
+    <div
+      onWheel={(e) => {
+        // stop propagation so the parent modal doesn't scroll while
+        // the user is interacting with the flow preview.
+        e.stopPropagation()
+      }}
+      style={{ width: '100%', height, overflow: 'hidden' }}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={NODE_TYPES}
+        onInit={(inst) => { instRef.current = inst }}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        panOnScroll={false}
+        zoomOnScroll={false}
+        panOnDrag={false}
+        elementsSelectable={false}
+        fitView={false}
+        style={{ width: '100%', height: '100%' }}
+      />
+    </div>
   )
 }
