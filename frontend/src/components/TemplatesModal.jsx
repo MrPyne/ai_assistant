@@ -24,9 +24,10 @@ const TemplateCard = React.memo(function TemplateCard({ t, onApply, onClose, set
         </div>
       </div>
 
-      <div style={{ marginTop: 8 }}>
-        <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={120} />
-      </div>
+      {/* Small inline previews removed to avoid inaccurate thumbnails and
+          to eliminate remaining rendering differences. The full overlay
+          preview (Preview button) still uses TemplatePreview for fidelity. */}
+      <div style={{ marginTop: 8, height: 120 }} />
 
       <div className="template-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
         <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
