@@ -168,16 +168,26 @@ export default function NodeRenderer(props) {
   }
   const isRunning = status === 'running'
 
+  // Build the style object but avoid assigning zIndex when this node is
+  // being rendered inside a preview (templates / TemplatePreview). The
+  // TemplatePreview sets data.__preview = true on nodes it renders so we
+  // can detect that and not include a z-index which would otherwise compete
+  // with dialog z-index rules.
+  const baseStyle = isInvalid
+    ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }
+    : { opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }
+
+  // If not a preview, include the canvas z-index so nodes sit above other
+  // canvas content but beneath dialogs. For previews we deliberately omit
+  // zIndex so previews never outrank modals.
+  const isPreview = data && data.__preview
+  const style = isPreview ? baseStyle : { ...baseStyle, zIndex: 'var(--z-canvas, 1500)' }
+
   return (
     <div
       className={`node-card${isRunning ? ' node-running' : ''}`}
       tabIndex={0}
-      // force nodes to render above edges / overlays in case the canvas
-      // stacking context is unusual in some environments
-      // include explicit opacity/display so nodes don't become visually hidden
-      style={isInvalid
-        ? { border: '2px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.15)', zIndex: 2000, opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }
-        : { zIndex: 2000, opacity: 1, display: 'flex', backgroundColor: 'rgba(255,255,255,0.08)', color: '#e6eef6', pointerEvents: 'auto' }}
+      style={style}
       data-node-id={id}
     >
       {/* Target / input handle on the left */}

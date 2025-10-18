@@ -75,8 +75,8 @@ export default function NodeTestModal({ node, token, providers = [], secrets = [
   if (!node) return null
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
-      <div style={{ width: '820px', maxWidth: '95%', background: '#071028', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, padding: 16, color: '#e8f0ff' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 'var(--z-templates-overlay, 2000)' }}>
+      <div style={{ width: '820px', maxWidth: '95%', background: '#071028', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, padding: 16, color: '#e8f0ff', zIndex: 'var(--z-templates-modal, 2001)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>Test Node: {node.data && node.data.label}</div>
           <div>

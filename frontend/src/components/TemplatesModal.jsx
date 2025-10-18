@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import TemplatePreview from './TemplatePreview'
 
 // Built-in example templates. These are always available and will be
@@ -349,7 +350,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
   // rules-of-hooks are satisfied.
   if (!open) return null
 
-  return (
+  const modalContent = (
     <div className="templates-overlay" role="dialog" aria-modal="true">
       <div className="templates-modal" style={{ display: 'flex', gap: 16, padding: 12, maxHeight: '80vh', boxSizing: 'border-box' }}>
         {/* LEFT: fixed-width filter column with its own scroll container */}
@@ -445,10 +446,9 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
           </div>
         </div>
       </div>
-
       {preview ? (
         <div className="templates-overlay" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--bg)', border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
+          <div className="templates-modal" style={{ background: 'var(--bg)', border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0 }}>{preview.title}</h3>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -484,4 +484,18 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
       ) : null}
     </div>
   )
+
+  // Portal the entire templates modal to document.body so it lives in the
+  // top-level stacking context. This avoids being trapped behind other
+  // stacking contexts and ensures the preview portal (which may mount into
+  // the modal) paints above page content correctly.
+  try {
+    if (typeof document !== 'undefined' && document.body) {
+      return createPortal(modalContent, document.body)
+    }
+  } catch (e) {
+    // fallback to inline render if portal fails for any environment (SSR/test)
+  }
+
+  return modalContent
 }

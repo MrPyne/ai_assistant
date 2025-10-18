@@ -313,8 +313,11 @@ select:focus {
 /* Ensure nodes and handles render above edges and decorations */
 .react-flow__node,
 .node-card {
-  z-index: 1000 !important;
-  pointer-events: auto !important;
+  /* Keep nodes at canvas level but below templates/modals. Use var fallback
+     to remain compatible with older browsers where CSS variables may be
+     missing. Avoid !important here so dialogs can override when necessary. */
+  z-index: var(--z-canvas, 1500);
+  pointer-events: auto;
   background-clip: padding-box;
 }
 .react-flow__handle,
@@ -322,7 +325,7 @@ select:focus {
 .rf-handle-right,
 .rf-handle-true,
 .rf-handle-false {
-  z-index: 1100 !important;
+  z-index: var(--z-handles) !important;
 }
 .react-flow__edge {
   z-index: 500 !important;

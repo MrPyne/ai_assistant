@@ -16,6 +16,17 @@
   --node-pad-y: 12px;
   --handle-size: 12px;
   --handle-border: 2px;
+
+  /* Centralized z-index scale. Dialogs/modals should control stacking
+     order and components should use these variables instead of hard-
+     coded numbers. Adjust as needed but keep dialog values higher than
+     app content. */
+  --z-topbar: 1200;
+  --z-canvas: 1500;
+  --z-templates-overlay: 2000;
+  --z-templates-modal: 2001;
+  --z-portal: 2002;
+  --z-handles: 1600;
 }
 
 * { box-sizing: border-box }
@@ -51,7 +62,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   padding: 0 18px; /* horizontal padding only; vertical centering via height */
   border-bottom: 1px solid rgba(255,255,255,0.03);
   backdrop-filter: blur(var(--glass-blur));
-  z-index: 1200;
+  z-index: var(--z-topbar);
 }
 
 .brand {
@@ -239,10 +250,36 @@ textarea { resize: vertical }
 
 /* Templates modal (above topbar) */
 .templates-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.98); z-index: 2000; display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; background: #000000; z-index: var(--z-templates-overlay); display: flex; align-items: center; justify-content: center;
 }
 .templates-modal {
-  z-index: 2001; background: rgba(8,10,12,0.96); border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
+  z-index: var(--z-templates-modal); background: #080a0c; border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
+}
+.template-preview-portal {
+  /* Preview portal itself must not introduce its own stacking order. We
+     keep it visually above page content via fixed positioning but do NOT
+     set z-index so dialogs remain authoritative for stacking order. */
+  position: fixed;
+  pointer-events: auto;
+  transform: none;
+}
+/* Ensure preview nodes (rendered into the portal) do NOT inject their
+   own z-index that could compete with dialog stacking. Keep DOM painting
+   order within the modal authoritative. */
+.template-preview-portal .react-flow__node,
+.template-preview-portal .node-card {
+  /* Ensure preview nodes paint above edges/handles within the portal
+     without affecting global stacking order. These rules are scoped to
+     the portal so dialogs remain authoritative via their z-index vars. */
+  z-index: 2 !important;
+}
+
+.template-preview-portal .react-flow__handle {
+  z-index: 3 !important;
+}
+
+.template-preview-portal .react-flow__edge {
+  z-index: 1 !important;
 }
 .templates-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px }
 .template-card { padding: 12px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); border: 1px solid rgba(255,255,255,0.02); }
@@ -273,7 +310,7 @@ textarea { resize: vertical }
 .log-entry pre { white-space: pre-wrap; margin: 0; color: #cfeff3 }
 
 /* Handles should appear above the card content slightly */
-.react-flow__handle { z-index: 1100 }
+.react-flow__handle { z-index: var(--z-handles) }
 
 /* Fix collapsed selects/inputs inside side panels */
 /*

@@ -122,8 +122,8 @@ export default function Sidebar({
       {editorState.leftPanelOpen ? (
         <>
         {editModalOpen ? (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
-            <div style={{ background: 'var(--bg)', padding: 16, borderRadius: 8, width: '90%', maxWidth: 720 }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 'var(--z-templates-overlay, 2000)' }}>
+            <div style={{ background: 'var(--bg)', padding: 16, borderRadius: 8, width: '90%', maxWidth: 720, zIndex: 'var(--z-templates-modal, 2001)' }}>
               <h3>Edit Provider</h3>
               {editingProvider ? (
                 <ProviderEditModal provider={editingProvider} token={token} onClose={() => { setEditModalOpen(false); setEditingProvider(null); loadProviders && loadProviders() }} loadSecrets={loadSecrets} />
