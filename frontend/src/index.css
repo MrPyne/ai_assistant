@@ -295,6 +295,15 @@ textarea { resize: vertical }
 .template-preview-portal .react-flow__edge {
   z-index: 1 !important;
 }
+/* Make TemplatePreview match the visual style of the templates modal so
+   previews feel like part of the same surface. Keep this scoped to the
+   preview container to avoid affecting other React Flow instances. */
+.template-preview {
+  background: #080a0c;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 6px;
+}
 .templates-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px }
 .template-card { padding: 12px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); border: 1px solid rgba(255,255,255,0.02); }
 .template-card h4 { margin: 0 0 6px 0 }

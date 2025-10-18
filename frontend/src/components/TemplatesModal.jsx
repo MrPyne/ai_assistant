@@ -446,44 +446,45 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
           </div>
         </div>
       </div>
-      {preview ? (
-        <div className="templates-overlay" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="templates-modal" style={{ background: 'var(--bg)', border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0 }}>{preview.title}</h3>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => setPreview(null)} className="secondary">Close</button>
-              </div>
-            </div>
+    </div>
+  )
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 12, marginTop: 12 }}>
-              <div>
-                <TemplatePreview graph={preview.graph || { nodes: [], edges: [] }} height={420} />
-              </div>
-              <div style={{ borderLeft: '1px solid var(--muted)', paddingLeft: 12 }}>
-                <div style={{ fontSize: 13, color: 'var(--muted)' }}>{preview.description}</div>
-                {preview.note ? <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>{preview.note}</div> : null}
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>Sample input</div>
-                  <pre style={{ background: 'var(--panel)', padding: 8, marginTop: 6, maxHeight: 220, overflow: 'auto' }}>{JSON.stringify(preview.sample_input || {}, null, 2)}</pre>
-                </div>
-              </div>
-            </div>
+  const previewContent = preview ? (
+    <div className="templates-overlay" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="templates-modal" style={{ background: 'var(--bg)', border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>{preview.title}</h3>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setPreview(null)} className="secondary">Close</button>
+          </div>
+        </div>
 
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { onApply && onApply(preview.graph); setPreview(null); onClose && onClose() }}>Use template</button>
-              <button onClick={() => {
-                try {
-                  onApply && onApply(preview.graph)
-                  setTimeout(() => { try { if (window.__editor_runWorkflow) window.__editor_runWorkflow() } catch (e) {} }, 120)
-                } finally { setPreview(null); try { onClose && onClose() } catch (e) {} }
-              }} className="secondary">Load & Run</button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 12, marginTop: 12 }}>
+          <div>
+            <TemplatePreview graph={preview.graph || { nodes: [], edges: [] }} height={420} />
+          </div>
+          <div style={{ borderLeft: '1px solid var(--muted)', paddingLeft: 12 }}>
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>{preview.description}</div>
+            {preview.note ? <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>{preview.note}</div> : null}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Sample input</div>
+              <pre style={{ background: 'var(--panel)', padding: 8, marginTop: 6, maxHeight: 220, overflow: 'auto' }}>{JSON.stringify(preview.sample_input || {}, null, 2)}</pre>
             </div>
           </div>
         </div>
-      ) : null}
+
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={() => { onApply && onApply(preview.graph); setPreview(null); onClose && onClose() }}>Use template</button>
+          <button onClick={() => {
+            try {
+              onApply && onApply(preview.graph)
+              setTimeout(() => { try { if (window.__editor_runWorkflow) window.__editor_runWorkflow() } catch (e) {} }, 120)
+            } finally { setPreview(null); try { onClose && onClose() } catch (e) {} }
+          }} className="secondary">Load & Run</button>
+        </div>
+      </div>
     </div>
-  )
+  ) : null
 
   // Portal the entire templates modal to document.body so it lives in the
   // top-level stacking context. This avoids being trapped behind other
@@ -491,11 +492,29 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
   // the modal) paints above page content correctly.
   try {
     if (typeof document !== 'undefined' && document.body) {
-      return createPortal(modalContent, document.body)
+      // Portal both the main modal and the preview overlay together into
+      // document.body so they share the top-level stacking context and
+      // cannot be hidden by ancestor stacking contexts. We wrap them in a
+      // single container to ensure ordering: previewContent should render
+      // after modalContent so it paints above.
+      return createPortal(
+        <>
+          {modalContent}
+          {previewContent}
+        </>,
+        document.body
+      )
     }
   } catch (e) {
     // fallback to inline render if portal fails for any environment (SSR/test)
   }
 
-  return modalContent
+  // If portal cannot be used (tests/SSR), render inline. Ensure preview is
+  // rendered after the modal so it appears above when possible.
+  return (
+    <>
+      {modalContent}
+      {previewContent}
+    </>
+  )
 }

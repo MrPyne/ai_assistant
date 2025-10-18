@@ -46,6 +46,7 @@ export default function TemplatePreview({ graph, height = 160 }) {
   return (
     <div
       ref={hostRef}
+      className="template-preview"
       onWheel={(e) => { e.stopPropagation() }}
       style={{ width: '100%', height, overflow: 'visible', position: 'relative' }}
     >
