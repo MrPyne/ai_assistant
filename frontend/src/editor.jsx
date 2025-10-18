@@ -653,6 +653,7 @@ function EditorInner({ initialToken = '' }) {
           addDbQuery={() => addNode('DB Query', 'action')}
           addS3Upload={() => addNode('S3 Upload', 'action')}
           addTransform={() => addNode('Transform', 'action')}
+          addSplitInBatches={() => addNode('SplitInBatches', 'action', { input_path: 'input', batch_size: 10, mode: 'serial', concurrency: 4, fail_behavior: 'stop_on_error', max_chunks: '' })}
           addWait={() => addNode('Wait', 'action')}
           addIfNode={() => addNode('If', 'action')}
           addSwitchNode={() => addNode('Switch', 'action')}

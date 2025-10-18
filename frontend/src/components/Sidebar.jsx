@@ -17,6 +17,7 @@ export default function Sidebar({
   addDbQuery,
   addS3Upload,
   addTransform,
+  addSplitInBatches,
   addWait,
   addIfNode,
   addSwitchNode,
@@ -105,6 +106,16 @@ export default function Sidebar({
     }
   }, [runs])
 
+  // Small inline icon component for SplitInBatches
+  const SplitIcon = ({ size = 14 }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <rect x="3" y="4" width="18" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="3" y="14" width="10" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M15 14L21 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M15 10L21 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+
   return (
     <FormProvider {...methods}>
       {/* If panel is open show full content, otherwise render a thin handle to reopen it */}
@@ -165,6 +176,18 @@ export default function Sidebar({
                   <button onClick={addCronTrigger}>Add Cron Trigger</button>
                   <button onClick={addWait}>Add Wait</button>
                 </div>
+
+                {/* Grouped category: Batching */}
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Batching</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={addSplitInBatches} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} aria-label="Add SplitInBatches">
+                      <span style={{ display: 'inline-flex', alignItems: 'center' }}><SplitIcon size={14} /></span>
+                      <span>SplitInBatches</span>
+                    </button>
+                  </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                   <button onClick={addSendEmail}>Add Send Email</button>
                   <button onClick={addSlackMessage}>Add Slack Message</button>
