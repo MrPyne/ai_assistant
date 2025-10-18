@@ -251,9 +251,21 @@ textarea { resize: vertical }
 /* Templates modal (above topbar) */
 .templates-overlay {
   position: fixed; inset: 0; background: #000000; z-index: var(--z-templates-overlay); display: flex; align-items: center; justify-content: center;
+  /* Ensure the templates overlay establishes its own stacking context and
+     sits above other app layers. Use a very high z-index to be robust on
+     pages that may create stacking contexts via transforms/isolation. This
+     is targeted to the templates overlay only (keeps risk surface small). */
+  isolation: isolate;
+  z-index: 2147483646 !important;
 }
 .templates-modal {
   z-index: var(--z-templates-modal); background: #080a0c; border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
+  /* Force the modal to paint above other stacked content even when an
+     ancestor has created a stacking context. This is intentionally
+     targeted and uses !important to avoid subtle style precedence issues
+     in varied environments. Remove if it causes regressions. */
+  isolation: isolate;
+  z-index: 2147483647 !important;
 }
 .template-preview-portal {
   /* Portal container for template previews.
