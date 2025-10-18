@@ -46,28 +46,12 @@ export default function TemplatePreview({ graph, height = 160 }) {
   // canvas can render above the modal and avoid ancestor overflow clipping.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    // Decide whether we should render the flow into a body-attached
-    // portal (to paint above page content) or inline inside the nearest
-    // templates modal. Rendering inline when inside the modal removes
-    // the risk of creating a new containing block (fixed positioning
-    // inside transformed ancestors) and ensures the preview stays
-    // clipped and scrolls with the dialog.
+    // Force-create a body-attached portal so the preview can be painted
+    // above modal overlays for immediate QA. This bypasses the inline
+    // rendering path which can leave the preview behind due to ancestor
+    // stacking contexts. This is a temporary, force override for testing.
     let createdEl = null
-    let mountInline = false
     try {
-      if (hostRef.current) {
-        const maybeModal = hostRef.current.closest('.templates-modal') || hostRef.current.closest('[role="dialog"]')
-        if (maybeModal && maybeModal instanceof HTMLElement) {
-          // If we're inside the templates modal, render inline to keep the
-          // preview contained and avoid stacking/containing-block issues.
-          mountInline = true
-        }
-      }
-    } catch (e) {
-      // ignore and fall back to portal
-    }
-
-    if (!mountInline) {
       const el = document.createElement('div')
       el.className = 'template-preview-portal'
       el.style.position = 'fixed'
@@ -78,20 +62,65 @@ export default function TemplatePreview({ graph, height = 160 }) {
       el.style.overflow = 'visible'
       el.style.pointerEvents = 'auto'
       el.style.transform = 'none'
+      // Force an inline-important z-index to overcome stubborn stacking issues
+      // Use the max signed 32-bit int which browsers accept as a large value
+      el.style.setProperty('z-index', '2147483647', 'important')
+      // Ensure the portal forms its own stacking context so it can paint above
+      // other contexts where possible.
+      el.style.isolation = 'isolate'
       el.setAttribute('data-portal-generated', 'true')
       document.body.appendChild(el)
+      // Ensure the portal is the last child so it paints after other overlays
+      try { document.body.appendChild(el) } catch (e) {}
       createdEl = el
       portalRef.current = el
       setMountedPortal(true)
-    } else {
-      // Ensure portalRef is null to indicate inline rendering path
+      // Observe body mutations and keep the portal as the last child — this
+      // helps when other code portals overlays to body after we mount.
+      const mo = new MutationObserver(() => {
+        try {
+          if (portalRef.current && document.body.lastElementChild !== portalRef.current) {
+            document.body.appendChild(portalRef.current)
+          }
+        } catch (e) {}
+      })
+      mo.observe(document.body, { childList: true })
+      // attach observer so we can disconnect it on cleanup
+      createdEl.__mo = mo
+    } catch (e) {
+      // fallback: leave portalRef null so inline rendering can be used
       portalRef.current = null
       setMountedPortal(false)
     }
 
+    // Diagnostic logging to help identify why the portal could be occluded
+    try {
+      const p = portalRef.current
+      if (p) {
+        // small delay so styles from CSS files have applied
+        setTimeout(() => {
+          try {
+            const portalStyle = window.getComputedStyle(p)
+            const overlay = document.querySelector('.templates-overlay')
+            const overlayStyle = overlay ? window.getComputedStyle(overlay) : null
+            console.warn('[TemplatePreview] portal mounted', { portalParent: p.parentElement, portalZ: portalStyle.zIndex, overlayZ: overlayStyle && overlayStyle.zIndex })
+            console.warn('[TemplatePreview] portal computed styles', portalStyle)
+            if (overlay) console.warn('[TemplatePreview] templates overlay computed styles', overlayStyle)
+            if (window.__logStackingContexts) {
+              try { window.__logStackingContexts(p) } catch (e) {}
+              try { if (overlay) window.__logStackingContexts(overlay) } catch (e) {}
+            }
+          } catch (e) {}
+        }, 50)
+      }
+    } catch (e) {}
+
     return () => {
       try {
-        if (createdEl && createdEl.parentNode) createdEl.parentNode.removeChild(createdEl)
+        if (createdEl) {
+          try { if (createdEl.__mo) createdEl.__mo.disconnect() } catch (e) {}
+          if (createdEl.parentNode) createdEl.parentNode.removeChild(createdEl)
+        }
       } catch (e) {}
       portalRef.current = null
       setMountedPortal(false)
