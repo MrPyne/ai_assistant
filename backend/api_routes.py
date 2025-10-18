@@ -477,7 +477,45 @@ def register(app, ctx):
         if t and isinstance(t, list):
             return t
 
-        # default fallback templates
+        # Attempt to load templates from the server-side templates directory.
+        # This keeps the frontend reliant on /api/templates instead of public files.
+        try:
+            import json as _json
+        except Exception:
+            _json = None
+
+        templates_out = []
+        try:
+            # directory next to this file: backend/templates
+            templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
+            if not os.path.isdir(templates_dir):
+                # fallback for dev setups where frontend files still exist
+                templates_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', 'templates'))
+
+            if os.path.isdir(templates_dir):
+                for fn in sorted(os.listdir(templates_dir)):
+                    if not fn.lower().endswith('.json'):
+                        continue
+                    p = os.path.join(templates_dir, fn)
+                    try:
+                        with open(p, 'r', encoding='utf-8') as fh:
+                            if _json is not None:
+                                obj = _json.load(fh)
+                            else:
+                                # minimal fallback: use eval (very unlikely)
+                                obj = eval(fh.read())
+                        if isinstance(obj, dict):
+                            templates_out.append(obj)
+                    except Exception:
+                        # ignore malformed files
+                        continue
+        except Exception:
+            templates_out = []
+
+        if templates_out:
+            return templates_out
+
+        # final fallback: a tiny starter template so the UI still works
         return [
             {
                 'id': 'starter-1',
