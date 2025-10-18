@@ -1,0 +1,22 @@
+{
+  "id": "ci-build-notifier",
+  "title": "CI Build Notifier",
+  "description": "Listen for CI webhook events and post build results to Slack and create an incident if failures exceed a threshold.",
+  "category": "DevOps",
+  "tags": ["ci","slack","incident","webhook"],
+  "note": "Attach to CI system webhooks. Keeps a simple failure counter in a lightweight storage (or use DB) and triggers incident creation when needed.",
+  "sample_input": { "ci_event": { "pipeline": "build-main", "status": "failed", "build_id": "1234" } },
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"CI Webhook","config":{}}},
+      {"id":"notify","type":"webhook","position":{"x":220,"y":0},"data":{"label":"Post Slack","config":{"url":"https://hooks.slack.com/services/T/XXX/YYY","payload":{"text":"Build {{ input.ci_event.pipeline }} ({{ input.ci_event.build_id }}) - {{ input.ci_event.status }}"}}}},
+      {"id":"check","type":"action","position":{"x":440,"y":0},"data":{"label":"Check Failure Count","config":{"language":"python","code":"# pseudo: increment a key in redis and return count\\ncount = 1\\n# increment logic omitted for template\\nreturn {'fail_count': count}"}}},
+      {"id":"incident","type":"http","position":{"x":660,"y":0},"data":{"label":"Create Incident","config":{"method":"POST","url":"https://incidents.company/api/incidents","body":"{ \"title\": \"CI failure: {{ input.ci_event.pipeline }}\", \"details\": \"Build {{ input.ci_event.build_id }} failed\" }"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"notify"},
+      {"id":"e2","source":"notify","target":"check"},
+      {"id":"e3","source":"check","target":"incident","condition":"{{ node_results.check.fail_count > 3 }}"}
+    ]
+  }
+}

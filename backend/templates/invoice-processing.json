@@ -1,0 +1,22 @@
+{
+  "id": "invoice-processing",
+  "title": "Invoice Processing (OCR -> Extract -> AP System)",
+  "description": "Process vendor invoices: OCR PDFs, extract key fields, validate totals, and create invoices in the AP system.",
+  "category": "Finance",
+  "tags": ["ocr","pdf","invoice","ap"],
+  "note": "Connect an S3-bucket or email attachment trigger. Validate fields and route mismatches for manual review.",
+  "sample_input": { "s3_key": "invoices/2025/000123.pdf" },
+  "graph": {
+    "nodes": [
+      {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"S3 Upload Trigger","config":{}}},
+      {"id":"ocr","type":"action","position":{"x":220,"y":0},"data":{"label":"Run OCR","config":{"language":"python","code":"# placeholder calling OCR\ntext = 'Vendor: ACME\nTotal: 123.45'\nreturn {'text': text}"}}},
+      {"id":"extract","type":"action","position":{"x":440,"y":0},"data":{"label":"Extract Fields","config":{"language":"python","code":"# simple regex extract\nimport re\ntext = node_results.ocr.text\nvendor = re.search(r'Vendor:\\s*(.+)', text)\ntotal = re.search(r'Total:\\s*([\\d\\.]+)', text)\nreturn {'vendor': vendor.group(1) if vendor else None, 'total': float(total.group(1)) if total else None}"}}},
+      {"id":"validate","type":"action","position":{"x":660,"y":0},"data":{"label":"Validate & Create","config":{"language":"python","code":"# validate and create invoice in AP via HTTP\nif node_results.extract.total is None:\n    return {'status':'manual_review','reason':'missing_total'}\n# else create invoice via HTTP (omitted)\nreturn {'status':'created','invoice_id': 'INV-12345'}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"trigger","target":"ocr"},
+      {"id":"e2","source":"ocr","target":"extract"},
+      {"id":"e3","source":"extract","target":"validate"}
+    ]
+  }
+}

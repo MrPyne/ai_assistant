@@ -1,0 +1,20 @@
+{
+  "id": "lead-enrichment",
+  "title": "Lead Enrichment (Form -> Enrich -> CRM)",
+  "description": "On new lead submission, enrich lead data using external enrichment APIs and create/update the lead in the CRM.",
+  "category": "Sales",
+  "tags": ["crm","http","enrichment","webhook"],
+  "note": "Demonstrates HTTP input, external API calls, and conditional CRM upserts.",
+  "sample_input": { "lead": { "email": "lead@example.com", "name": "Acme" } },
+  "graph": {
+    "nodes": [
+      {"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Webhook Trigger","config":{}}},
+      {"id":"enrich","type":"http","position":{"x":240,"y":0},"data":{"label":"Enrichment API","config":{"method":"GET","url":"https://enrich.example.com/lookup?email={{ input.lead.email }}"}}},
+      {"id":"upsert","type":"http","position":{"x":480,"y":0},"data":{"label":"Upsert CRM","config":{"method":"POST","url":"https://crm.example.com/api/leads","body":"{ \"email\": \"{{ input.lead.email }}\", \"company\": \"{{ node_results.enrich.company }}\", \"score\": {{ node_results.enrich.score }} }"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"in","target":"enrich"},
+      {"id":"e2","source":"enrich","target":"upsert"}
+    ]
+  }
+}

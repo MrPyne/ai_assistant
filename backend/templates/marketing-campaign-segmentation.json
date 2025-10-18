@@ -1,0 +1,24 @@
+{
+  "id": "marketing-campaign-segmentation",
+  "title": "Marketing Campaign Segmentation (DB -> LLM -> Email)",
+  "description": "Query user behavior from DB, use an LLM to generate personalized subject lines and copy, and send emails to segmented cohorts.",
+  "category": "Marketing",
+  "tags": ["email","llm","segmentation","db"],
+  "note": "Shows using DB query results, LLM copy generation, and batch email sending. Replace with proper provider configs and opt-out handling.",
+  "sample_input": { "campaign_id": "spring_sale_2025" },
+  "graph": {
+    "nodes": [
+      {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Manual/Scheduler Trigger","config":{}}},
+      {"id":"query","type":"action","position":{"x":220,"y":0},"data":{"label":"Query DB","config":{"language":"python","code":"# pseudo: run SQL to fetch cohort\nusers = [{'email':'u1@example.com','name':'Ana'},{'email':'u2@example.com','name':'Bob'}]\nreturn {'users': users}"}}},
+      {"id":"split","type":"action","position":{"x":440,"y":0},"data":{"label":"SplitInBatches","config":{"input_path":"node_results.query.users","batch_size":50,"mode":"serial"}}},
+      {"id":"llm","type":"llm","position":{"x":660,"y":0},"data":{"label":"Generate Copy","config":{"model":"gpt","prompt":"Write a personalized subject and short body for {{ item.name }} for campaign {{ trigger.campaign_id }}. Respond with JSON like: {\"subject\": \"...\", \"body\": \"...\"}"}}},
+      {"id":"send","type":"email","position":{"x":880,"y":0},"data":{"label":"Send Email","config":{"to":"{{ item.email }}","subject":"{{ node_results.llm.subject }}","body":"{{ node_results.llm.body }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"trigger","target":"query"},
+      {"id":"e2","source":"query","target":"split"},
+      {"id":"e3","source":"split","target":"llm"},
+      {"id":"e4","source":"llm","target":"send"}
+    ]
+  }
+}

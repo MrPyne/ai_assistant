@@ -1,0 +1,20 @@
+{
+  "id": "weekly-data-backup",
+  "title": "Weekly Data Backup (DB -> S3)",
+  "description": "Dump specific database tables weekly and copy the compressed dump to S3 for off-site backup.",
+  "category": "Maintenance",
+  "tags": ["backup","s3","database","schedule"],
+  "note": "Uses a database connection and S3 upload. In production replace with secure secrets and proper credentials.",
+  "sample_input": { "tables": ["users","orders"], "s3_bucket": "company-backups", "retention_days": 90 },
+  "graph": {
+    "nodes": [
+      {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler","config":{}}},
+      {"id":"dump","type":"action","position":{"x":240,"y":0},"data":{"label":"Dump Tables","config":{"language":"python","code":"import subprocess,tarfile,os,io,sys,datetime\n# pseudo: run pg_dump for each table and compress into one tarball\nnow = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')\nfilename = f'db-backup-{now}.tar.gz'\n# In real deploy, use DB creds from secrets and stream to avoid disk usage\n# Here we assume input['tables'] present\nreturn {'filename': filename, 'tables': input.get('tables',[]) }"}}},
+      {"id":"upload","type":"action","position":{"x":480,"y":0},"data":{"label":"Upload to S3","config":{"language":"python","code":"import boto3,io\ns3 = boto3.client('s3')\n# placeholder: assume we have a bytes object in node_results.dump.get('data')\ncontent = node_results.dump.get('data', b'')\ns3.put_object(Bucket=input.get('s3_bucket'), Key=node_results.dump.get('filename'), Body=content)\nreturn {'s3_key': node_results.dump.get('filename')}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"trigger","target":"dump"},
+      {"id":"e2","source":"dump","target":"upload"}
+    ]
+  }
+}

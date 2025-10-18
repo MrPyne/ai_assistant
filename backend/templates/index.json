@@ -1,1 +1,20 @@
-["starter-1.json","split-basic.json","webhook-to-slack.json","email-digest.json","etl-csv-to-db.json","sentiment-analysis.json","ocr-workflow.json","user-onboarding.json","inventory-reorder.json","payment-failure-retry.json"]
+[
+  "starter-1.json",
+  "split-basic.json",
+  "webhook-to-slack.json",
+  "email-digest.json",
+  "etl-csv-to-db.json",
+  "sentiment-analysis.json",
+  "ocr-workflow.json",
+  "user-onboarding.json",
+  "inventory-reorder.json",
+  "payment-failure-retry.json",
+  "daily-sales-report.json",
+  "weekly-data-backup.json",
+  "customer-support-triage.json",
+  "ci-build-notifier.json",
+  "lead-enrichment.json",
+  "marketing-campaign-segmentation.json",
+  "invoice-processing.json",
+  "stock-price-alert.json"
+]
