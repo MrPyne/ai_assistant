@@ -256,10 +256,9 @@ textarea { resize: vertical }
   z-index: var(--z-templates-modal); background: #080a0c; border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
 }
 .template-preview-portal {
-  /* Preview portal itself must not introduce its own stacking order. We
-     keep it visually above page content via fixed positioning but do NOT
-     set z-index so dialogs remain authoritative for stacking order. */
+  /* Force the portal above everything. Temporary QA override. Revert after diagnostics. */
   position: fixed;
+  z-index: 99999 !important;
   pointer-events: auto;
   transform: none;
 }
