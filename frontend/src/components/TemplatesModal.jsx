@@ -78,6 +78,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
+  const [attempts, setAttempts] = useState([])
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All')
   const [tagFilters, setTagFilters] = useState([])
@@ -90,17 +91,35 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
     const load = async () => {
       setLoading(true)
       setErr(null)
+      setAttempts([])
       try {
         const headers = {}
         if (token) headers.Authorization = `Bearer ${token}`
-        const resp = await fetch('/api/templates', { headers })
-        if (resp.ok) {
-          const data = await resp.json()
-          if (mounted) {
-            const serverTemplates = Array.isArray(data) ? data : []
-            setTemplates(serverTemplates)
-            return
+        try {
+          const resp = await fetch('/api/templates', { headers })
+          const info = { url: '/api/templates', status: resp.status }
+          if (!resp.ok) {
+            info.error = `status ${resp.status}`
+            setAttempts((a) => a.concat([info]))
+          } else {
+            try {
+              const data = await resp.json()
+              info.body = Array.isArray(data) ? `${data.length} templates` : 'non-array response'
+              setAttempts((a) => a.concat([info]))
+              if (mounted) {
+                const serverTemplates = Array.isArray(data) ? data : []
+                if (serverTemplates.length) {
+                  setTemplates(serverTemplates)
+                  return
+                }
+              }
+            } catch (e) {
+              info.error = `json parse error: ${String(e)}`
+              setAttempts((a) => a.concat([info]))
+            }
           }
+        } catch (e) {
+          setAttempts((a) => a.concat([{ url: '/api/templates', error: String(e) }]))
         }
 
         // If backend doesn't expose /api/templates or returned non-200,
@@ -109,11 +128,18 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
         // then fetched and parsed as an individual template object.
         try {
           const idxResp = await fetch('/templates/index.json')
-          if (!idxResp.ok) throw new Error('no static templates index')
+          const idxInfo = { url: '/templates/index.json', status: idxResp.status }
+          if (!idxResp.ok) {
+            idxInfo.error = `status ${idxResp.status}`
+            setAttempts((a) => a.concat([idxInfo]))
+            throw new Error('no static templates index')
+          }
           const index = await idxResp.json()
+          idxInfo.body = Array.isArray(index) ? `${index.length} files` : 'invalid index'
+          setAttempts((a) => a.concat([idxInfo]))
           if (!Array.isArray(index)) throw new Error('invalid templates index')
           const loads = index.map(fn => fetch(`/templates/${fn}`).then(r => {
-            if (!r.ok) throw new Error(`failed to load ${fn}`)
+            if (!r.ok) throw new Error(`failed to load ${fn} (status ${r.status})`)
             return r.json()
           }))
           const loaded = await Promise.all(loads)
@@ -233,6 +259,16 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
           <div style={{ marginBottom: 8 }}>
             {loading && <div>Loading templates…</div>}
             {!loading && err ? <div style={{ color: 'var(--muted)' }}>Using built-in templates ({String(err)})</div> : null}
+            {!loading && attempts && attempts.length ? (
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+                Debug: attempted fetches:
+                <ul style={{ margin: '6px 0 0 18px' }}>
+                  {attempts.map((a, i) => (
+                    <li key={i}>{a.url || 'unknown'} — {a.status ? `status ${a.status}` : ''}{a.body ? ` — ${a.body}` : ''}{a.error ? ` — ${a.error}` : ''}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 6 }}>

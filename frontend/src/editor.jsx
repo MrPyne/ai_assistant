@@ -607,6 +607,21 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [loadWorkflows, token])
 
+  // Auto-open the Templates modal on first load so users immediately see
+  // available starter templates without having to click "Browse templates...".
+  // This mirrors the prior behavior users expected (templates visible by
+  // default). Keep this wrapped in a try/catch to avoid introducing runtime
+  // errors in tests/environments that don't mount the full editor.
+  useEffect(() => {
+    try {
+      editorDispatch({ type: 'SET_SHOW_TEMPLATES', payload: true })
+    } catch (e) {
+      // ignore
+    }
+    // Intentionally run only once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ensure runs list is loaded whenever the selected workflow changes (or
   // when the editor first mounts and loadWorkflows set a workflowId). This
   // populates the Runs dropdown in the left panel on first load so users
