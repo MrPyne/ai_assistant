@@ -46,62 +46,62 @@ export default function TemplatePreview({ graph, height = 160 }) {
   // canvas can render above the modal and avoid ancestor overflow clipping.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    const el = document.createElement('div')
-    // mark portal so we can scope CSS overrides (prevent preview nodes from
-    // participating in z-index ordering). We avoid adding any z-index here.
-    el.className = 'template-preview-portal'
-    // Use fixed positioning for the portal so it reliably paints above
-    // other fixed/positioned stacking contexts (modals, overlays, etc.).
-    // Absolute positioning combined with scroll offsets was previously
-    // used; switching to `fixed` avoids subtle stacking/paint ordering
-    // issues on some browsers/containers.
-    el.style.position = 'fixed'
-    el.style.top = '0px'
-    el.style.left = '0px'
-    el.style.width = '100px'
-    el.style.height = '100px'
-    el.style.overflow = 'visible'
-    el.style.pointerEvents = 'auto'
-    // Avoid assigning z-index here — templates/preview should not compete
-    // with dialogs. Dialogs control the stacking order via CSS variables.
-    // Previously we set el.style.zIndex to a portal/templates variable; we
-    // remove that to ensure previews never outrank modals.
-    // try {
-    //   const root = getComputedStyle(document.documentElement)
-    //   const z = root.getPropertyValue('--z-portal') || root.getPropertyValue('--z-templates-modal') || root.getPropertyValue('--z-templates-overlay')
-    //   el.style.zIndex = z ? z.trim() : '9999'
-    // } catch (e) {
-    // }
-    // Avoid accidental transforms creating new stacking contexts
-    el.style.transform = 'none'
-    // Prevent portal from being trapped in a stacking context created by
-    // ancestors. Leave a lightweight diagnostic attribute for devs.
-    el.setAttribute('data-portal-generated', 'true')
-
-    // Prefer mounting the portal into the nearest .templates-modal (if
-    // present) so the preview becomes part of the modal's content and is
-    // not occluded by overlays. Fall back to document.body when no modal
-    // ancestor exists.
-    let mountRoot = document.body
+    // Decide whether we should render the flow into a body-attached
+    // portal (to paint above page content) or inline inside the nearest
+    // templates modal. Rendering inline when inside the modal removes
+    // the risk of creating a new containing block (fixed positioning
+    // inside transformed ancestors) and ensures the preview stays
+    // clipped and scrolls with the dialog.
+    let createdEl = null
+    let mountInline = false
     try {
       if (hostRef.current) {
         const maybeModal = hostRef.current.closest('.templates-modal') || hostRef.current.closest('[role="dialog"]')
-        if (maybeModal && maybeModal instanceof HTMLElement) mountRoot = maybeModal
+        if (maybeModal && maybeModal instanceof HTMLElement) {
+          // If we're inside the templates modal, render inline to keep the
+          // preview contained and avoid stacking/containing-block issues.
+          mountInline = true
+        }
       }
     } catch (e) {
-      // ignore and fallback to body
+      // ignore and fall back to portal
     }
-    mountRoot.appendChild(el)
-    portalRef.current = el
-    setMountedPortal(true)
+
+    if (!mountInline) {
+      const el = document.createElement('div')
+      el.className = 'template-preview-portal'
+      el.style.position = 'fixed'
+      el.style.top = '0px'
+      el.style.left = '0px'
+      el.style.width = '100px'
+      el.style.height = '100px'
+      el.style.overflow = 'visible'
+      el.style.pointerEvents = 'auto'
+      el.style.transform = 'none'
+      el.setAttribute('data-portal-generated', 'true')
+      document.body.appendChild(el)
+      createdEl = el
+      portalRef.current = el
+      setMountedPortal(true)
+    } else {
+      // Ensure portalRef is null to indicate inline rendering path
+      portalRef.current = null
+      setMountedPortal(false)
+    }
+
     return () => {
-      try { if (el.parentNode) el.parentNode.removeChild(el) } catch (e) {}
+      try {
+        if (createdEl && createdEl.parentNode) createdEl.parentNode.removeChild(createdEl)
+      } catch (e) {}
       portalRef.current = null
       setMountedPortal(false)
     }
   }, [])
 
-  // Keep the portal positioned over the host element
+  // Keep the portal positioned over the host element (only needed when
+  // we're using a body-attached portal). When rendering inline inside the
+  // modal this effect is skipped which prevents the preview from "escaping"
+  // the dialog during scroll.
   useEffect(() => {
     if (!portalRef.current || !hostRef.current) return
     let raf = 0
@@ -109,10 +109,6 @@ export default function TemplatePreview({ graph, height = 160 }) {
       try {
         const r = hostRef.current.getBoundingClientRect()
         const el = portalRef.current
-        // portal is fixed to the viewport so use the host's rect (viewport
-        // coordinates) directly. Previously we added window.scrollY/X which
-        // caused incorrect positioning when the modal or inner scroll
-        // containers moved, producing node "leakage" during scroll.
         el.style.top = `${r.top}px`
         el.style.left = `${r.left}px`
         el.style.width = `${r.width}px`
@@ -160,7 +156,27 @@ export default function TemplatePreview({ graph, height = 160 }) {
             style={{ width: '100%', height: '100%', position: 'relative' }}
           />
         </div>
-      , portalRef.current) : null}
+      , portalRef.current) : (
+        // Inline render path: render ReactFlow directly inside the host so it
+        // stays contained and scrolls with the modal. This avoids portal
+        // positioning issues when the modal itself is portaled to body.
+        <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={NODE_TYPES}
+            onInit={(inst) => { instRef.current = inst }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            panOnScroll={false}
+            zoomOnScroll={false}
+            panOnDrag={false}
+            elementsSelectable={false}
+            fitView={false}
+            style={{ width: '100%', height: '100%', position: 'relative' }}
+          />
+        </div>
+      )}
     </div>
   )
 }
