@@ -256,9 +256,12 @@ textarea { resize: vertical }
   z-index: var(--z-templates-modal); background: #080a0c; border-radius: 12px; padding: 18px; width: min(920px, 95%); max-height: 80vh; overflow: auto; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 60px rgba(0,0,0,0.75);
 }
 .template-preview-portal {
-  /* Force the portal above everything. Temporary QA override. Revert after diagnostics. */
+  /* Portal container for template previews.
+     Attach this to the modal root when possible so it participates in
+     the same stacking context. Use the centralized z-index variable
+     (no !important) so dialogs control stacking order consistently. */
   position: fixed;
-  z-index: 99999 !important;
+  z-index: var(--z-portal);
   pointer-events: auto;
   transform: none;
 }

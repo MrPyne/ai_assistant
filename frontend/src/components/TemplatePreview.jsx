@@ -42,23 +42,13 @@ export default function TemplatePreview({ graph, height = 160 }) {
   }, [graph])
 
 
-  // Create a portal element attached to document.body so the ReactFlow
-  // canvas can render above the modal and avoid ancestor overflow clipping.
+  // Create a portal element attached to the Templates modal root when
+  // available, otherwise fall back to document.body. Attaching the portal
+  // inside the same modal root avoids crossing stacking-context boundaries
+  // (e.g. isolation/transform on ancestors) which prevents z-index from
+  // taking effect and causes the preview to render underneath the modal.
   useEffect(() => {
     if (typeof document === 'undefined') return
-
-    // IMPORTANT: Previously we force-mounted a body-attached portal to
-    // overcome stacking context issues. That change proved aggressive and
-    // caused a regression where templates or modal content could be
-    // missing/hidden in some environments. Revert to the safer default
-    // (inline rendering) unless an explicit dev opt-in flag is set. This
-    // preserves the ability to debug stacking issues without affecting
-    // normal users.
-    if (!(window && window.__FORCE_TEMPLATE_PREVIEW_PORTAL)) {
-      portalRef.current = null
-      setMountedPortal(false)
-      return
-    }
 
     let createdEl = null
     try {
@@ -72,33 +62,33 @@ export default function TemplatePreview({ graph, height = 160 }) {
       el.style.overflow = 'visible'
       el.style.pointerEvents = 'auto'
       el.style.transform = 'none'
-      // Force an inline-important z-index to overcome stubborn stacking issues
-      // Use the max signed 32-bit int which browsers accept as a large value
-      el.style.setProperty('z-index', '2147483647', 'important')
-      // Ensure the portal forms its own stacking context so it can paint above
-      // other contexts where possible.
-      el.style.isolation = 'isolate'
+      // Use a very large z-index so the portal sits above most overlays in
+      // the same stacking context. We no longer rely on a body-only
+      // attachment so this is safer than forcing a global body portal.
+      el.style.setProperty('z-index', '2147483647')
       el.setAttribute('data-portal-generated', 'true')
-      document.body.appendChild(el)
-      // Ensure the portal is the last child so it paints after other overlays
-      try { document.body.appendChild(el) } catch (e) {}
+
+      const parent = document.querySelector('.templates-modal') || document.body
+      parent.appendChild(el)
       createdEl = el
       portalRef.current = el
       setMountedPortal(true)
-      // Observe body mutations and keep the portal as the last child — this
-      // helps when other code portals overlays to body after we mount.
-      const mo = new MutationObserver(() => {
-        try {
-          if (portalRef.current && document.body.lastElementChild !== portalRef.current) {
-            document.body.appendChild(portalRef.current)
-          }
-        } catch (e) {}
-      })
-      mo.observe(document.body, { childList: true })
-      // attach observer so we can disconnect it on cleanup
-      createdEl.__mo = mo
+
+      // If we attached to body, keep the portal at the end so it paints
+      // after other overlays. When attached to the modal root this is not
+      // necessary.
+      if (parent === document.body) {
+        const mo = new MutationObserver(() => {
+          try {
+            if (portalRef.current && document.body.lastElementChild !== portalRef.current) {
+              document.body.appendChild(portalRef.current)
+            }
+          } catch (e) {}
+        })
+        mo.observe(document.body, { childList: true })
+        createdEl.__mo = mo
+      }
     } catch (e) {
-      // fallback: leave portalRef null so inline rendering can be used
       portalRef.current = null
       setMountedPortal(false)
     }
@@ -107,7 +97,6 @@ export default function TemplatePreview({ graph, height = 160 }) {
     try {
       const p = portalRef.current
       if (p) {
-        // small delay so styles from CSS files have applied
         setTimeout(() => {
           try {
             const portalStyle = window.getComputedStyle(p)
