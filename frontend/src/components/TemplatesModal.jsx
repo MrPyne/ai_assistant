@@ -349,6 +349,45 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
   // `open` is false, but we keep all hooks/derived memos above so React's
   // rules-of-hooks are satisfied.
   if (!open) return null
+  const TemplateCard = ({ t }) => (
+    <div key={t.id} className="template-card" style={{ padding: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div>
+          <h4 style={{ margin: '2px 0' }}>{t.title}</h4>
+          <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
+          <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {(t.tags || []).map(tag => <span key={tag} className="chip" style={{ fontSize: 11 }}>{tag}</span>)}
+            {t.category ? <span className="chip" style={{ fontSize: 11 }}>{t.category}</span> : null}
+          </div>
+        </div>
+        <div style={{ minWidth: 120, textAlign: 'right' }}>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.note}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={120} />
+      </div>
+
+      <div className="template-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+        <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
+        <button onClick={() => {
+          try {
+            onApply && onApply(t.graph)
+            // allow the editor to apply nodes, then call a global run helper
+            setTimeout(() => {
+              try {
+                if (window.__editor_runWorkflow) window.__editor_runWorkflow()
+              } catch (e) {}
+            }, 120)
+          } finally {
+            try { onClose && onClose() } catch (e) {}
+          }
+        }} className="secondary">Load & Run</button>
+        <button className="secondary" onClick={() => setPreview(t)}>Preview</button>
+      </div>
+    </div>
+  )
 
   const modalContent = (
     <div className="templates-overlay" role="dialog" aria-modal="true">
@@ -403,45 +442,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
 
           <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 6 }}>
             <div className="templates-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
-              {filtered.map(t => (
-                <div key={t.id} className="template-card" style={{ padding: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                    <div>
-                      <h4 style={{ margin: '2px 0' }}>{t.title}</h4>
-                      <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
-                      <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {(t.tags || []).map(tag => <span key={tag} className="chip" style={{ fontSize: 11 }}>{tag}</span>)}
-                        {t.category ? <span className="chip" style={{ fontSize: 11 }}>{t.category}</span> : null}
-                      </div>
-                    </div>
-                    <div style={{ minWidth: 120, textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.note}</div>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 8 }}>
-                    <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={120} />
-                  </div>
-
-                  <div className="template-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                    <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
-                    <button onClick={() => {
-                      try {
-                        onApply && onApply(t.graph)
-                        // allow the editor to apply nodes, then call a global run helper
-                        setTimeout(() => {
-                          try {
-                            if (window.__editor_runWorkflow) window.__editor_runWorkflow()
-                          } catch (e) {}
-                        }, 120)
-                      } finally {
-                        try { onClose && onClose() } catch (e) {}
-                      }
-                    }} className="secondary">Load & Run</button>
-                    <button className="secondary" onClick={() => setPreview(t)}>Preview</button>
-                  </div>
-                </div>
-              ))}
+              {filtered.map(t => <TemplateCard key={t.id} t={t} />)}
             </div>
           </div>
         </div>
@@ -451,7 +452,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
 
   const previewContent = preview ? (
     <div className="templates-overlay" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="templates-modal" style={{ background: 'var(--bg)', border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
+    <div className="templates-modal" style={{ border: '1px solid var(--muted)', padding: 12, width: '80%', maxWidth: 1000, maxHeight: '80%', overflow: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>{preview.title}</h3>
           <div style={{ display: 'flex', gap: 8 }}>

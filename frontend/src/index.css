@@ -300,9 +300,13 @@ textarea { resize: vertical }
    preview container to avoid affecting other React Flow instances. */
 .template-preview {
   background: #080a0c;
-  border-radius: 10px;
+  /* Match templates modal surface: radius, border and subtle shadow so
+     previews feel like part of the same visual surface. Use slightly
+     smaller padding to fit inside cards. */
+  border-radius: 12px;
   border: 1px solid rgba(255,255,255,0.06);
-  padding: 6px;
+  padding: 12px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.55);
 }
 .templates-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px }
 .template-card { padding: 12px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); border: 1px solid rgba(255,255,255,0.02); }
