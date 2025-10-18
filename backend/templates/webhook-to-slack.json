@@ -1,0 +1,17 @@
+{
+  "id": "webhook-to-slack",
+  "title": "Webhook -> Slack Alert",
+  "description": "Receive a webhook, extract key fields, and post a formatted message to Slack.",
+  "category": "Integrations",
+  "tags": ["webhook","slack","alert"],
+  "note": "Useful for forwarding events from third-party services to a Slack channel. Includes simple parsing and templating.",
+  "sample_input": { "trigger": { "payload": { "event": "deploy.succeeded", "service": "api", "version": "1.2.3" } } },
+  "graph": {
+    "nodes": [
+      { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Webhook Trigger", "config": {} } },
+      { "id": "n2", "type": "action", "position": { "x": 220, "y": 0 }, "data": { "label": "Parse Payload", "config": { "language": "jinja", "template": "Event: {{ trigger.payload.event }}\nService: {{ trigger.payload.service }}\nVersion: {{ trigger.payload.version }}" } } },
+      { "id": "n3", "type": "http", "position": { "x": 440, "y": 0 }, "data": { "label": "POST Slack Webhook", "config": { "method": "POST", "url": "https://hooks.slack.com/services/T/...", "headers": { "Content-Type": "application/json" } } } }
+    ],
+    "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" } ]
+  }
+}

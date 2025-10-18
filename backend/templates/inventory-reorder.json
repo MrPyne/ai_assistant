@@ -1,0 +1,18 @@
+{
+  "id": "inventory-reorder",
+  "title": "Inventory Reorder Notification",
+  "description": "Monitor stock levels and create reorder requests when inventory falls below threshold.",
+  "category": "Operations",
+  "tags": ["inventory","monitoring","alert"],
+  "note": "Shows checking an API, applying threshold logic, and calling a procurement API.",
+  "sample_input": { "trigger": { "product_id": "SKU-123" } },
+  "graph": {
+    "nodes": [
+      { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Trigger", "config": {} } },
+      { "id": "n2", "type": "http", "position": { "x": 220, "y": 0 }, "data": { "label": "Get Inventory", "config": { "method": "GET", "url": "https://api.example.com/inventory/{{ trigger.product_id }}" } } },
+      { "id": "n3", "type": "action", "position": { "x": 440, "y": 0 }, "data": { "label": "Check Threshold", "config": { "language": "python", "code": "qty = int(payload.get('quantity', 0))\\nif qty < 10:\\n  return {'reorder': True, 'order_qty': 50}\\nreturn {'reorder': False}" } } },
+      { "id": "n4", "type": "http", "position": { "x": 660, "y": 0 }, "data": { "label": "Create Purchase Order", "config": { "method": "POST", "url": "https://procure.example.com/orders" } } }
+    ],
+    "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" }, { "id": "e3", "source": "n3", "target": "n4" } ]
+  }
+}

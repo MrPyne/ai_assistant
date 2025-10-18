@@ -1,0 +1,45 @@
+{
+  "id": "email-digest",
+  "title": "Daily Email Digest",
+  "description": "Aggregate items from a data source and send a daily email summary.",
+  "category": "Automation",
+  "tags": ["email", "digest", "cron"],
+  "note": "This template shows periodic aggregation, templating, and sending via an SMTP or email API HTTP endpoint.",
+  "sample_input": { "trigger": { "since": "2025-01-01T00:00:00Z" } },
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "type": "cron",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "Daily Cron", "config": { "cron": "0 8 * * *" } }
+      },
+      {
+        "id": "n2",
+        "type": "http",
+        "position": { "x": 220, "y": 0 },
+        "data": { "label": "Fetch Items API", "config": { "method": "GET", "url": "https://api.example.com/items?since={{ trigger.since }}" } }
+      },
+      {
+        "id": "n3",
+        "type": "action",
+        "position": { "x": 440, "y": 0 },
+        "data": {
+          "label": "Format Digest",
+          "config": { "language": "jinja", "template": "{{ items | length }} new items:\n{% for it in items %}- {{ it.title }}\n{% endfor %}" }
+        }
+      },
+      {
+        "id": "n4",
+        "type": "http",
+        "position": { "x": 660, "y": 0 },
+        "data": { "label": "Send Email (API)", "config": { "method": "POST", "url": "https://email.api/send", "headers": { "Content-Type": "application/json" } } }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "n1", "target": "n2" },
+      { "id": "e2", "source": "n2", "target": "n3" },
+      { "id": "e3", "source": "n3", "target": "n4" }
+    ]
+  }
+}

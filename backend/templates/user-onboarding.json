@@ -1,0 +1,49 @@
+{
+  "id": "user-onboarding",
+  "title": "User Onboarding Sequence",
+  "description": "When a new user signs up, send a welcome email, create a profile record, and trigger a follow-up after 3 days.",
+  "category": "Workflows",
+  "tags": ["onboarding", "email", "delay"],
+  "note": "Demonstrates multi-step orchestration with delays and external API calls.",
+  "sample_input": { "trigger": { "user": { "id": "u123", "email": "user@example.com", "name": "Casey" } } },
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "type": "input",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "Signup Trigger", "config": {} }
+      },
+      {
+        "id": "n2",
+        "type": "http",
+        "position": { "x": 220, "y": -80 },
+        "data": { "label": "Create Profile API", "config": { "method": "POST", "url": "https://api.example.com/users" } }
+      },
+      {
+        "id": "n3",
+        "type": "http",
+        "position": { "x": 220, "y": 80 },
+        "data": { "label": "Send Welcome Email", "config": { "method": "POST", "url": "https://email.api/send" } }
+      },
+      {
+        "id": "n4",
+        "type": "delay",
+        "position": { "x": 440, "y": 0 },
+        "data": { "label": "Delay 3 days", "config": { "seconds": 259200 } }
+      },
+      {
+        "id": "n5",
+        "type": "http",
+        "position": { "x": 660, "y": 0 },
+        "data": { "label": "Send Follow-up Email", "config": { "method": "POST", "url": "https://email.api/send" } }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "n1", "target": "n2" },
+      { "id": "e2", "source": "n1", "target": "n3" },
+      { "id": "e3", "source": "n3", "target": "n4" },
+      { "id": "e4", "source": "n4", "target": "n5" }
+    ]
+  }
+}

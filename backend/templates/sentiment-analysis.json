@@ -1,0 +1,18 @@
+{
+  "id": "sentiment-analysis",
+  "title": "Bulk Sentiment Analysis",
+  "description": "Analyze sentiment for batches of customer feedback using an LLM or sentiment API.",
+  "category": "AI",
+  "tags": ["sentiment", "llm", "batch"],
+  "note": "Shows batching, transform per item, and collecting results.",
+  "sample_input": { "trigger": { "feedback": ["Great product", "Too slow", "Loved it", "Missing feature"] } },
+  "graph": {
+    "nodes": [
+      { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Trigger", "config": {} } },
+      { "id": "n2", "type": "split", "position": { "x": 220, "y": 0 }, "data": { "label": "Split Feedback", "config": { "input_path": "trigger.feedback", "batch_size": 10 } } },
+      { "id": "n3", "type": "llm", "position": { "x": 440, "y": 0 }, "data": { "label": "LLM Sentiment", "config": { "model": "gpt", "prompt_template": "Classify sentiment for: {{ item }}" } } },
+      { "id": "n4", "type": "action", "position": { "x": 660, "y": 0 }, "data": { "label": "Collect Results", "config": {} } }
+    ],
+    "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" }, { "id": "e3", "source": "n3", "target": "n4" } ]
+  }
+}

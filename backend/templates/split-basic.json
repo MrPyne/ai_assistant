@@ -1,0 +1,17 @@
+{
+  "id": "split-basic",
+  "title": "SplitInBatches - basic",
+  "description": "Split a list into chunks and process each chunk serially with a simple transform",
+  "category": "Batch processing",
+  "tags": ["split","batch","serial"],
+  "note": "Runs serially. max_chunks is UI-only; backend ignores it. Dotted input_path resolves nested fields; non-list becomes single chunk.",
+  "sample_input": { "input": { "items": ["alpha","bravo","charlie","delta","echo","foxtrot"] } },
+  "graph": {
+    "nodes": [
+      { "id": "s1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Trigger", "config": {} } },
+      { "id": "s2", "type": "action", "position": { "x": 220, "y": 0 }, "data": { "label": "SplitInBatches", "config": { "input_path": "input.items", "batch_size": 5, "mode": "serial", "concurrency": 1, "fail_behavior": "stop_on_error" } } },
+      { "id": "s3", "type": "action", "position": { "x": 440, "y": 0 }, "data": { "label": "Transform (per-chunk)", "config": { "language": "jinja", "template": "Processed: {{ item }}" } } }
+    ],
+    "edges": [ { "id": "se1", "source": "s1", "target": "s2" }, { "id": "se2", "source": "s2", "target": "s3" } ]
+  }
+}
