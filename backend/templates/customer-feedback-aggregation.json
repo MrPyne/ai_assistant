@@ -1,0 +1,24 @@
+{
+  "id": "customer-feedback-aggregation",
+  "title": "Customer Feedback Aggregation (Email/Webhook -> LLM -> Dashboard)",
+  "description": "Collect feedback from multiple sources (support emails, survey webhooks), classify sentiment and topics with an LLM, and push summarized metrics to a dashboard or analytics store.",
+  "category": "Customer Success",
+  "tags": ["feedback","llm","sentiment","analytics"],
+  "note": "Replace LLM provider nodes and dashboard API endpoints with your infra.",
+  "sample_input": { "feedback": [ { "source": "email", "body": "I love the new UI" } ] },
+  "graph": {
+    "nodes": [
+      {"id":"collect","type":"input","position":{"x":0,"y":0},"data":{"label":"Collect Feedback","config":{}}},
+      {"id":"flatten","type":"action","position":{"x":240,"y":0},"data":{"label":"Flatten Payload","config":{"language":"python","code":"# ensure list of messages\nmsgs = input.get('feedback', [])\nreturn {'messages': msgs}"}}},
+      {"id":"llm","type":"llm","position":{"x":480,"y":0},"data":{"label":"Classify with LLM","config":{"model":"gpt-4","prompt":"Classify these feedback messages by sentiment (positive/neutral/negative) and extract topics.\n{{ node_results.flatten.messages }}"}}},
+      {"id":"aggregate","type":"action","position":{"x":720,"y":0},"data":{"label":"Aggregate Results","config":{"language":"python","code":"# tally sentiments and topics\nresp = node_results.llm\n# pseudo-structure: resp.classifications\nreturn {'summary': resp }"}}},
+      {"id":"push","type":"http","position":{"x":960,"y":0},"data":{"label":"Push to Dashboard","config":{"method":"POST","url":"https://analytics.example.com/feedback/summary","body":"{{ node_results.aggregate.summary }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"collect","target":"flatten"},
+      {"id":"e2","source":"flatten","target":"llm"},
+      {"id":"e3","source":"llm","target":"aggregate"},
+      {"id":"e4","source":"aggregate","target":"push"}
+    ]
+  }
+}

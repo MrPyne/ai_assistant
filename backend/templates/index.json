@@ -16,5 +16,12 @@
   "lead-enrichment.json",
   "marketing-campaign-segmentation.json",
   "invoice-processing.json",
-  "stock-price-alert.json"
+  "stock-price-alert.json",
+  "hr-onboarding-survey.json",
+  "legal-nda-collection.json",
+  "it-incident-escalation.json",
+  "procurement-purchase-order.json",
+  "analytics-weekly-cohort.json",
+  "customer-feedback-aggregation.json",
+  "finance-invoice-reconciliation.json"
 ]

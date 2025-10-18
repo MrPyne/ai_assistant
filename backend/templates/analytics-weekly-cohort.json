@@ -1,0 +1,24 @@
+{
+  "id": "analytics-weekly-cohort",
+  "title": "Analytics Weekly Cohort Export (DB -> S3 -> BI)",
+  "description": "Run weekly cohort queries, export results as CSV to S3 and notify BI team for dashboard refresh.",
+  "category": "Analytics",
+  "tags": ["analytics","cohort","s3","csv"],
+  "note": "Replace DB queries and S3 credentials appropriately.",
+  "sample_input": { "cohort_window_days": 7, "s3_bucket": "analytics-exports" },
+  "graph": {
+    "nodes": [
+      {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler","config":{}}},
+      {"id":"query","type":"action","position":{"x":240,"y":0},"data":{"label":"Run Cohort Query","config":{"language":"python","code":"# run SQL query and return rows list\nrows = [ {'user_id':1,'cohort':'2025-06-01'} ]\nreturn {'rows': rows}"}}},
+      {"id":"to_csv","type":"action","position":{"x":480,"y":0},"data":{"label":"Serialize CSV","config":{"language":"python","code":"import io, csv\nbuf = io.StringIO()\nwriter = csv.DictWriter(buf, fieldnames=['user_id','cohort'])\nwriter.writeheader()\nfor r in node_results.query.rows:\n    writer.writerow(r)\nreturn {'csv': buf.getvalue().encode('utf-8')}"}}},
+      {"id":"upload","type":"action","position":{"x":720,"y":0},"data":{"label":"Upload to S3","config":{"language":"python","code":"# use boto3 to upload\ns3_key = f'cohort_{trigger.cohort_window_days}_{__import__('datetime').datetime.utcnow().strftime(\"%Y%m%dT%H%M%SZ\")}.csv'\n# s3.put_object(Bucket=input.get('s3_bucket'), Key=s3_key, Body=node_results.to_csv.csv)\nreturn {'s3_key': s3_key}"}}},
+      {"id":"notify","type":"email","position":{"x":960,"y":0},"data":{"label":"Notify BI","config":{"to":["bi@example.com"],"subject":"Weekly Cohort Export","body":"Uploaded: {{ node_results.upload.s3_key }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"trigger","target":"query"},
+      {"id":"e2","source":"query","target":"to_csv"},
+      {"id":"e3","source":"to_csv","target":"upload"},
+      {"id":"e4","source":"upload","target":"notify"}
+    ]
+  }
+}

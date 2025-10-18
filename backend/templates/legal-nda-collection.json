@@ -1,0 +1,23 @@
+{
+  "id": "legal-nda-collection",
+  "title": "Collect Signed NDAs (Email -> Document Signing -> Storage)",
+  "description": "Email NDA to external party, wait for signature via e-sign provider webhook, store signed PDF into secure storage and notify legal team.",
+  "category": "Legal",
+  "tags": ["nda","esign","email","storage"],
+  "note": "Replace e-sign provider endpoints and storage with your chosen vendor and secure bucket.",
+  "sample_input": { "recipient_email": "partner@example.com", "document_template_id": "nda-template-v1" },
+  "graph": {
+    "nodes": [
+      {"id":"start","type":"input","position":{"x":0,"y":0},"data":{"label":"Manual Trigger","config":{}}},
+      {"id":"send","type":"http","position":{"x":240,"y":0},"data":{"label":"Send to eSign Provider","config":{"method":"POST","url":"https://esign.example.com/create","body":{"template_id":"{{ trigger.document_template_id }}","signer":{"email":"{{ trigger.recipient_email }}"}}}}},
+      {"id":"wait","type":"input","position":{"x":480,"y":0},"data":{"label":"eSign Webhook","config":{}}},
+      {"id":"store","type":"action","position":{"x":720,"y":0},"data":{"label":"Store Signed Doc","config":{"language":"python","code":"# assume input contains 'signed_pdf' bytes (base64) and metadata\nimport base64\npdf_b = base64.b64decode(input.get('signed_pdf'))\n# store to secure storage via SDK\nreturn {'status':'ok','size': len(pdf_b)}"}}},
+      {"id":"notify","type":"email","position":{"x":960,"y":0},"data":{"label":"Notify Legal","config":{"to":["legal@example.com"],"subject":"NDA Signed: {{ node_results.store.size }} bytes","body":"A new NDA has been signed and stored."}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"start","target":"send"},
+      {"id":"e2","source":"wait","target":"store"},
+      {"id":"e3","source":"store","target":"notify"}
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "procurement-purchase-order",
+  "title": "Procurement Purchase Order Approval (Form -> Manager Approval -> ERP)",
+  "description": "Collect purchase requests via a form, route to manager for approval, then create a purchase order in the ERP system upon approval.",
+  "category": "Procurement",
+  "tags": ["procurement","approval","erp","forms"],
+  "note": "Integrate with your ERP API and identity provider for manager lookup.",
+  "sample_input": { "requester_email": "alice@example.com", "amount": 4500, "items": [{"sku":"ABC123","qty":10}] },
+  "graph": {
+    "nodes": [
+      {"id":"form","type":"input","position":{"x":0,"y":0},"data":{"label":"Purchase Request Form","config":{}}},
+      {"id":"lookup","type":"action","position":{"x":240,"y":0},"data":{"label":"Find Manager","config":{"language":"python","code":"# pseudo: look up manager from directory\nreturn {'manager_email':'manager@example.com'}"}}},
+      {"id":"email","type":"email","position":{"x":480,"y":0},"data":{"label":"Ask for Approval","config":{"to":["{{ node_results.lookup.manager_email }}"],"subject":"Approval needed for PO from {{ trigger.requester_email }}","body":"Amount: {{ trigger.amount }}\nApprove: https://approvals.example.com/po/{{ trigger.request_id }}"}}},
+      {"id":"wait","type":"input","position":{"x":720,"y":0},"data":{"label":"Approval Webhook","config":{}}},
+      {"id":"create","type":"http","position":{"x":960,"y":0},"data":{"label":"Create PO in ERP","config":{"method":"POST","url":"https://erp.example.com/purchase_orders","body":{"requester":"{{ trigger.requester_email }}","items":"{{ trigger.items }}","amount":"{{ trigger.amount }}"}}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"form","target":"lookup"},
+      {"id":"e2","source":"lookup","target":"email"},
+      {"id":"e3","source":"wait","target":"create"}
+    ]
+  }
+}

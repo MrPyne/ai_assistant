@@ -1,0 +1,24 @@
+{
+  "id": "it-incident-escalation",
+  "title": "IT Incident Escalation (Monitoring -> Triage -> Pager)",
+  "description": "Receive monitoring alerts, enrich with runbook links and recent deploy info, triage severity and page on-call if critical.",
+  "category": "IT Ops",
+  "tags": ["monitoring","pagerduty","slack","triage"],
+  "note": "Integrate with your monitoring alerts (webhook) and on-call paging provider.",
+  "sample_input": { "alert_id": "12345", "severity": "critical", "service": "api" },
+  "graph": {
+    "nodes": [
+      {"id":"alert","type":"input","position":{"x":0,"y":0},"data":{"label":"Monitoring Webhook","config":{}}},
+      {"id":"enrich","type":"action","position":{"x":240,"y":0},"data":{"label":"Enrich Alert","config":{"language":"python","code":"# fetch recent deploys and runbook URL (pseudo)\nreturn {'runbook':'https://runbooks.example.com/api','recent_deploys': ['deploy-2025-06-01'] }"}}},
+      {"id":"classify","type":"action","position":{"x":480,"y":0},"data":{"label":"Classify Severity","config":{"language":"python","code":"sev = input.get('severity','warning')\npage = (sev=='critical')\nreturn {'page': page, 'severity': sev}"}}},
+      {"id":"notify","type":"http","position":{"x":720,"y":0},"data":{"label":"Page On-call","config":{"method":"POST","url":"https://pager.example.com/incidents","body":{"service":"{{ trigger.service }}","details":"{{ node_results.enrich.runbook }}"}}},"metadata":{"only_if":"node_results.classify.page==True"}},
+      {"id":"slack","type":"http","position":{"x":720,"y":120},"data":{"label":"Post to Slack","config":{"method":"POST","url":"https://hooks.slack.com/services/TOKEN","body":{"text":"Alert {{ trigger.alert_id }} for {{ trigger.service }} - severity: {{ node_results.classify.severity }}"}}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"alert","target":"enrich"},
+      {"id":"e2","source":"enrich","target":"classify"},
+      {"id":"e3","source":"classify","target":"notify"},
+      {"id":"e4","source":"classify","target":"slack"}
+    ]
+  }
+}

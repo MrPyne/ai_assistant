@@ -1,0 +1,24 @@
+{
+  "id": "finance-invoice-reconciliation",
+  "title": "Invoice Reconciliation (ERP -> Bank CSV -> Match)",
+  "description": "Download recent invoices from ERP, fetch bank transaction CSV and attempt to match payments to invoices. Create follow-up tasks for unmatched items.",
+  "category": "Finance",
+  "tags": ["invoice","reconciliation","bank","csv"],
+  "note": "Sensitive financial data — ensure secure storage and audit logging.",
+  "sample_input": { "from_date": "2025-05-01", "to_date": "2025-05-31" },
+  "graph": {
+    "nodes": [
+      {"id":"start","type":"input","position":{"x":0,"y":0},"data":{"label":"Scheduler","config":{}}},
+      {"id":"erp","type":"http","position":{"x":240,"y":0},"data":{"label":"Fetch Invoices","config":{"method":"GET","url":"https://erp.example.com/api/invoices?from={{ trigger.from_date }}&to={{ trigger.to_date }}"}}},
+      {"id":"bank","type":"http","position":{"x":480,"y":0},"data":{"label":"Download Bank CSV","config":{"method":"GET","url":"https://bank.example.com/transactions.csv"}}},
+      {"id":"match","type":"action","position":{"x":720,"y":0},"data":{"label":"Match Payments","config":{"language":"python","code":"# parse CSV and match by amount and reference\ninvoices = node_results.erp\nbank_rows = []\n# pseudo-parse\nreturn {'matched': [], 'unmatched_invoices': invoices}"}}},
+      {"id":"task","type":"http","position":{"x":960,"y":0},"data":{"label":"Create Follow-up Tasks","config":{"method":"POST","url":"https://tasks.example.com/create","body":"{{ node_results.match.unmatched_invoices }}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"start","target":"erp"},
+      {"id":"e2","source":"erp","target":"bank"},
+      {"id":"e3","source":"bank","target":"match"},
+      {"id":"e4","source":"match","target":"task"}
+    ]
+  }
+}

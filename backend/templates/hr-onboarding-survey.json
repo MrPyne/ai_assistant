@@ -1,0 +1,21 @@
+{
+  "id": "hr-onboarding-survey",
+  "title": "HR Onboarding Survey (Email -> Form -> DB)",
+  "description": "Send a welcome email with a link to a short onboarding survey, collect responses and store them in HR database.",
+  "category": "HR",
+  "tags": ["email","form","database","onboarding"],
+  "note": "Uses email with a hosted survey form or inline questions. Replace form endpoint and DB logic with your infrastructure.",
+  "sample_input": { "new_hire_email": "new-hire@example.com", "start_date": "2025-06-01" },
+  "graph": {
+    "nodes": [
+      {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Onboard Trigger","config":{}}},
+      {"id":"email","type":"email","position":{"x":240,"y":0},"data":{"label":"Send Welcome Email","config":{"to":["{{ trigger.new_hire_email }}"],"subject":"Welcome to Company!","body":"Hi, welcome! Please fill out the onboarding survey: https://forms.example.com/onboarding?email={{ trigger.new_hire_email }}"}}},
+      {"id":"wait","type":"input","position":{"x":480,"y":0},"data":{"label":"Survey Response Webhook","config":{}}},
+      {"id":"store","type":"action","position":{"x":720,"y":0},"data":{"label":"Store Response","config":{"language":"python","code":"# store response into HR DB\nresp = input.get('body',{})\n# assume resp contains email and answers\nreturn {'status':'stored','email': resp.get('email')}"}}}
+    ],
+    "edges": [
+      {"id":"e1","source":"trigger","target":"email"},
+      {"id":"e2","source":"wait","target":"store"}
+    ]
+  }
+}
