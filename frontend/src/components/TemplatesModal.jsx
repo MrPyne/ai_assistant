@@ -31,6 +31,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'starter-1',
               title: 'HTTP -> LLM',
               description: 'Simple pipeline: HTTP request -> LLM processing',
+              note: 'Basic starter: HTTP trigger -> HTTP request -> LLM. Use this to explore saving and running workflows.',
               graph: {
                 nodes: [
                   { id: 'n1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'HTTP Trigger', config: {} } },
@@ -45,6 +46,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-basic',
               title: 'SplitInBatches — basic',
               description: 'Split a list into chunks and process each chunk serially with a simple transform',
+              note: 'Runs serially. max_chunks is UI-only; backend ignores it. Dotted input_path resolves nested fields; non-list becomes single chunk.',
               graph: {
                 nodes: [
                   { id: 's1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -59,6 +61,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-parallel',
               title: 'SplitInBatches — parallel',
               description: 'Run chunk processing in parallel (concurrency controls number of workers)',
+              note: 'Runs chunks in parallel up to `concurrency` workers. Errors may stop remaining chunks depending on fail_behavior.',
               graph: {
                 nodes: [
                   { id: 'p1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -73,6 +76,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-fail-continue',
               title: 'SplitInBatches — continue on error',
               description: 'Demonstrates fail_behavior=continue_on_error: errors in some chunks do not stop the whole run',
+              note: 'With continue_on_error the runner collects errors and proceeds; results include both successes and error entries.',
               graph: {
                 nodes: [
                   { id: 'f1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -87,6 +91,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-non-list',
               title: 'Non-list input demo',
               description: 'If the input path points to a single value the node processes it as one chunk',
+              note: 'When the resolved value is not a list it will be treated as a single chunk (sequence length = 1).',
               graph: {
                 nodes: [
                   { id: 'nl1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -101,6 +106,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-max-chunks-ui',
               title: 'Max chunks (UI-only)',
               description: "Set max_chunks in the UI to limit how many chunks the editor creates — note: backend currently ignores this field",
+              note: 'max_chunks is a UI convenience only; the backend currently ignores this setting.',
               graph: {
                 nodes: [
                   { id: 'm1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -115,6 +121,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-nested-path',
               title: 'Nested input_path example',
               description: "Target a nested array like payload.records.list and process each chunk",
+              note: 'Use dotted paths to target nested arrays. If the path is missing the runner treats it as empty list.',
               graph: {
                 nodes: [
                   { id: 'np1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -129,6 +136,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               id: 'split-combined-downstream',
               title: 'Split + downstream aggregation',
               description: 'Split into chunks, process in parallel, then downstream nodes aggregate or collect results',
+              note: 'Downstream nodes receive synthetic sub-run ids for each chunk. Aggregation must handle multiple sub-run outputs.',
               graph: {
                 nodes: [
                   { id: 'c1', type: 'input', position: { x: 0, y: 0 }, data: { label: 'Trigger', config: {} } },
@@ -171,11 +179,26 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
               <div key={t.id} className="template-card">
                 <h4>{t.title}</h4>
                 <div style={{ fontSize: 13, color: 'var(--muted)' }}>{t.description}</div>
+                {t.note ? <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>{t.note}</div> : null}
                 <div style={{ marginTop: 8 }}>
                   <TemplatePreview graph={t.graph || { nodes: [], edges: [] }} height={140} />
                 </div>
                 <div className="template-actions">
                   <button onClick={() => { onApply && onApply(t.graph); onClose && onClose() }}>Use template</button>
+                  {/* Load & Run: apply template then trigger editor run helper if available */}
+                  <button onClick={() => {
+                    try {
+                      onApply && onApply(t.graph)
+                      // allow the editor to apply nodes, then call a global run helper
+                      setTimeout(() => {
+                        try {
+                          if (window.__editor_runWorkflow) window.__editor_runWorkflow()
+                        } catch (e) {}
+                      }, 120)
+                    } finally {
+                      try { onClose && onClose() } catch (e) {}
+                    }
+                  }} className="secondary">Load & Run</button>
                 </div>
               </div>
             ))}

@@ -572,6 +572,31 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [token, loadProviders, loadSecrets])
 
+  // expose a small helper so Templates modal can trigger a one-click Load & Run
+  useEffect(() => {
+    try {
+      // attach a short-lived global that TemplatesModal will call when user
+      // clicks "Load & Run". The implementation simply saves the workflow
+      // then triggers runWorkflow to queue a run. Tests and the editor use
+      // window.__editor_runWorkflow when present.
+      window.__editor_runWorkflow = async () => {
+        try {
+          // save then run (silent save)
+          const saved = await saveWorkflow({ silent: true })
+          const wid = saved && saved.id
+          if (!wid) return
+          // trigger run
+          try { await runWorkflow() } catch (e) {}
+        } catch (e) {
+          // ignore
+        }
+      }
+    } catch (e) {}
+    return () => {
+      try { delete window.__editor_runWorkflow } catch (e) {}
+    }
+  }, [saveWorkflow, runWorkflow])
+
   // ensure workflows list is loaded when the editor mounts or token changes
   useEffect(() => {
     // loadWorkflows is safe to call unauthenticated (backend returns [] if not)
