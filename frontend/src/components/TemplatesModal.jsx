@@ -84,6 +84,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
   const [tagFilters, setTagFilters] = useState([])
   const [preview, setPreview] = useState(null)
   const [sortBy, setSortBy] = useState('relevance')
+  const [reloadTrigger, setReloadTrigger] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -92,6 +93,9 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
       setLoading(true)
       setErr(null)
       setAttempts([])
+      // clear prior templates so reopening shows a loading state instead
+      // of an empty grid when previous loads failed silently
+      setTemplates([])
       try {
         const headers = {}
         if (token) headers.Authorization = `Bearer ${token}`
@@ -166,7 +170,7 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
     }
     load()
     return () => { mounted = false }
-  }, [open, token])
+  }, [open, token, reloadTrigger])
 
 
   const categories = useMemo(() => {
@@ -217,7 +221,13 @@ export default function TemplatesModal({ open, onClose, onApply, token }) {
         <div style={{ width: 260, borderRight: '1px solid var(--muted)', paddingRight: 12, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Templates</h3>
-            <button onClick={onClose} className="secondary">Close</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => {
+                // trigger the effect to reload templates
+                try { setReloadTrigger(r => r + 1) } catch (e) {}
+              }} className="secondary">Reload</button>
+              <button onClick={onClose} className="secondary">Close</button>
+            </div>
           </div>
 
           {/* Scrollable area for filters */}
