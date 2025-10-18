@@ -46,10 +46,20 @@ export default function TemplatePreview({ graph, height = 160 }) {
   // canvas can render above the modal and avoid ancestor overflow clipping.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    // Force-create a body-attached portal so the preview can be painted
-    // above modal overlays for immediate QA. This bypasses the inline
-    // rendering path which can leave the preview behind due to ancestor
-    // stacking contexts. This is a temporary, force override for testing.
+
+    // IMPORTANT: Previously we force-mounted a body-attached portal to
+    // overcome stacking context issues. That change proved aggressive and
+    // caused a regression where templates or modal content could be
+    // missing/hidden in some environments. Revert to the safer default
+    // (inline rendering) unless an explicit dev opt-in flag is set. This
+    // preserves the ability to debug stacking issues without affecting
+    // normal users.
+    if (!(window && window.__FORCE_TEMPLATE_PREVIEW_PORTAL)) {
+      portalRef.current = null
+      setMountedPortal(false)
+      return
+    }
+
     let createdEl = null
     try {
       const el = document.createElement('div')
@@ -75,7 +85,7 @@ export default function TemplatePreview({ graph, height = 160 }) {
       createdEl = el
       portalRef.current = el
       setMountedPortal(true)
-      // Observe body mutations and keep the portal as the last child — this
+      // Observe body mutations and keep the portal as the last child â€” this
       // helps when other code portals overlays to body after we mount.
       const mo = new MutationObserver(() => {
         try {
