@@ -1,0 +1,18 @@
+{
+  "id": "payment-failure-retry",
+  "title": "Payment Retry with Backoff",
+  "description": "On payment failure, retry attempts with exponential backoff and notify support after max retries.",
+  "category": "Payments",
+  "tags": ["payments","retry","backoff"],
+  "note": "Shows retry logic via loops/delays and branching to support notification.",
+  "sample_input": { "trigger": { "payment_id": "pay_456" } },
+  "graph": {
+    "nodes": [
+      { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Payment Trigger", "config": {} } },
+      { "id": "n2", "type": "action", "position": { "x": 220, "y": 0 }, "data": { "label": "Attempt Charge", "config": { "language": "python", "code": "# call payments API\n# return {'status':'success'} or {'status':'failed'}\nreturn {'status':'failed'}" } } },
+      { "id": "n3", "type": "loop", "position": { "x": 440, "y": 0 }, "data": { "label": "Retry Loop", "config": { "max_retries": 5, "strategy": "exponential_backoff" } } },
+      { "id": "n4", "type": "http", "position": { "x": 660, "y": 0 }, "data": { "label": "Notify Support", "config": { "method": "POST", "url": "https://support.example.com/alert" } } }
+    ],
+    "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" }, { "id": "e3", "source": "n3", "target": "n4" } ]
+  }
+}
