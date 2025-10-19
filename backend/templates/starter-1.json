@@ -10,7 +10,7 @@
     "nodes": [
       { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "HTTP Trigger", "config": {} } },
       { "id": "n2", "type": "http", "position": { "x": 180, "y": 0 }, "data": { "label": "HTTP Request", "config": { "method": "GET", "url": "https://api.example.com" } } },
-      { "id": "n3", "type": "llm", "position": { "x": 360, "y": 0 }, "data": { "label": "LLM", "config": { "model": "gpt" } } }
+      { "id": "n3", "type": "llm", "position": { "x": 360, "y": 0 }, "data": { "label": "LLM", "config": { "model": "gpt", "prompt": "You are a helpful assistant. Answer concisely.", "body": { "original_config": { "model": "gpt" } } } } }
     ],
     "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" } ]
   }

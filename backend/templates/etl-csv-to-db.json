@@ -10,8 +10,8 @@
     "nodes": [
       { "id": "n1", "type": "input", "position": { "x": 0, "y": 0 }, "data": { "label": "Trigger (file URL)", "config": {} } },
       { "id": "n2", "type": "http", "position": { "x": 220, "y": 0 }, "data": { "label": "GET CSV", "config": { "method": "GET", "url": "{{ trigger.file_url }}" } } },
-      { "id": "n3", "type": "action", "position": { "x": 440, "y": 0 }, "data": { "label": "Parse CSV", "config": { "language": "python", "code": "import csv\nreader = csv.DictReader(text.splitlines())\nrows = [r for r in reader]\nreturn {'rows': rows}" } } },
-      { "id": "n4", "type": "split", "position": { "x": 660, "y": 0 }, "data": { "label": "Split Rows", "config": { "input_path": "rows", "batch_size": 100 } } },
+      { "id": "n3", "type": "transform", "position": { "x": 440, "y": 0 }, "data": { "label": "Parse CSV", "config": { "language": "python", "code": "import csv\nreader = csv.DictReader(text.splitlines())\nrows = [r for r in reader]\nreturn {'rows': rows}", "body": { "original_config": { "language": "python", "code": "import csv\nreader = csv.DictReader(text.splitlines())\nrows = [r for r in reader]\nreturn {'rows': rows}" } } } } },
+      { "id": "n4", "type": "SplitInBatches", "position": { "x": 660, "y": 0 }, "data": { "label": "Split Rows", "config": { "input_path": "rows", "batch_size": 100, "body": { "original_config": { "input_path": "rows", "batch_size": 100 } } } } },
       { "id": "n5", "type": "http", "position": { "x": 880, "y": 0 }, "data": { "label": "Write Batch to DB API", "config": { "method": "POST", "url": "https://db.api/write_batches", "headers": { "Content-Type": "application/json" } } } }
     ],
     "edges": [ { "id": "e1", "source": "n1", "target": "n2" }, { "id": "e2", "source": "n2", "target": "n3" }, { "id": "e3", "source": "n3", "target": "n4" }, { "id": "e4", "source": "n4", "target": "n5" } ]
