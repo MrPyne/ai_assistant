@@ -3,7 +3,9 @@ import { useForm } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 import SlackNode from '../nodes/SlackNode'
 import EmailNode from '../nodes/EmailNode'
-import ReactJson from 'react-json-view'
+// lightweight React-18-compatible JSON viewer to replace react-json-view
+import JSONTree from 'react-json-view-lite'
+import 'react-json-view-lite/dist/index.css'
 import Form from '@rjsf/core'
 
 // Node component dispatcher: map canonical labels to friendly components.
@@ -383,9 +385,9 @@ export default function NodeInspector({
               </Form>
             </div>
           ) : (
-            <div>
+              <div>
               <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (preview)</div>
-              <ReactJson src={selectedNode.data} name={false} collapsed={1} enableClipboard={false} displayDataTypes={false} />
+              <JSONTree data={selectedNode.data} expandDepth={1} />
             </div>
           )}
         </div>
