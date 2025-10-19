@@ -23,6 +23,47 @@ def register(app, ctx):
     # or app_impl can inject a configured logger. Fall back to module logger.
     logger = ctx.get('logger') if ctx.get('logger') is not None else logging.getLogger('backend.api_routes')
 
+    # Ensure minimal helper fallbacks so endpoints do not crash when a richer
+    # runtime context (app_impl) did not populate these hooks. These fallbacks
+    # mirror the conservative behaviour used in backend/app._maybe_register_routes
+    # and avoid TypeError: 'NoneType' object is not callable when calling
+    # ctx.get('_user_from_token')(authorization).
+    if not callable(ctx.get('_user_from_token')):
+        try:
+            from .app_stub import _user_from_token as _stub_user_from_token
+            ctx['_user_from_token'] = _stub_user_from_token
+        except Exception:
+            ctx['_user_from_token'] = (lambda authorization=None: None)
+
+    if not callable(ctx.get('_workspace_for_user')):
+        def _default_workspace_for_user(user_id):
+            # Try to resolve from an in-memory _workspaces store if present
+            try:
+                wstore = ctx.get('_workspaces') or {}
+                for wid, w in (wstore or {}).items():
+                    if w.get('owner_id') == user_id:
+                        return wid
+            except Exception:
+                pass
+            # fall back to any existing workspace id or None
+            try:
+                wstore = ctx.get('_workspaces') or {}
+                if wstore:
+                    return list(wstore.keys())[0]
+            except Exception:
+                pass
+            return None
+
+        ctx['_workspace_for_user'] = _default_workspace_for_user
+
+    if not callable(ctx.get('_add_audit')):
+        ctx['_add_audit'] = (lambda workspace_id, user_id, action, **kwargs: None)
+
+    # Ensure local references reflect any fallbacks we just installed so
+    # functions defined below use callables instead of stale None values.
+    _workspace_for_user = ctx.get('_workspace_for_user')
+    _add_audit = ctx.get('_add_audit')
+
     # Normalize HTTPException/JSONResponse for lightweight imports
     try:
         from fastapi import HTTPException  # type: ignore
@@ -1582,90 +1623,3 @@ def register(app, ctx):
             return buf.getvalue()
         except Exception:
             return ''
-def list_secrets_impl(authorization: str = None):
-        # Added verbose prints/logs to diagnose empty response issue. Use prints
-        # so messages appear in container logs even if logger is misconfigured.
-        try:
-            print("HANDLER /api/secrets called; AUTH:", authorization)
-        except Exception:
-            pass
-        user_id = ctx.get('_user_from_token')(authorization)
-        try:
-            logger.info("RESOLVED user=%r", user_id)
-        except Exception:
-            pass
-        if not user_id:
-            raise HTTPException(status_code=401)
-        wsid = _workspace_for_user(user_id)
-        try:
-            logger.info("RESOLVED workspace=%r", wsid)
-        except Exception:
-            pass
-        if not wsid:
-            # return empty JSON array to avoid middleware draining body issues
-            return JSONResponse(content=[], status_code=200)
-
-        if _DB_AVAILABLE:
-            db = None
-            try:
-                try:
-                    import os
-                    print("DB_URL:", os.getenv('DATABASE_URL'))
-                except Exception:
-                    pass
-                db = SessionLocal()
-                rows = db.query(models.Secret).filter(models.Secret.workspace_id == wsid).all()
-                try:
-                    logger.info("secrets_count=%d", len(rows) if rows is not None else 0)
-                except Exception:
-                    pass
-                try:
-                    print("first_rows:", [{'id': r.id, 'name': r.name} for r in (rows or [])[:5]])
-                except Exception:
-                    pass
-                out = []
-                for r in rows or []:
-                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'created_at': getattr(r, 'created_at', None)})
-                # Always return a JSONResponse to avoid compatibility problems with middleware
-                return JSONResponse(content=out)
-            except Exception as e:
-                try:
-                    # best-effort rollback if DB transaction left open
-                    if db is not None:
-                        db.rollback()
-                except Exception:
-                    pass
-                try:
-                    print("SECRETS_FETCH_ERROR:", str(e))
-                except Exception:
-                    pass
-                try:
-                    logger.exception("error listing secrets")
-                except Exception:
-                    pass
-                return JSONResponse(content=[], status_code=500)
-            finally:
-                try:
-                    if db is not None:
-                        db.close()
-                except Exception:
-                    pass
-
-        # in-memory fallback
-        items = []
-        for sid, s in _secrets.items():
-            if s.get('workspace_id') == wsid:
-                obj = dict(s)
-                obj['id'] = sid
-                # do not return plaintext value
-                obj.pop('value', None)
-                items.append(obj)
-        try:
-            logger.info("list_secrets in-memory items=%d", len(items))
-        except Exception:
-            pass
-        try:
-            print("in-memory first_rows:", items[:5])
-        except Exception:
-            pass
-        return JSONResponse(content=items)

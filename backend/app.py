@@ -45,6 +45,7 @@ def _maybe_register_routes():
         ctx['_next'] = {'secret': 1, 'provider': 1, 'workflow': 1, 'webhook': 1, 'run': 1}
 
         # Try to reuse helpers from an app_impl module when present
+        appmod = None
         try:
             from . import app_impl as appmod
             # app_impl may export helpers and configured objects; copy if present
@@ -54,6 +55,10 @@ def _maybe_register_routes():
         except Exception:
             # fallback: try to reuse test/dev stub which provides a simple
             # _user_from_token implementation used by tests and local runs
+            appmod = None
+
+        # If app_impl did not provide an auth helper, try app_stub next
+        if not callable(ctx.get('_user_from_token')):
             try:
                 from .app_stub import _user_from_token
                 ctx['_user_from_token'] = _user_from_token
@@ -63,8 +68,12 @@ def _maybe_register_routes():
 
         # If app_impl exposed a SessionLocal or flagged DB available, prefer that
         try:
-            if hasattr(appmod, '_DB_AVAILABLE'):
+            if appmod is not None and hasattr(appmod, '_DB_AVAILABLE'):
                 ctx['_DB_AVAILABLE'] = getattr(appmod, '_DB_AVAILABLE')
+            if appmod is not None and hasattr(appmod, 'SessionLocal'):
+                ctx['SessionLocal'] = getattr(appmod, 'SessionLocal')
+            if appmod is not None and hasattr(appmod, 'models'):
+                ctx['models'] = getattr(appmod, 'models')
         except Exception:
             pass
 
@@ -212,6 +221,7 @@ async def redact_middleware(request: Request, call_next):
     except Exception as e:
         print("REDACT_MIDDLEWARE top-level error inspecting response:", e)
     return res
+
 
 
 @app.get("/")
