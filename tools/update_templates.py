@@ -3,7 +3,7 @@
 Rules implemented (per developer memory):
 - Convert 'action' nodes that contain inline code/template (have 'language' and 'code' or 'template') -> type 'transform'. Preserve original config in data.config.body.original_config.
 - Convert generic split-like nodes (label contains 'SplitInBatches' or config has 'batch_size' and 'input_path') to type 'SplitInBatches' and preserve original config in data.config.body.original_config.
-- Convert 'email' nodes -> 'http' nodes that POST to https://example.com/placeholder. Put original email config under data.config.body.original_config.
+- Preserve 'email' nodes (do NOT convert them). Ensure original config is stored under data.config.body.original_config so the email node continues to perform emailing.
 - For LLM nodes missing a user-visible 'prompt' (no 'prompt' key) or using 'prompt_template', add minimal safe prompt "You are a helpful assistant. Answer concisely." and store original config under data.config.body.original_config.
 - For http nodes with a concrete absolute URL (contains 'https://' and does NOT contain '{{') or lacking 'url', set url to https://example.com/placeholder and preserve original config under data.config.body.original_config.
 
@@ -77,15 +77,16 @@ for p in sorted(TEMPLATES_DIR.glob('*.json')):
                 modified = True
                 continue
 
-            # 3) email -> http placeholder
+            # 3) email nodes: preserve as email but ensure original_config stored
             if ntype == 'email':
                 orig_cfg = cfg.copy()
-                node['type'] = 'http'
-                new_cfg = {
-                    'method': 'POST',
-                    'url': PLACEHOLDER,
-                    'body': { 'original_config': orig_cfg }
-                }
+                new_cfg = cfg.copy()
+                # ensure body.original_config contains the original config
+                b = new_cfg.get('body') if isinstance(new_cfg.get('body'), dict) else {}
+                if 'original_config' not in b:
+                    b = b.copy()
+                    b['original_config'] = orig_cfg
+                new_cfg['body'] = b
                 node['data']['config'] = new_cfg
                 modified = True
                 continue

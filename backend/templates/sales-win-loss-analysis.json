@@ -46,7 +46,8 @@
           "config": {
             "to": ["sales-leads@example.com"],
             "subject": "Win/Loss Weekly",
-            "body": "{{ node_results.nlp }}"
+            "body": "{{ node_results.nlp }}",
+            "body": { "original_config": { "to": ["sales-leads@example.com"], "subject": "Win/Loss Weekly", "body": "{{ node_results.nlp }}" } }
           }
         }
       }

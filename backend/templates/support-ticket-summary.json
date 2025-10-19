@@ -46,7 +46,8 @@
           "config": {
             "to": ["support-leads@example.com"],
             "subject": "Weekly Support Summary",
-            "body": "{{ node_results.analyze.summary }}"
+            "body": "{{ node_results.analyze.summary }}",
+            "body": { "original_config": { "to": ["support-leads@example.com"], "subject": "Weekly Support Summary", "body": "{{ node_results.analyze.summary }}" } }
           }
         }
       }

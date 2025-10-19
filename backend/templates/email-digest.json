@@ -31,9 +31,9 @@
       },
       {
         "id": "n4",
-        "type": "http",
+        "type": "email",
         "position": { "x": 660, "y": 0 },
-        "data": { "label": "Send Email (API)", "config": { "method": "POST", "url": "https://email.api/send", "headers": { "Content-Type": "application/json" } } }
+        "data": { "label": "Send Email (SMTP)", "config": { "to": ["{{ trigger.to }}"], "subject": "Daily Digest", "body": "{{ node_results.Format_Digest }}", "body": { "original_config": { "method": "POST", "url": "https://email.api/send", "headers": { "Content-Type": "application/json" } } } } }
       }
     ],
     "edges": [

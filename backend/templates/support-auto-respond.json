@@ -8,7 +8,7 @@
   "graph": {
     "nodes": [
       {"id": "in", "type": "input", "position": {"x": 0, "y": 0}, "data": {"label": "Inbound Email"}},
-      {"id": "fetch_email", "type": "http", "position": {"x": 220, "y": 0}, "data": {"label": "Fetch Email", "config": {"method": "GET", "url": "https://mail.api/messages/{{ trigger.email_id }}"}}},
+      {"id": "fetch_email", "type": "http", "position": {"x": 220, "y": 0}, "data": {"label": "Fetch Email", "config": {"method": "GET", "url": "https://example.com/placeholder", "body": { "original_config": {"method": "GET", "url": "https://mail.api/messages/{{ trigger.email_id }}"} } }}},
       {"id": "classify", "type": "llm", "position": {"x": 440, "y": 0}, "data": {"label": "Classify & Suggest", "config": {"provider": "openai", "prompt": "Suggest KB articles for this email: {{ node_results.fetch_email }}"}}},
       {"id": "send_response", "type": "email", "position": {"x": 660, "y": 0}, "data": {"label": "Send Auto Reply", "config": {"to": ["{{ node_results.fetch_email.from }}"], "subject": "Re: {{ node_results.fetch_email.subject }}", "body": "Suggested articles: {{ node_results.classify }}"}}}
     ],

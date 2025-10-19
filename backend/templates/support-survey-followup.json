@@ -22,7 +22,8 @@
           "config": {
             "to": ["{{ node_results.fetch_ticket.requester_email }}"],
             "subject": "How did we do?",
-            "body": "Please rate..."
+            "body": "Please rate...",
+            "body": { "original_config": { "to": ["{{ node_results.fetch_ticket.requester_email }}"], "subject": "How did we do?", "body": "Please rate..." } }
           }
         }
       },
