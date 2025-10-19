@@ -8,7 +8,9 @@ import ReactFlow, { ReactFlowProvider, Background, Controls, applyNodeChanges, a
 
 // Keep node types as a stable reference so React Flow doesn't warn or
 // reinitialize node renderers on every render. Defining this at module
-// scope ensures the object identity is stable.
+// scope ensures the object identity is stable. We'll expand this to
+// allow specialized node renderers in the future (e.g., SlackNode,
+// EmailNode) while keeping NodeRenderer as the generic fallback.
 const NODE_TYPES = { default: NodeRenderer, http: NodeRenderer, llm: NodeRenderer, input: NodeRenderer, action: NodeRenderer, timer: NodeRenderer }
 
 // A compact, test-focused Editor implementation. The real app uses react-flow

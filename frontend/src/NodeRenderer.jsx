@@ -1,6 +1,8 @@
 import './styles/NodeRenderer.css'
 import React from 'react'
 import { Handle, Position } from 'react-flow-renderer'
+import SlackNode from './nodes/SlackNode'
+import EmailNode from './nodes/EmailNode'
 import { useEditorDispatch } from './state/EditorContext'
 
 function Icon({ type, size = 18 }) {
@@ -236,6 +238,12 @@ export default function NodeRenderer(props) {
           {truncated(resultPreview, 120)}
         </div>
       ) : null}
+
+      {/* Render specialized small inspector fragments for certain node types */}
+      <div style={{ padding: '6px 10px', width: '100%' }}>
+        {kind === 'slack' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Slack target · {config.channel || '#channel'}</div>}
+        {kind === 'email' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Email · {config.to || 'recipient'}</div>}
+      </div>
 
       {/* Outputs */}
       {/* Execution overlay: visual loading indicator when node is running */}

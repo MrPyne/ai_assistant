@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
+import SlackNode from '../nodes/SlackNode'
+import EmailNode from '../nodes/EmailNode'
 
 export default function NodeInspector({
   selectedNode,
@@ -98,6 +100,7 @@ export default function NodeInspector({
           max_chunks: cfg.max_chunks || ''
         })
       } else {
+        // ensure rawJsonText is always present for the raw editor path
         reset({ rawJsonText: JSON.stringify(selectedNode.data || {}, null, 2) })
       }
     }
@@ -281,33 +284,13 @@ export default function NodeInspector({
 
       {selectedNode.data && selectedNode.data.label === 'Send Email' && (
         <div>
-          <label>To</label>
-          <input {...register('to')} style={{ width: '100%', marginBottom: 8 }} />
-          <label>From</label>
-          <input {...register('from')} style={{ width: '100%', marginBottom: 8 }} />
-          <label>Subject</label>
-          <input {...register('subject')} style={{ width: '100%', marginBottom: 8 }} />
-          <label>Body</label>
-          <textarea {...register('body')} style={{ width: '100%', height: 120 }} />
-          <label>Provider</label>
-          <select {...register('provider_id')} style={{ width: '100%', marginTop: 8 }}>
-            <option value=''>-- Select provider --</option>
-            {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
-          </select>
+          <EmailNode register={register} providers={providers} selectedNode={selectedNode} />
         </div>
       )}
 
       {selectedNode.data && selectedNode.data.label === 'Slack Message' && (
         <div>
-          <label>Channel</label>
-          <input {...register('channel')} style={{ width: '100%', marginBottom: 8 }} />
-          <label>Text</label>
-          <textarea {...register('text')} style={{ width: '100%', height: 120 }} />
-          <label>Provider</label>
-          <select {...register('provider_id')} style={{ width: '100%', marginTop: 8 }}>
-            <option value=''>-- Select provider --</option>
-            {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
-          </select>
+          <SlackNode register={register} providers={providers} selectedNode={selectedNode} />
         </div>
       )}
 
