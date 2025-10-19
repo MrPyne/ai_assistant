@@ -1,3 +1,7 @@
+
+// NOTE: react-json-view-lite is intentionally small and unsupported compared to react-json-view.
+// It's used here only for a read-only preview in NodeInspector. If you prefer a different viewer,
+// we can swap it (e.g., react-json-pretty) — this code keeps the API surface minimal.
 import React, { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
