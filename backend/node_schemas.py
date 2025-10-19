@@ -99,6 +99,63 @@ def get_node_json_schema(label: str) -> Dict[str, Any]:
     return cls.schema()
 
 
+def canonicalize_graph(graph: Any) -> Any:
+    """Conservative migration helper: ensure each node's config preserves
+    the original raw config under `original_config` and avoid mutating the
+    original_config if already present. This helper attempts to be totally
+    non-destructive for unknown fields.
+    """
+    try:
+        # nodes may be a dict with 'nodes' or a list of nodes
+        nodes = None
+        if graph is None:
+            return None
+        if isinstance(graph, dict):
+            nodes = graph.get('nodes')
+        elif isinstance(graph, list):
+            nodes = graph
+        else:
+            return graph
+
+        if nodes is None:
+            return graph
+
+        def _canon_node(n: Any):
+            try:
+                if not isinstance(n, dict):
+                    return n
+                # react-flow style: config under data.config
+                data = n.get('data') or {}
+                cfg = None
+                if isinstance(data, dict):
+                    cfg = data.get('config')
+                # fallback: node itself may be a config object
+                if cfg is None and isinstance(n, dict) and 'type' in n and 'config' not in n:
+                    cfg = n
+
+                if isinstance(cfg, dict):
+                    # avoid copying original_config into itself
+                    if 'original_config' not in cfg:
+                        # shallow copy excluding any nested original_config
+                        copy = {k: v for k, v in cfg.items() if k != 'original_config'}
+                        cfg['original_config'] = dict(copy)
+                return n
+            except Exception:
+                return n
+
+        out_nodes = []
+        for el in nodes:
+            out_nodes.append(_canon_node(el))
+
+        if isinstance(graph, dict):
+            g2 = dict(graph)
+            g2['nodes'] = out_nodes
+            return g2
+        return out_nodes
+    except Exception:
+        return graph
+
+
 __all__ = [
     "BaseNodeConfig",
     "HTTPRequestConfig",

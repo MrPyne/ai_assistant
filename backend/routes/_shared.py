@@ -333,3 +333,61 @@ def node_test_impl(body: dict, authorization: Optional[str] = None):
         return {'result': {'text': 'LIVE_SMTP enabled - (live email not executed in this environment)'}}
 
     return {'error': 'unsupported node type'}
+
+
+def _soft_validate_graph(graph: Any):
+    """Soft validation: validate nodes against known JSON schemas and
+    return a list of warnings (not hard errors). This keeps the API
+    permissive by default but surfaces helpful guidance to clients.
+    """
+    warnings = []
+    try:
+        if graph is None:
+            return warnings
+        nodes = None
+        if isinstance(graph, dict):
+            nodes = graph.get('nodes')
+        elif isinstance(graph, list):
+            nodes = graph
+        else:
+            return warnings
+
+        if not nodes:
+            return warnings
+
+        try:
+            import jsonschema
+        except Exception:
+            return warnings
+
+        for idx, el in enumerate(nodes):
+            try:
+                label = None
+                cfg = None
+                node_id = None
+                if isinstance(el, dict) and 'data' in el:
+                    data = el.get('data') or {}
+                    label = data.get('label')
+                    cfg = data.get('config') or {}
+                    node_id = el.get('id')
+                elif isinstance(el, dict) and el.get('type'):
+                    label = el.get('type')
+                    cfg = el
+                    node_id = el.get('id')
+                else:
+                    continue
+
+                if not label or not isinstance(cfg, dict):
+                    continue
+                try:
+                    schema = get_node_json_schema(label)
+                    jsonschema.validate(instance=cfg, schema=schema)
+                except Exception as e:
+                    # collect friendly warning with node id when possible
+                    msg = str(e)
+                    warnings.append({'message': f'node {node_id or idx} may be invalid: {msg}', 'node_id': node_id, 'index': idx})
+            except Exception:
+                continue
+    except Exception:
+        return warnings
+    return warnings

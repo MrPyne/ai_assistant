@@ -4,6 +4,7 @@ import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 import SlackNode from '../nodes/SlackNode'
 import EmailNode from '../nodes/EmailNode'
 import ReactJson from 'react-json-view'
+import Form from '@rjsf/core'
 
 // Node component dispatcher: map canonical labels to friendly components.
 const NODE_DISPATCH = {
@@ -30,9 +31,13 @@ export default function NodeInspector({
   const editorDispatch = useEditorDispatch()
   const selectedNodeId = editorState.selectedNodeId
   const syncTimer = useRef(null)
+  const rjsfDebounce = useRef(null)
 
   const { register, handleSubmit, reset, watch, setValue } = useForm({ mode: 'onChange' })
   const [modelOptions, setModelOptions] = React.useState([])
+  const [nodeSchema, setNodeSchema] = React.useState(null)
+  const [uiSchema, setUiSchema] = React.useState(null)
+  const [schemaLoading, setSchemaLoading] = React.useState(false)
 
   // load model list for selected provider when provider changes
   useEffect(() => {
@@ -68,6 +73,51 @@ export default function NodeInspector({
     })()
     return () => { abort = true }
   }, [selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id, token])
+
+  // fetch node JSON Schema from server to render rjsf when available
+  useEffect(() => {
+    if (!selectedNode || !selectedNode.data || !selectedNode.data.label) {
+      setNodeSchema(null)
+      setUiSchema(null)
+      setSchemaLoading(false)
+      return
+    }
+    let abort = false
+    const label = selectedNode.data.label
+    setSchemaLoading(true)
+    ;(async () => {
+      try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (token) headers.Authorization = `Bearer ${token}`
+        const resp = await fetch(`/api/node_schema/${encodeURIComponent(label)}`, { headers })
+        if (!resp.ok) {
+          if (abort) return
+          setNodeSchema(null)
+          setUiSchema(null)
+          setSchemaLoading(false)
+          return
+        }
+        const js = await resp.json()
+        if (abort) return
+        // Only consider a schema useful if it has properties defined
+        if (js && js.properties && Object.keys(js.properties).length > 0) {
+          setNodeSchema(js)
+          // allow server to provide uiSchema via a 'uiSchema' field or UI hints in properties
+          setUiSchema(js.uiSchema || null)
+        } else {
+          setNodeSchema(null)
+          setUiSchema(null)
+        }
+      } catch (e) {
+        if (abort) return
+        setNodeSchema(null)
+        setUiSchema(null)
+      } finally {
+        if (!abort) setSchemaLoading(false)
+      }
+    })()
+    return () => { abort = true }
+  }, [selectedNode && selectedNode.data && selectedNode.data.label, token])
 
   useEffect(() => {
     if (!selectedNode) return
@@ -215,6 +265,19 @@ export default function NodeInspector({
     }
   }
 
+  // helper to update config from RJSF with a small debounce to avoid flooding
+  const onRjsfChange = ({ formData }) => {
+    if (rjsfDebounce.current) clearTimeout(rjsfDebounce.current)
+    rjsfDebounce.current = setTimeout(() => {
+      try {
+        updateNodeConfig(selectedNodeId, { ...(selectedNode.data && selectedNode.data.config ? selectedNode.data.config : {}), ...formData })
+        markDirty()
+      } catch (e) {
+        // ignore
+      }
+    }, 250)
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 8 }}>Node id: <strong>{selectedNodeId}</strong></div>
@@ -297,11 +360,23 @@ export default function NodeInspector({
         </div>
       )}
 
-      {/* If no friendly component exists, render a read-only JSON view to help users edit safely. */}
+      {/* If no friendly component exists, try to render a JSON Schema form from the server. If no schema is available, fall back to a read-only JSON preview. */}
       {selectedNode.data && !NODE_DISPATCH[selectedNode.data.label] && (
         <div style={{ marginTop: 8 }}>
-          <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (preview)</div>
-          <ReactJson src={selectedNode.data} name={false} collapsed={1} enableClipboard={false} displayDataTypes={false} />
+          <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (editable)</div>
+          {schemaLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading schema...</div>}
+          {nodeSchema ? (
+            <div>
+              <Form schema={nodeSchema} uiSchema={uiSchema || {}} formData={(selectedNode.data && (selectedNode.data.config || {}))} onChange={onRjsfChange} onSubmit={() => {}} onError={() => {}}>
+                <div />
+              </Form>
+            </div>
+          ) : (
+            <div>
+              <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (preview)</div>
+              <ReactJson src={selectedNode.data} name={false} collapsed={1} enableClipboard={false} displayDataTypes={false} />
+            </div>
+          )}
         </div>
       )}
 

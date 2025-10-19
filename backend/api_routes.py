@@ -1007,6 +1007,22 @@ def register(app, ctx):
 
         wf_name = _derive_workflow_name(body)
 
+        # Run conservative canonicalization to preserve original configs
+        try:
+            from .node_schemas import canonicalize_graph
+            body_graph = body.get('graph') if isinstance(body, dict) else None
+            if body_graph is not None:
+                body['graph'] = canonicalize_graph(body_graph)
+        except Exception:
+            pass
+
+        # Soft server-side validation: collect warnings but do not fail by default
+        try:
+            from ._shared import _soft_validate_graph
+            warnings = _soft_validate_graph(body.get('graph'))
+        except Exception:
+            warnings = []
+
         if _DB_AVAILABLE:
             try:
                 db = SessionLocal()
@@ -1014,7 +1030,10 @@ def register(app, ctx):
                 db.add(wf)
                 db.commit()
                 db.refresh(wf)
-                return {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+                out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+                if warnings:
+                    out['validation_warnings'] = warnings
+                return out
             except Exception:
                 try:
                     db.rollback()
@@ -1031,7 +1050,10 @@ def register(app, ctx):
         _next['workflow'] = wid + 1
         # Use derived name for in-memory store as well so behaviour matches DB
         _workflows[wid] = {'workspace_id': wsid, 'name': wf_name, 'description': body.get('description'), 'graph': body.get('graph')}
-        return {'id': wid, 'workspace_id': wsid, 'name': wf_name}
+        out = {'id': wid, 'workspace_id': wsid, 'name': wf_name}
+        if warnings:
+            out['validation_warnings'] = warnings
+        return out
 
     if _FASTAPI_HEADERS:
         @app.put('/api/workflows/{wid}')
@@ -1050,6 +1072,21 @@ def register(app, ctx):
         if not wsid:
             raise HTTPException(status_code=400)
 
+        # preserve original config and canonicalize incoming graph
+        try:
+            from .node_schemas import canonicalize_graph
+            if 'graph' in body and body.get('graph') is not None:
+                body['graph'] = canonicalize_graph(body.get('graph'))
+        except Exception:
+            pass
+
+        # Soft validation warnings for updates
+        try:
+            from ._shared import _soft_validate_graph
+            warnings = _soft_validate_graph(body.get('graph'))
+        except Exception:
+            warnings = []
+
         if _DB_AVAILABLE:
             try:
                 db = SessionLocal()
@@ -1064,7 +1101,10 @@ def register(app, ctx):
                     wf.graph = body.get('graph')
                 db.add(wf)
                 db.commit()
-                return {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+                out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+                if warnings:
+                    out['validation_warnings'] = warnings
+                return out
             except HTTPException:
                 raise
             except Exception:
@@ -1088,7 +1128,10 @@ def register(app, ctx):
             wf['description'] = body.get('description')
         if 'graph' in body:
             wf['graph'] = body.get('graph')
-        return {'id': wid, 'workspace_id': wf.get('workspace_id'), 'name': wf.get('name')}
+        out = {'id': wid, 'workspace_id': wf.get('workspace_id'), 'name': wf.get('name')}
+        if warnings:
+            out['validation_warnings'] = warnings
+        return out
 
     # Webhooks: create/list/delete per-workflow and public trigger
     if _FASTAPI_HEADERS:
