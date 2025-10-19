@@ -3,7 +3,67 @@
   "title": "Marketing: Lead Nurture Workflow",
   "description": "Move leads into appropriate nurture tracks based on profile and behavior; assign tags in CRM and enqueue content emails.",
   "category": "Marketing",
-  "tags": ["crm","segmentation","email"],
-  "sample_input": {"lead_id":"abc123","event":"visited_pricing"},
-  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Lead event webhook"}},{"id":"profile","type":"http","position":{"x":200,"y":-60},"data":{"label":"Fetch Profile","config":{"method":"GET","url":"https://api.crm/leads/{{ trigger.lead_id }}"}}},{"id":"classify","type":"action","position":{"x":420,"y":-60},"data":{"label":"Classify & Tag","config":{"language":"python","code":"p = json.loads(input.get('body','{}'))\n# simple rules\nif 'enterprise' in p.get('company_tier',''):\n    tag='enterprise'\nelif 'startup' in p.get('company_tier',''):\n    tag='startup'\nelse:\n    tag='general'\n# call CRM to add tag (placeholder)\nreturn {'tag': tag}"}}},{"id":"email","type":"email","position":{"x":640,"y":-60},"data":{"label":"Send Nurture Email","config":{"to":["{{ node_results.profile.email }}"],"subject":"Resources for {{ node_results.classify.tag }} customers","body":"..."}}}],"edges":[{"id":"e1","source":"in","target":"profile"},{"id":"e2","source":"profile","target":"classify"},{"id":"e3","source":"classify","target":"email"}]}
+  "tags": ["crm", "segmentation", "email"],
+  "sample_input": {"lead_id": "abc123", "event": "visited_pricing"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Lead event webhook"}
+      },
+      {
+        "id": "profile",
+        "type": "http",
+        "position": {"x": 200, "y": -60},
+        "data": {
+          "label": "Fetch Profile",
+          "config": {"method": "GET", "url": "https://api.crm/leads/{{ trigger.lead_id }}"}
+        }
+      },
+      {
+        "id": "classify",
+        "type": "transform",
+        "position": {"x": 420, "y": -60},
+        "data": {
+          "label": "Classify & Tag",
+          "config": {
+            "language": "python",
+            "code": "p = json.loads(input.get('body','{}'))\n# simple rules\nif 'enterprise' in p.get('company_tier',''):\n    tag = 'enterprise'\nelif 'startup' in p.get('company_tier',''):\n    tag = 'startup'\nelse:\n    tag = 'general'\n# call CRM to add tag (placeholder)\nreturn {'tag': tag}",
+            "body": {
+              "original_config": {
+                "language": "python",
+                "code": "p = json.loads(input.get('body','{}'))\n# simple rules\nif 'enterprise' in p.get('company_tier',''):\n    tag = 'enterprise'\nelif 'startup' in p.get('company_tier',''):\n    tag = 'startup'\nelse:\n    tag = 'general'\n# call CRM to add tag (placeholder)\nreturn {'tag': tag}"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "email",
+        "type": "http",
+        "position": {"x": 640, "y": -60},
+        "data": {
+          "label": "Send Nurture Email",
+          "config": {
+            "method": "POST",
+            "url": "https://example.com/placeholder",
+            "body": {
+              "original_config": {
+                "to": ["{{ node_results.profile.email }}"],
+                "subject": "Resources for {{ node_results.classify.tag }} customers",
+                "body": "..."
+              }
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "profile"},
+      {"id": "e2", "source": "profile", "target": "classify"},
+      {"id": "e3", "source": "classify", "target": "email"}
+    ]
+  }
 }

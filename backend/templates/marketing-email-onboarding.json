@@ -3,7 +3,67 @@
   "title": "Marketing: Email Onboarding Series",
   "description": "Trigger a 5-step onboarding email series when a new lead signs up, personalize with profile data and unsubscribe handling.",
   "category": "Marketing",
-  "tags": ["email","automation","lead-nurture"],
-  "sample_input": {"lead_id":"abc123","email":"user@example.com"},
-  "graph": {"nodes":[{"id":"in","type":"input","position":{"x":0,"y":0},"data":{"label":"Signup webhook"}},{"id":"get_profile","type":"http","position":{"x":200,"y":0},"data":{"label":"Get Lead Profile","config":{"method":"GET","url":"https://api.crm/leads/{{ trigger.lead_id }}"}}},{"id":"send_welcome","type":"email","position":{"x":400,"y":-80},"data":{"label":"Send Welcome Email","config":{"to":["{{ node_results.get_profile.email }}"],"subject":"Welcome!","body":"Hi {{ node_results.get_profile.first_name }}, welcome..."}}},{"id":"schedule_followups","type":"action","position":{"x":400,"y":80},"data":{"label":"Schedule Followups","config":{"language":"python","code":"# create scheduled tasks for followup emails\nreturn {'scheduled': True}"}}}],"edges":[{"id":"e1","source":"in","target":"get_profile"},{"id":"e2","source":"get_profile","target":"send_welcome"},{"id":"e3","source":"get_profile","target":"schedule_followups"}]}
+  "tags": ["email", "automation", "lead-nurture"],
+  "sample_input": {"lead_id": "abc123", "email": "user@example.com"},
+  "graph": {
+    "nodes": [
+      {
+        "id": "in",
+        "type": "input",
+        "position": {"x": 0, "y": 0},
+        "data": {"label": "Signup webhook"}
+      },
+      {
+        "id": "get_profile",
+        "type": "http",
+        "position": {"x": 200, "y": 0},
+        "data": {
+          "label": "Get Lead Profile",
+          "config": {"method": "GET", "url": "https://api.crm/leads/{{ trigger.lead_id }}"}
+        }
+      },
+      {
+        "id": "send_welcome",
+        "type": "http",
+        "position": {"x": 400, "y": -80},
+        "data": {
+          "label": "Send Welcome Email",
+          "config": {
+            "method": "POST",
+            "url": "https://example.com/placeholder",
+            "body": {
+              "original_config": {
+                "to": ["{{ node_results.get_profile.email }}"],
+                "subject": "Welcome!",
+                "body": "Hi {{ node_results.get_profile.first_name }}, welcome..."
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "schedule_followups",
+        "type": "transform",
+        "position": {"x": 400, "y": 80},
+        "data": {
+          "label": "Schedule Followups",
+          "config": {
+            "language": "python",
+            "code": "# create scheduled tasks for followup emails\\nreturn {'scheduled': True}",
+            "body": {
+              "original_config": {
+                "language": "python",
+                "code": "# create scheduled tasks for followup emails\\nreturn {'scheduled': True}"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"id": "e1", "source": "in", "target": "get_profile"},
+      {"id": "e2", "source": "get_profile", "target": "send_welcome"},
+      {"id": "e3", "source": "get_profile", "target": "schedule_followups"}
+    ]
+  }
 }

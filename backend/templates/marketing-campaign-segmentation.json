@@ -10,9 +10,9 @@
     "nodes": [
       {"id":"trigger","type":"input","position":{"x":0,"y":0},"data":{"label":"Manual/Scheduler Trigger","config":{}}},
       {"id":"query","type":"action","position":{"x":220,"y":0},"data":{"label":"Query DB","config":{"language":"python","code":"# pseudo: run SQL to fetch cohort\nusers = [{'email':'u1@example.com','name':'Ana'},{'email':'u2@example.com','name':'Bob'}]\nreturn {'users': users}"}}},
-      {"id":"split","type":"action","position":{"x":440,"y":0},"data":{"label":"SplitInBatches","config":{"input_path":"node_results.query.users","batch_size":50,"mode":"serial"}}},
+      {"id":"split","type":"SplitInBatches","position":{"x":440,"y":0},"data":{"label":"SplitInBatches","config":{"input_path":"node_results.query.users","batch_size":50,"mode":"serial","body":{"original_config":{"input_path":"node_results.query.users","batch_size":50,"mode":"serial"}}}}},
       {"id":"llm","type":"llm","position":{"x":660,"y":0},"data":{"label":"Generate Copy","config":{"model":"gpt","prompt":"Write a personalized subject and short body for {{ item.name }} for campaign {{ trigger.campaign_id }}. Respond with JSON like: {\"subject\": \"...\", \"body\": \"...\"}"}}},
-      {"id":"send","type":"email","position":{"x":880,"y":0},"data":{"label":"Send Email","config":{"to":"{{ item.email }}","subject":"{{ node_results.llm.subject }}","body":"{{ node_results.llm.body }}"}}}
+      {"id":"send","type":"http","position":{"x":880,"y":0},"data":{"label":"Send Email","config":{"method":"POST","url":"https://example.com/placeholder","body":{"original_config":{"to":"{{ item.email }}","subject":"{{ node_results.llm.subject }}","body":"{{ node_results.llm.body }}"}}}}}
     ],
     "edges": [
       {"id":"e1","source":"trigger","target":"query"},
