@@ -1,70 +1,131 @@
-import json,glob,os
-ROOT='backend/templates'
-files=glob.glob(os.path.join(ROOT,'*.json'))
-modified=[]
-for fp in files:
-    with open(fp,'r',encoding='utf-8') as f:
-        try:
-            data=json.load(f)
-        except Exception as e:
-            print('skip',fp,'err',e)
-            continue
-    changed=False
-    graph=data.get('graph')
-    if not isinstance(graph,dict):
-        continue
-    nodes=graph.get('nodes',[])
-    for n in nodes:
-        t=n.get('type')
-        d=n.setdefault('data',{})
-        cfg=d.get('config',{}) or {}
-        label=d.get('label','')
-        # Normalize split/batch action -> SplitInBatches node type
-        if t=='action':
-            if (label and 'split' in label.lower()) or isinstance(cfg,dict) and (cfg.get('batch_size') or cfg.get('input_path')):
-                if n.get('type')!='SplitInBatches':
-                    n['type']='SplitInBatches'
-                    # ensure config exists
-                    n['data']['config']=cfg
-                    changed=True
-            else:
-                # map generic action to http worker call
-                newcfg={'method':'POST','url':'https://internal.api/worker/execute','headers':{'Content-Type':'application/json'},'body':{}}
-                if isinstance(cfg,dict):
-                    if cfg.get('language') or 'code' in cfg or 'template' in cfg:
-                        newcfg['body']={'language':cfg.get('language'),'code':cfg.get('code'),'template':cfg.get('template'),'original_config':cfg}
-                    else:
-                        newcfg['body']={'task': label or 'action', 'original_config': cfg}
+"""
+Script to normalize backend/templates JSON files to runtime-supported node types.
+This script is intended to be run temporarily by the assistant to perform bulk updates and
+will be deleted after changes are applied.
+
+Mapping rules applied:
+- email -> http POST to https://example.mail/send with to/subject/body preserved in body.
+- unknown/generic action nodes -> http POST to https://internal.api/worker/execute. Original config preserved under body.original_config.
+- http nodes missing url -> set url to https://internal.api/worker/execute and preserve original body.
+- llm nodes missing prompt -> populate prompt from template or a safe placeholder.
+- SplitInBatches and other supported nodes left as-is.
+
+Supported node types allowed: input, output, http, llm, If, Switch, SplitInBatches, ExecuteWorkflow, SubWorkflow
+"""
+import os
+import json
+
+TEMPLATES_DIR = os.path.join("backend", "templates")
+ALLOWED_TYPES = {"input", "output", "http", "llm", "If", "Switch", "SplitInBatches", "ExecuteWorkflow", "SubWorkflow"}
+
+MAIL_PLACEHOLDER = "https://example.mail/send"
+WORKER_PLACEHOLDER = "https://internal.api/worker/execute"
+
+def normalize_node(node):
+    ntype = node.get("type")
+    data = node.setdefault("data", {})
+    config = data.setdefault("config", {})
+
+    # Email nodes -> http to mail placeholder
+    if ntype and ntype.lower() == "email":
+        node["type"] = "http"
+        # Try to preserve common fields
+        body = {}
+        for k in ("to", "from", "subject", "body", "text", "html"):
+            if k in config:
+                body[k] = config[k]
+        # Preserve entire original config for follow-up
+        body.setdefault("original_config", config.copy())
+        data["config"] = {
+            "method": "POST",
+            "url": MAIL_PLACEHOLDER,
+            "headers": {"Content-Type": "application/json"},
+            "body": body,
+        }
+        return
+
+    # If node type is allowed, do some light hygiene
+    if ntype in ALLOWED_TYPES:
+        if ntype == "http":
+            # ensure url exists
+            if not config.get("url"):
+                config.setdefault("method", "POST")
+                config.setdefault("url", WORKER_PLACEHOLDER)
+                # preserve original config
+                if "body" in config:
+                    config.setdefault("body", {})
+                    config["body"].setdefault("original_config", config.get("body"))
                 else:
-                    newcfg['body']={'task': label or 'action', 'original_config': cfg}
-                n['type']='http'
-                n['data']['config']=newcfg
-                changed=True
-        elif t=='email':
-            # convert email node to http calling mail API placeholder
-            newcfg={'method':'POST','url':'https://example.mail/send','headers':{'Content-Type':'application/json'},'body':{}}
-            if isinstance(cfg,dict):
-                newcfg['body']={'to':cfg.get('to'),'subject':cfg.get('subject'),'body':cfg.get('body'),'original_config':cfg}
-            else:
-                newcfg['body']={'original_config':cfg}
-            n['type']='http'
-            n['data']['config']=newcfg
-            changed=True
-        elif t=='llm':
-            # ensure prompt-like keys exist
-            if isinstance(cfg,dict):
-                if not (cfg.get('prompt') or cfg.get('prompt_template') or (cfg.get('model') and cfg.get('prompt'))):
-                    # set a safe default prompt preserving prior config
-                    cfg['prompt']=cfg.get('prompt') or cfg.get('prompt_template') or 'Provide a concise response based on: {{ input }}'
-                    n['data']['config']=cfg
-                    changed=True
-            else:
-                n['data']['config']={'prompt':'Provide a concise response based on: {{ input }}'}
-                changed=True
+                    config.setdefault("body", {"original_config": {k: v for k, v in config.items()}})
+                # remove keys that are now in body
+                for k in list(config.keys()):
+                    if k not in ("method", "url", "headers", "body"):
+                        # keep headers/body/method/url only
+                        pass
+        if ntype == "llm":
+            # ensure prompt exists
+            if not config.get("prompt"):
+                # try to derive from common fields
+                if "template" in config:
+                    config["prompt"] = config.get("template")
+                elif "instruction" in config:
+                    config["prompt"] = config.get("instruction")
+                else:
+                    config["prompt"] = "{{input}}\n\nRespond concisely."
+        return
+
+    # Generic/unrecognized node types -> convert to http worker call
+    # Preserve original type and config
+    orig = {"original_type": ntype, "original_config": config.copy()}
+    node["type"] = "http"
+    data["config"] = {
+        "method": "POST",
+        "url": WORKER_PLACEHOLDER,
+        "headers": {"Content-Type": "application/json"},
+        "body": orig,
+    }
+
+
+def process_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            j = json.load(f)
+    except Exception as e:
+        print(f"Skipping {path}: could not parse JSON: {e}")
+        return False
+
+    changed = False
+    if isinstance(j, dict) and "graph" in j and isinstance(j["graph"], dict):
+        nodes = j["graph"].get("nodes")
+        if isinstance(nodes, list):
+            for node in nodes:
+                before = json.dumps(node, sort_keys=True)
+                normalize_node(node)
+                after = json.dumps(node, sort_keys=True)
+                if before != after:
+                    changed = True
     if changed:
-        with open(fp,'w',encoding='utf-8') as f:
-            json.dump(data,f,indent=2,ensure_ascii=False)
-        modified.append(fp)
-print('modified',len(modified),'files')
-for m in modified:
-    print(m)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(j, f, indent=2)
+        print(f"Updated {path}")
+    else:
+        print(f"No changes for {path}")
+    return changed
+
+
+def main():
+    files = sorted(os.listdir(TEMPLATES_DIR))
+    updated = []
+    for fn in files:
+        if not fn.endswith('.json'):
+            continue
+        if fn == 'index.json':
+            continue
+        path = os.path.join(TEMPLATES_DIR, fn)
+        if os.path.isfile(path):
+            if process_file(path):
+                updated.append(fn)
+    print("Done. Updated files:", updated)
+
+if __name__ == '__main__':
+    main()
