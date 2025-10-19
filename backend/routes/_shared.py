@@ -4,6 +4,12 @@ from datetime import datetime
 import os
 import threading
 from ..utils import redact_secrets
+try:
+    from ..node_schemas import get_node_json_schema
+except Exception:
+    # best-effort; tests may run without the module available
+    def get_node_json_schema(label: str):
+        return {"type": "object"}
 
 # Import DB/time/etc when available
 try:
@@ -265,6 +271,22 @@ def node_test_impl(body: dict, authorization: Optional[str] = None):
     node = body.get('node') if isinstance(body, dict) else None
     if not node:
         return {'error': 'invalid node'}
+    # conservative schema validation for friendly labels
+    try:
+        label = (node.get('data') or {}).get('label')
+        if label:
+            schema = get_node_json_schema(label)
+            try:
+                import jsonschema
+                cfg = (node.get('data') or {}).get('config')
+                if cfg is not None:
+                    jsonschema.validate(instance=cfg, schema=schema)
+            except Exception:
+                # ignore jsonschema import/validation failures to remain permissive
+                pass
+    except Exception:
+        pass
+
     ntype = node.get('type')
     live_llm = os.environ.get('LIVE_LLM', 'false').lower() == 'true'
     live_http = os.environ.get('LIVE_HTTP', 'false').lower() == 'true'
@@ -281,5 +303,33 @@ def node_test_impl(body: dict, authorization: Optional[str] = None):
             return {'result': {'text': '[mock] http blocked by LIVE_HTTP'}}
         # In LIVE_HTTP mode we would perform a real request; return placeholder
         return {'result': {'text': 'LIVE_HTTP enabled - (live http not executed in this environment)'}}
+
+    # Preserve original_config on all nodes to make round-tripping and
+    # migration tooling simpler. If the caller provided a 'data.config'
+    # we keep a copy under 'original_config' if not already present.
+    try:
+        if isinstance(node.get('data'), dict):
+            cfg = node.get('data', {}).get('config')
+            if cfg is not None and isinstance(cfg, dict):
+                if 'original_config' not in cfg:
+                    cfg['original_config'] = dict(cfg)
+    except Exception:
+        pass
+
+    # Slack/webhook-style nodes
+    if ntype == 'slack' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('slack')):
+        # Respect LIVE_HTTP toggle for outbound webhooks
+        live_http = os.environ.get('LIVE_HTTP', 'false').lower() == 'true'
+        if not live_http:
+            return {'result': {'text': '[mock] slack/webhook blocked by LIVE_HTTP'}}
+        return {'result': {'text': 'LIVE_HTTP enabled - (live slack/webhook not executed in this environment)'}}
+
+    # Email nodes
+    if ntype == 'email' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('email')):
+        # Respect LIVE_SMTP toggle to avoid sending real emails in tests
+        live_smtp = os.environ.get('LIVE_SMTP', 'false').lower() == 'true'
+        if not live_smtp:
+            return {'result': {'text': '[mock] email blocked by LIVE_SMTP'}}
+        return {'result': {'text': 'LIVE_SMTP enabled - (live email not executed in this environment)'}}
 
     return {'error': 'unsupported node type'}

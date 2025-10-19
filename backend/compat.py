@@ -208,9 +208,11 @@ def install_compat_routes(app, g: dict):
     endpoint callables (so we can look up names like '_auth_register').
     """
     try:
-        # Only populate the simple app._routes compatibility mapping when we're
-        # running the lightweight fallback FastAPI (which lacks middleware).
-        if not hasattr(app, 'middleware'):
+        # Populate the simple app._routes compatibility mapping so tests and
+        # lightweight clients can call handlers directly via app._routes.
+        # We do this for both lightweight and real FastAPI instances to keep
+        # behaviour consistent across environments.
+        if True:
             try:
                 _map = {}
                 candidates = []
@@ -227,6 +229,20 @@ def install_compat_routes(app, g: dict):
 
                 for _r in candidates:
                     try:
+                        # Debug: examine candidate route
+                        try:
+                            p_dbg = getattr(_r, 'path', None)
+                            methods_dbg = getattr(_r, 'methods', None)
+                        except Exception:
+                            p_dbg = None
+                            methods_dbg = None
+                        # print for diagnostics when running tests
+                        try:
+                            import sys
+                            if 'pytest' in sys.modules:
+                                print(f"DEBUG[compat] candidate route path={p_dbg} methods={methods_dbg}")
+                        except Exception:
+                            pass
                         p = getattr(_r, 'path', None)
                         methods = getattr(_r, 'methods', None) or set()
                         ep = getattr(_r, 'endpoint', None)

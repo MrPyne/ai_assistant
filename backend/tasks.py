@@ -401,6 +401,78 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
                     # store exception message but redact via persistence layer
                     result = {'error': str(exc)}
 
+            # Slack / webhook node (special-cased for nicer errors / mocks)
+            elif ntype == 'slack' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('slack')):
+                cfg = node.get('data', {}) or node
+                url = cfg.get('url') or cfg.get('config', {}).get('url') or node.get('url')
+                message = cfg.get('text') or cfg.get('message') or cfg.get('body') or cfg.get('config', {}).get('text') if isinstance(cfg.get('config'), dict) else None
+                if not url:
+                    result = {'error': 'slack node missing url'}
+                else:
+                    live_http = os.environ.get('LIVE_HTTP', 'false').lower() == 'true'
+                    if not live_http:
+                        result = {'text': '[mock] slack blocked by LIVE_HTTP'}
+                    else:
+                        import requests
+                        try:
+                            payload = None
+                            try:
+                                # allow full JSON body override
+                                payload = cfg.get('payload') or cfg.get('body') or {'text': message}
+                            except Exception:
+                                payload = {'text': message}
+                            r = requests.post(url, json=payload, timeout=5)
+                            result = {'status_code': getattr(r, 'status_code', None), 'text': getattr(r, 'text', None)}
+                        except Exception as exc:
+                            result = {'error': str(exc)}
+
+            # Email node
+            elif ntype == 'email' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('email')):
+                cfg = node.get('data', {}) or node
+                host = cfg.get('host') or cfg.get('smtp_host') or (cfg.get('config') or {}).get('host')
+                to_addrs = cfg.get('to') or cfg.get('recipients') or (cfg.get('config') or {}).get('to')
+                from_addr = cfg.get('from') or (cfg.get('config') or {}).get('from') or 'noreply@example.com'
+                subject = cfg.get('subject') or (cfg.get('config') or {}).get('subject') or ''
+                body_text = cfg.get('body') or cfg.get('text') or (cfg.get('config') or {}).get('body') or ''
+                port = int(cfg.get('port') or (cfg.get('config') or {}).get('port') or 25)
+                use_tls = bool(cfg.get('use_tls') or (cfg.get('config') or {}).get('use_tls'))
+                username = cfg.get('username') or (cfg.get('config') or {}).get('username')
+                password = cfg.get('password') or (cfg.get('config') or {}).get('password')
+                if not to_addrs or not host:
+                    result = {'error': 'email node missing host or recipients'}
+                else:
+                    live_smtp = os.environ.get('LIVE_SMTP', 'false').lower() == 'true'
+                    if not live_smtp:
+                        result = {'text': '[mock] email blocked by LIVE_SMTP'}
+                    else:
+                        try:
+                            import smtplib
+                            if isinstance(to_addrs, str):
+                                tos = [t.strip() for t in to_addrs.split(',') if t.strip()]
+                            else:
+                                tos = list(to_addrs)
+                            msg = f"Subject: {subject}\n\n{body_text}"
+                            server = smtplib.SMTP(host, port, timeout=5)
+                            try:
+                                if use_tls:
+                                    try:
+                                        server.starttls()
+                                    except Exception:
+                                        pass
+                                if username and password:
+                                    try:
+                                        server.login(username, password)
+                                    except Exception:
+                                        pass
+                                server.sendmail(from_addr, tos, msg)
+                                result = {'status': 'sent', 'to': tos}
+                            finally:
+                                try:
+                                    server.quit()
+                                except Exception:
+                                    pass
+                        except Exception as exc:
+                            result = {'error': str(exc)}
             # LLM node
             elif isinstance(ntype, str) and ntype.lower() == 'llm' or (isinstance(node.get('data'), dict) and (node.get('data', {}).get('label') or '').lower().startswith('llm')):
                 # extract prompt from multiple possible shapes

@@ -452,6 +452,26 @@ def register(app, ctx):
         # fallback: empty list
         return []
 
+    # Node schema discovery: GET /api/node_schema/{label}
+    if _FASTAPI_HEADERS:
+        @app.get('/api/node_schema/{label}')
+        def get_node_schema(label: str, authorization: str = Header(None)):
+            return get_node_schema_impl(label, authorization)
+    else:
+        @app.get('/api/node_schema/{label}')
+        def get_node_schema(label: str, authorization: str = None):
+            return get_node_schema_impl(label, authorization)
+
+    def get_node_schema_impl(label: str, authorization: str = None):
+        # minimal auth: allow unauthenticated discovery
+        try:
+            from .node_schemas import get_node_json_schema
+        except Exception:
+            def get_node_json_schema(l: str):
+                return {'type': 'object'}
+        schema = get_node_json_schema(label)
+        return schema or {'type': 'object'}
+
     # Templates: GET /api/templates
     # Frontend expects a list of template objects. This endpoint is optional —
     # if no remote templates are provided the frontend will fall back to built-in
@@ -886,6 +906,23 @@ def register(app, ctx):
                         url = cfg.get('url') or (cfg.get('config') or {}).get('url')
                     if not url:
                         errors.append(f'http node {node_id or idx} missing url')
+
+                if node_type == 'slack' or (isinstance(node_type, str) and 'slack' in str(node_type).lower()):
+                    url = None
+                    if isinstance(cfg, dict):
+                        url = cfg.get('url') or (cfg.get('config') or {}).get('url')
+                    if not url:
+                        errors.append(f'slack node {node_id or idx} missing url')
+
+                if node_type == 'email' or (isinstance(node_type, str) and 'email' in str(node_type).lower()):
+                    # require recipients and host at minimum
+                    to_addrs = None
+                    host = None
+                    if isinstance(cfg, dict):
+                        to_addrs = cfg.get('to') or cfg.get('recipients') or (cfg.get('config') or {}).get('to')
+                        host = cfg.get('host') or (cfg.get('config') or {}).get('host')
+                    if not to_addrs or not host:
+                        errors.append(f'email node {node_id or idx} missing host or recipients')
 
                 if node_type == 'llm':
                     prompt = None

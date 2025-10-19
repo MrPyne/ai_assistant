@@ -3,6 +3,14 @@ import { useForm } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 import SlackNode from '../nodes/SlackNode'
 import EmailNode from '../nodes/EmailNode'
+import ReactJson from 'react-json-view'
+
+// Node component dispatcher: map canonical labels to friendly components.
+const NODE_DISPATCH = {
+  'Send Email': (props) => <EmailNode {...props} />,
+  'Slack Message': (props) => <SlackNode {...props} />,
+  // other friendly node types can be added here; fallback to raw editor handled below
+}
 
 export default function NodeInspector({
   selectedNode,
@@ -282,15 +290,18 @@ export default function NodeInspector({
         </div>
       )}
 
-      {selectedNode.data && selectedNode.data.label === 'Send Email' && (
+      {/* Use dispatcher to render friendly node components when available */}
+      {selectedNode.data && NODE_DISPATCH[selectedNode.data.label] && (
         <div>
-          <EmailNode register={register} providers={providers} selectedNode={selectedNode} />
+          {NODE_DISPATCH[selectedNode.data.label]({ register, providers, selectedNode })}
         </div>
       )}
 
-      {selectedNode.data && selectedNode.data.label === 'Slack Message' && (
-        <div>
-          <SlackNode register={register} providers={providers} selectedNode={selectedNode} />
+      {/* If no friendly component exists, render a read-only JSON view to help users edit safely. */}
+      {selectedNode.data && !NODE_DISPATCH[selectedNode.data.label] && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (preview)</div>
+          <ReactJson src={selectedNode.data} name={false} collapsed={1} enableClipboard={false} displayDataTypes={false} />
         </div>
       )}
 
