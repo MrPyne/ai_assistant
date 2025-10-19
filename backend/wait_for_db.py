@@ -1,6 +1,12 @@
 """
 Wait for Postgres to be ready, then exec the provided command (uvicorn by default).
 This avoids shell shebang issues with CRLF on Windows hosts by using a Python entrypoint.
+
+This script previously only attempted a TCP connect to the Postgres port. That can
+succeed while Postgres is still recovering and responding with FATAL errors like
+"the database system is starting up". To avoid racing the DB, we now attempt a
+real DBAPI connection (if psycopg2 is available) and retry until a successful
+connection can be established or a timeout is reached.
 """
 import os
 import socket
@@ -13,8 +19,10 @@ import traceback
 
 try:
     import psycopg2
+    from psycopg2 import OperationalError as Psycopg2OperationalError
 except Exception:
     psycopg2 = None
+    Psycopg2OperationalError = Exception
 
 try:
     from alembic import command as alembic_command
@@ -24,20 +32,75 @@ except Exception:
     AlembicConfig = None
 
 
-def wait_for_postgres(url, timeout_seconds=120):
-    if not url.startswith("postgres"):
+def wait_for_postgres(url, timeout_seconds=120, interval_seconds=1.0):
+    """Block until Postgres is ready or timeout is reached.
+
+    If psycopg2 is available this attempts a real DBAPI connection to the
+    target database (using the credentials in DATABASE_URL). If psycopg2 is not
+    available we fall back to a TCP connect to the host:port.
+
+    This function prints progress so container logs show what's happening.
+    """
+    if not url or not url.startswith("postgres"):
+        print("No Postgres DATABASE_URL detected; skipping wait_for_postgres")
         return
+
     p = urllib.parse.urlparse(url)
     host = p.hostname or "db"
     port = p.port or 5432
-    start = time.time()
-    while time.time() - start < timeout_seconds:
+    dbname = (p.path or "").lstrip('/') or 'postgres'
+    user = urllib.parse.unquote(p.username or '')
+    password = urllib.parse.unquote(p.password or '')
+
+    deadline = time.time() + timeout_seconds
+    attempt = 0
+
+    print(f"Waiting for Postgres at {host}:{port} (database={dbname}) for up to {timeout_seconds}s")
+
+    while True:
+        attempt += 1
+        # First ensure the TCP port is accepting connections; this gives faster
+        # feedback than waiting for a DBAPI connect timeout.
         try:
             with socket.create_connection((host, port), timeout=1):
-                return
+                pass
         except Exception:
-            time.sleep(1)
-    # Timeout reached; continue anyway (uvicorn will fail and logs will show reason)
+            if time.time() >= deadline:
+                print(f"Timed out waiting for TCP port {host}:{port}")
+                return
+            print(f"Postgres TCP port not open yet (attempt {attempt}); retrying in {interval_seconds}s")
+            time.sleep(interval_seconds)
+            continue
+
+        # If psycopg2 is available, try a DBAPI connection to ensure Postgres is
+        # past recovery and ready to accept queries. Connect to the target DB so
+        # _maybe_create_database can rely on the server being responsive.
+        if psycopg2:
+            try:
+                conn = psycopg2.connect(dbname=dbname or 'postgres', user=user or None, password=password or None, host=host, port=port, connect_timeout=3)
+                conn.close()
+                print(f"Successfully connected to Postgres (attempt {attempt})")
+                return
+            except Psycopg2OperationalError as exc:
+                # This is expected while Postgres is starting up/recovering. Print
+                # the error message for visibility and retry until timeout.
+                msg = str(exc)
+                if time.time() >= deadline:
+                    print(f"Timed out waiting for Postgres: {msg}")
+                    return
+                print(f"Postgres not ready (attempt {attempt}): {msg}; retrying in {interval_seconds}s")
+                time.sleep(interval_seconds)
+                # gentle backoff
+                interval_seconds = min(interval_seconds * 1.5, 10.0)
+                continue
+            except Exception as exc:
+                # Non-OperationalError (e.g. authentication failure) — surface and stop
+                print(f"Unexpected error while attempting to connect to Postgres: {exc}")
+                raise
+        else:
+            # No psycopg2: TCP connect succeeded, assume Postgres is ready enough.
+            print(f"TCP port open for Postgres (attempt {attempt}); continuing without DBAPI check (psycopg2 not installed)")
+            return
 
 
 def _maybe_create_database(database_url: str):
@@ -161,7 +224,19 @@ def _run_alembic_migrations(database_url: str):
 
 if __name__ == "__main__":
     database_url = os.environ.get("DATABASE_URL", "")
-    wait_for_postgres(database_url)
+    # Allow tuning wait timeout via env var
+    try:
+        timeout = int(os.environ.get("WAIT_FOR_DB_TIMEOUT", "180"))
+    except Exception:
+        timeout = 180
+    try:
+        wait_for_postgres(database_url, timeout_seconds=timeout)
+    except Exception:
+        # In case of unexpected errors, print traceback and continue; the
+        # subsequent steps will fail loudly if the DB is unavailable.
+        print("Exception while waiting for Postgres:")
+        traceback.print_exc()
+
     # Normalize line endings for any shell scripts in the mounted backend dir.
     # This helps when host files use CRLF (Windows) and are bind-mounted into the container.
     try:
