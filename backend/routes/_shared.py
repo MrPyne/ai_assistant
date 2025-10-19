@@ -109,7 +109,7 @@ try:
     from fastapi.responses import JSONResponse
     from fastapi import HTTPException
     _FASTAPI_HEADERS = True
-except Exception:
+except ImportError:
     # lightweight stand-ins for test environment when FastAPI isn't installed
     class HTTPException(Exception):
         def __init__(self, status_code: int = 500, detail: str = None):

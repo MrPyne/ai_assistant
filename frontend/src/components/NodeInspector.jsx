@@ -8,7 +8,9 @@ import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 import SlackNode from '../nodes/SlackNode'
 import EmailNode from '../nodes/EmailNode'
 // lightweight React-18-compatible JSON viewer to replace react-json-view
-import JSONTree from 'react-json-view-lite'
+// react-json-view-lite does not provide a default export; import the named
+// JsonView export and alias it to JSONTree for compatibility with existing code.
+import { JsonView as JSONTree } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 import Form from '@rjsf/core'
 

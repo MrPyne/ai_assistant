@@ -17,6 +17,11 @@ def register(app, ctx):
     _add_audit = ctx.get('_add_audit')
     _workspace_for_user = ctx.get('_workspace_for_user')
     import os
+    import logging
+
+    # lightweight logger: prefer ctx-provided logger when available so test harness
+    # or app_impl can inject a configured logger. Fall back to module logger.
+    logger = ctx.get('logger') if ctx.get('logger') is not None else logging.getLogger('backend.api_routes')
 
     # Normalize HTTPException/JSONResponse for lightweight imports
     try:
@@ -24,7 +29,7 @@ def register(app, ctx):
         from fastapi.responses import JSONResponse  # type: ignore
         from fastapi import Header, Request  # type: ignore
         _FASTAPI_HEADERS = True
-    except Exception:
+    except ImportError:
         class HTTPException(Exception):
             def __init__(self, status_code: int = 500, detail: str = None):
                 super().__init__(detail)
@@ -176,9 +181,17 @@ def register(app, ctx):
 
     def list_secrets_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
+        try:
+            logger.debug("list_secrets called authorization=%r resolved_user=%r", authorization, user_id)
+        except Exception:
+            pass
         if not user_id:
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
+        try:
+            logger.debug("list_secrets resolved workspace=%r", wsid)
+        except Exception:
+            pass
         if not wsid:
             return []
 
@@ -186,6 +199,10 @@ def register(app, ctx):
             try:
                 db = SessionLocal()
                 rows = db.query(models.Secret).filter(models.Secret.workspace_id == wsid).all()
+                try:
+                    logger.debug("list_secrets DB rows=%d", len(rows))
+                except Exception:
+                    pass
                 out = []
                 for r in rows:
                     out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'created_at': getattr(r, 'created_at', None)})
@@ -204,6 +221,10 @@ def register(app, ctx):
                 # do not return plaintext value
                 obj.pop('value', None)
                 items.append(obj)
+        try:
+            logger.debug("list_secrets in-memory items=%d", len(items))
+        except Exception:
+            pass
         return items
 
     # GET single provider (returns provider metadata without plaintext secret)
@@ -730,9 +751,17 @@ def register(app, ctx):
 
     def list_providers_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
+        try:
+            logger.debug("list_providers called authorization=%r resolved_user=%r", authorization, user_id)
+        except Exception:
+            pass
         if not user_id:
             raise HTTPException(status_code=401)
         wsid = _workspace_for_user(user_id)
+        try:
+            logger.debug("list_providers resolved workspace=%r", wsid)
+        except Exception:
+            pass
         if not wsid:
             return []
 
@@ -740,6 +769,10 @@ def register(app, ctx):
             try:
                 db = SessionLocal()
                 rows = db.query(models.Provider).filter(models.Provider.workspace_id == wsid).all()
+                try:
+                    logger.debug("list_providers DB rows=%d", len(rows))
+                except Exception:
+                    pass
                 out = []
                 for r in rows:
                     out.append({'id': r.id, 'workspace_id': r.workspace_id, 'type': r.type, 'secret_id': getattr(r, 'secret_id', None), 'last_tested_at': getattr(r, 'last_tested_at', None)})
@@ -756,6 +789,10 @@ def register(app, ctx):
                 obj = dict(p)
                 obj['id'] = pid
                 items.append(obj)
+        try:
+            logger.debug("list_providers in-memory items=%d", len(items))
+        except Exception:
+            pass
         return items
 
     # Workflows: GET /api/workflows, POST /api/workflows, PUT /api/workflows/{id}
@@ -808,16 +845,28 @@ def register(app, ctx):
 
     def list_workflows_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
+        try:
+            logger.debug("list_workflows called authorization=%r resolved_user=%r", authorization, user_id)
+        except Exception:
+            pass
         # allow unauthenticated list to return empty
         if not user_id:
             return []
         wsid = _workspace_for_user(user_id)
+        try:
+            logger.debug("list_workflows resolved workspace=%r", wsid)
+        except Exception:
+            pass
         if not wsid:
             return []
         if _DB_AVAILABLE:
             try:
                 db = SessionLocal()
                 rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
+                try:
+                    logger.debug("list_workflows DB rows=%d", len(rows))
+                except Exception:
+                    pass
                 out = []
                 for r in rows:
                     out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'description': r.description})
@@ -833,6 +882,10 @@ def register(app, ctx):
                 obj = dict(w)
                 obj['id'] = wid
                 items.append(obj)
+        try:
+            logger.debug("list_workflows in-memory items=%d", len(items))
+        except Exception:
+            pass
         return items
 
     if _FASTAPI_HEADERS:
