@@ -305,6 +305,17 @@ export default function NodeInspector({
         </div>
       )}
 
+      {/* If the workflow save produced soft validation warnings, show them here as a non-blocking notice */}
+      {editorState.validationError && editorState.validationError.length > 0 && (
+        <div style={{ marginTop: 8, padding: 8, background: 'rgba(255,230,200,0.6)', borderRadius: 4 }}>
+          <div style={{ fontWeight: 600 }}>Validation warnings</div>
+          <ul style={{ marginTop: 6 }}>
+            {editorState.validationError.map((w, i) => <li key={i} style={{ fontSize: 13 }}>{typeof w === 'string' ? w : JSON.stringify(w)}</li>)}
+          </ul>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>These are non-blocking warnings from server-side soft validation. The workflow can still be saved and run.</div>
+        </div>
+      )}
+
       {selectedNode.data && ['SplitInBatches', 'Loop', 'Parallel'].includes(selectedNode.data.label) && (
         <div>
           <div style={{ marginBottom: 8, fontWeight: 600 }}>Split / Batch configuration</div>

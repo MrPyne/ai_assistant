@@ -25,12 +25,19 @@ ENV VITE_API_URL=${VITE_API_URL}
 ARG BUILD_MODE=development
 ENV BUILD_MODE=${BUILD_MODE}
 
+# Make npm accept legacy peer dependency resolutions to avoid build failure
+# caused by a peerDependency that hasn't been updated to explicitly allow
+# React 18 (e.g. react-json-view). This is a temporary, low-risk CI/workaround
+# that unblocks the Docker build. Prefer upgrading/replacing the offending
+# package in the long term.
+ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
+
 # Print the build mode to make it obvious in build logs
 RUN echo "Frontend build mode: ${BUILD_MODE}"
 
 # Install dependencies (including devDependencies like vite)
 COPY package*.json ./
-RUN npm ci --silent || npm i --no-audit --no-fund
+RUN npm ci --silent || npm i --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
 

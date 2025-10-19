@@ -104,6 +104,14 @@ function EditorInner({ initialToken = '' }) {
       const data = await resp.json()
       // ensure we track the workflow id returned from create/update
       if (data && data.id) setWorkflowId(data.id)
+      // surface any server-side soft validation warnings into editor state
+      try {
+        if (data && data.validation_warnings && Array.isArray(data.validation_warnings) && data.validation_warnings.length) {
+          editorDispatch({ type: 'SET_VALIDATION_ERROR', payload: data.validation_warnings })
+        } else {
+          editorDispatch({ type: 'SET_VALIDATION_ERROR', payload: null })
+        }
+      } catch (e) {}
       editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'saved' })
       editorDispatch({ type: 'MARK_CLEAN' })
       // update the stored workflow name after save (PUT/POST may normalize it)
@@ -111,6 +119,7 @@ function EditorInner({ initialToken = '' }) {
       if (!silent) alert(`Saved workflow id: ${data && data.id}`)
       return data
     } catch (e) {
+      try { editorDispatch({ type: 'SET_VALIDATION_ERROR', payload: null }) } catch (er) {}
       alert(`Save failed: ${String(e)}`)
       editorDispatch({ type: 'SET_SAVE_STATUS', payload: 'error' })
       return null
