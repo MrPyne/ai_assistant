@@ -1582,3 +1582,90 @@ def register(app, ctx):
             return buf.getvalue()
         except Exception:
             return ''
+def list_secrets_impl(authorization: str = None):
+        # Added verbose prints/logs to diagnose empty response issue. Use prints
+        # so messages appear in container logs even if logger is misconfigured.
+        try:
+            print("HANDLER /api/secrets called; AUTH:", authorization)
+        except Exception:
+            pass
+        user_id = ctx.get('_user_from_token')(authorization)
+        try:
+            logger.info("RESOLVED user=%r", user_id)
+        except Exception:
+            pass
+        if not user_id:
+            raise HTTPException(status_code=401)
+        wsid = _workspace_for_user(user_id)
+        try:
+            logger.info("RESOLVED workspace=%r", wsid)
+        except Exception:
+            pass
+        if not wsid:
+            # return empty JSON array to avoid middleware draining body issues
+            return JSONResponse(content=[], status_code=200)
+
+        if _DB_AVAILABLE:
+            db = None
+            try:
+                try:
+                    import os
+                    print("DB_URL:", os.getenv('DATABASE_URL'))
+                except Exception:
+                    pass
+                db = SessionLocal()
+                rows = db.query(models.Secret).filter(models.Secret.workspace_id == wsid).all()
+                try:
+                    logger.info("secrets_count=%d", len(rows) if rows is not None else 0)
+                except Exception:
+                    pass
+                try:
+                    print("first_rows:", [{'id': r.id, 'name': r.name} for r in (rows or [])[:5]])
+                except Exception:
+                    pass
+                out = []
+                for r in rows or []:
+                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'created_at': getattr(r, 'created_at', None)})
+                # Always return a JSONResponse to avoid compatibility problems with middleware
+                return JSONResponse(content=out)
+            except Exception as e:
+                try:
+                    # best-effort rollback if DB transaction left open
+                    if db is not None:
+                        db.rollback()
+                except Exception:
+                    pass
+                try:
+                    print("SECRETS_FETCH_ERROR:", str(e))
+                except Exception:
+                    pass
+                try:
+                    logger.exception("error listing secrets")
+                except Exception:
+                    pass
+                return JSONResponse(content=[], status_code=500)
+            finally:
+                try:
+                    if db is not None:
+                        db.close()
+                except Exception:
+                    pass
+
+        # in-memory fallback
+        items = []
+        for sid, s in _secrets.items():
+            if s.get('workspace_id') == wsid:
+                obj = dict(s)
+                obj['id'] = sid
+                # do not return plaintext value
+                obj.pop('value', None)
+                items.append(obj)
+        try:
+            logger.info("list_secrets in-memory items=%d", len(items))
+        except Exception:
+            pass
+        try:
+            print("in-memory first_rows:", items[:5])
+        except Exception:
+            pass
+        return JSONResponse(content=items)

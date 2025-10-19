@@ -162,16 +162,32 @@ try:
     @app.middleware('http')
     async def _redact_middleware(request, call_next):
         try:
+            try:
+                print("REDACT_MIDDLEWARE start:", getattr(request, 'method', None), getattr(request, 'url', None) or getattr(request, 'path', None))
+            except Exception:
+                pass
             res = await call_next(request)
         except Exception as e:
             # propagate so FastAPI can turn into HTTPException
             raise
         try:
+            try:
+                print("REDACT_MIDDLEWARE got response type:", type(res), "status:", getattr(res, 'status_code', None))
+            except Exception:
+                pass
             redacted = _apply_redaction(res)
-            # If redaction returned a dict, return as JSONResponse
+            try:
+                print("REDACT_MIDDLEWARE redacted_type:", type(redacted))
+                if isinstance(redacted, (dict, list)):
+                    print("REDACT_MIDDLEWARE returning JSONResponse len:", len(redacted) if hasattr(redacted, '__len__') else None)
+                else:
+                    print("REDACT_MIDDLEWARE redacted_preview:", str(redacted)[:200])
+            except Exception:
+                pass
             from fastapi.responses import JSONResponse, Response
-            if isinstance(redacted, dict):
+            if isinstance(redacted, (dict, list)):
                 return JSONResponse(content=redacted, status_code=getattr(res, 'status_code', 200))
+            # Strings should be returned as-is with their original content-type
             if isinstance(redacted, str):
                 ct = None
                 try:
@@ -179,8 +195,11 @@ try:
                 except Exception:
                     ct = None
                 return Response(content=redacted, status_code=getattr(res, 'status_code', 200), media_type=ct)
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                print("REDACT_MIDDLEWARE error:", str(e))
+            except Exception:
+                pass
         return res
 except Exception:
     pass
