@@ -42,8 +42,8 @@ export default function RunDetail({ selectedRunDetail, loading, error, onClose }
             </div>
             <hr />
             <div><strong>Logs</strong></div>
-            {selectedRunDetail.logs && selectedRunDetail.logs.length > 0 ? selectedRunDetail.logs.map(l => (
-              <div key={l.id} className="log-entry">
+            {selectedRunDetail.logs && selectedRunDetail.logs.length > 0 ? selectedRunDetail.logs.map((l, i) => (
+              <div key={l.id ?? `${l.timestamp}-${l.node_id}-${i}`} className="log-entry">
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>{l.timestamp} — {l.node_id} — {l.level}</div>
                 <pre>{typeof l.message === 'string' ? l.message : JSON.stringify(l.message, null, 2)}</pre>
               </div>

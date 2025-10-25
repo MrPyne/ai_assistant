@@ -79,8 +79,8 @@ export default function RightPanel(props) {
             <hr />
             <h3>Selected Run Logs</h3>
             <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
-              {selectedLogs.length === 0 ? <div className="muted">No logs selected</div> : selectedLogs.map(l => (
-                <div key={l.id} className="log-entry">
+              {selectedLogs.length === 0 ? <div className="muted">No logs selected</div> : selectedLogs.map((l, i) => (
+                <div key={l.id ?? `${l.timestamp}-${l.node_id}-${i}`} className="log-entry">
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>{l.timestamp} — {l.node_id} — {l.level}</div>
                   <pre>{typeof l.message === 'string' ? l.message : JSON.stringify(l.message, null, 2)}</pre>
                 </div>

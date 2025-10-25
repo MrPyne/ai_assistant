@@ -3,7 +3,13 @@ from typing import Optional
 
 
 def _env_bool(var: str) -> bool:
-    return os.getenv(var, "false").lower() == "true"
+    """Return True for common truthy env values.
+
+    Accepts: '1', 'true', 'yes' (case-insensitive). Defaults to False.
+    This makes docker-compose/service defaults that use 0/1 work as expected.
+    """
+    val = os.getenv(var, "false").strip().lower()
+    return val in ("1", "true", "yes")
 
 
 def is_live_llm_enabled(provider_name: Optional[str] = None) -> bool:
