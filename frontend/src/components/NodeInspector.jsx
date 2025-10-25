@@ -13,6 +13,9 @@ import EmailNode from '../nodes/EmailNode'
 import { JsonView as JSONTree } from 'react-json-view-lite'
 import 'react-json-view-lite/dist/index.css'
 import Form from '@rjsf/core'
+// rjsf v5 removed the built-in AJV validator. Provide a validator implementation
+// using the ajv8 validator package. Install with: npm install @rjsf/validator-ajv8
+import validator from '@rjsf/validator-ajv8'
 
 // Node component dispatcher: map canonical labels to friendly components.
 const NODE_DISPATCH = {
@@ -20,6 +23,26 @@ const NODE_DISPATCH = {
   'Slack Message': (props) => <SlackNode {...props} />,
   // other friendly node types can be added here; fallback to raw editor handled below
 }
+
+// Labels that have dedicated UI elsewhere in this component and should NOT
+// render the generic RJSF form or the raw JSON editor. Keep nodes that
+// intentionally use the raw editor (e.g., If/Switch/Condition) out of this
+// set so their auto-wire UI remains available.
+const DEDICATED_UI_LABELS = new Set([
+  'Send Email',
+  'Slack Message',
+  'DB Query',
+  'Transform',
+  'Wait',
+  'HTTP Request',
+  'LLM',
+  'Cron Trigger',
+  'HTTP Trigger',
+  'SplitInBatches',
+  'Loop',
+  'Parallel',
+  'Webhook Trigger',
+])
 
 export default function NodeInspector({
   selectedNode,
@@ -47,9 +70,26 @@ export default function NodeInspector({
   const [uiSchema, setUiSchema] = React.useState(null)
   const [schemaLoading, setSchemaLoading] = React.useState(false)
 
+  const [providerSelected, setProviderSelected] = React.useState(null)
+
+  // expose a small handler to keep the local provider selection state in sync
+  // with the form control. This avoids a race where the model list doesn't
+  // refresh because updateNodeConfig hasn't propagated the new provider_id
+  // back into selectedNode.data yet.
+  const handleProviderSelect = (e) => {
+    const v = e && e.target ? e.target.value : e
+    const pid = v === '' ? null : Number(v) || null
+    setProviderSelected(pid)
+    // delegate to react-hook-form to keep its internal state
+    try { setValue('provider_id', pid) } catch (err) { }
+  }
+
   // load model list for selected provider when provider changes
   useEffect(() => {
-    const providerId = (selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id) || null
+    // prefer the in-form provider selection when present so changing the
+    // select updates the model list immediately without waiting for the
+    // parent updateNodeConfig round-trip.
+    const providerId = (selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id) || providerSelected || null
     if (!providerId) {
       setModelOptions([])
       return
@@ -80,7 +120,7 @@ export default function NodeInspector({
       }
     })()
     return () => { abort = true }
-  }, [selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id, token])
+  }, [selectedNode && selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id, providerSelected, token])
 
   // fetch node JSON Schema from server to render rjsf when available
   useEffect(() => {
@@ -171,6 +211,7 @@ export default function NodeInspector({
       }
     }
   }, [selectedNode, reset])
+
 
   // watch all fields and debounce syncing to parent updateNodeConfig
   const watched = watch()
@@ -379,17 +420,29 @@ export default function NodeInspector({
         </div>
       )}
 
-      {/* If no friendly component exists, try to render a JSON Schema form from the server. If no schema is available, fall back to a read-only JSON preview. */}
-      {selectedNode.data && !NODE_DISPATCH[selectedNode.data.label] && (
+      {/* If no friendly component exists and this label doesn't have a dedicated UI,
+          try to render a JSON Schema form from the server. If no schema is available,
+          fall back to a read-only JSON preview. This avoids rendering server-driven
+          forms (rjsf) for nodes that already have a dedicated UI (e.g., LLM), which
+          caused duplicate/conflicting editors. */}
+      {selectedNode.data && !NODE_DISPATCH[selectedNode.data.label] && !DEDICATED_UI_LABELS.has(selectedNode.data.label) && (
         <div style={{ marginTop: 8 }}>
           <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (editable)</div>
           {schemaLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading schema...</div>}
           {nodeSchema ? (
-            <div>
-              <Form schema={nodeSchema} uiSchema={uiSchema || {}} formData={(selectedNode.data && (selectedNode.data.config || {}))} onChange={onRjsfChange} onSubmit={() => {}} onError={() => {}}>
-                <div />
-              </Form>
-            </div>
+              <div>
+                <Form
+                  validator={validator}
+                  schema={nodeSchema}
+                  uiSchema={uiSchema || {}}
+                  formData={(selectedNode.data && (selectedNode.data.config || {}))}
+                  onChange={onRjsfChange}
+                  onSubmit={() => {}}
+                  onError={() => {}}
+                >
+                  <div />
+                </Form>
+              </div>
           ) : (
               <div>
               <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (preview)</div>
@@ -402,7 +455,7 @@ export default function NodeInspector({
       {selectedNode.data && selectedNode.data.label === 'DB Query' && (
         <div>
           <label>Provider</label>
-          <select {...register('provider_id')} style={{ width: '100%', marginBottom: 8 }}>
+          <select {...register('provider_id')} onChange={(e)=>{ register && register.onChange ? register.onChange(e) : null; handleProviderSelect(e) }} value={watch().provider_id || (selectedNode.data && selectedNode.data.config && selectedNode.data.config.provider_id) || ''} style={{ width: '100%', marginBottom: 8 }}>
             <option value=''>-- Select provider --</option>
             {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
           </select>
@@ -472,7 +525,7 @@ export default function NodeInspector({
         </div>
       )}
 
-      {(!selectedNode.data || (selectedNode.data && !['HTTP Request', 'LLM', 'Webhook Trigger'].includes(selectedNode.data.label))) && (
+      {(!selectedNode.data || (selectedNode.data && !DEDICATED_UI_LABELS.has(selectedNode.data.label))) && (
         <div>
           <label>Raw node config (JSON)</label>
           <textarea name="rawJsonText" defaultValue={JSON.stringify(selectedNode.data || {}, null, 2)} onChange={onRawChange} style={{ width: '100%', height: 240 }} />

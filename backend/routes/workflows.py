@@ -2,13 +2,51 @@ def register(app, ctx):
     common = __import__('backend.routes.api_common', fromlist=['']).init_ctx(ctx)
     SessionLocal = common['SessionLocal']
     models = common['models']
-    _DB_AVAILABLE = common['_DB_AVAILABLE']
-    _users = common['_users']
-    _workflows = common['_workflows']
-    _next = common['_next']
+    _DB_AVAILABLE = common.get('_DB_AVAILABLE')
+    _users = common.get('_users')
+    _workflows = common.get('_workflows')
+    _next = common.get('_next')
     _workspace_for_user = common['_workspace_for_user']
     logger = common['logger']
     _FASTAPI_HEADERS = common['_FASTAPI_HEADERS']
+
+    # Ensure console logging is available for easier debugging in development
+    try:
+        import logging, sys
+
+        def _ensure_console_handler(log):
+            try:
+                if not getattr(log, '_console_handler_added', False):
+                    ch = logging.StreamHandler(sys.stdout)
+                    ch.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
+                    ch.setLevel(logging.DEBUG)
+                    log.addHandler(ch)
+                    setattr(log, '_console_handler_added', True)
+            except Exception:
+                try:
+                    if not getattr(log, '_console_handler_added', False):
+                        ch = logging.StreamHandler()
+                        ch.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
+                        ch.setLevel(logging.DEBUG)
+                        log.addHandler(ch)
+                        setattr(log, '_console_handler_added', True)
+                except Exception:
+                    pass
+
+        try:
+            _ensure_console_handler(logger)
+            root = logging.getLogger()
+            _ensure_console_handler(root)
+        except Exception:
+            pass
+
+        try:
+            logger.setLevel(logging.DEBUG)
+            logging.getLogger().setLevel(logging.DEBUG)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     try:
         from fastapi import HTTPException, Header
@@ -25,6 +63,39 @@ def register(app, ctx):
         def list_workflows(authorization: str = None):
             return list_workflows_impl(authorization)
 
+    # Expose node schema lookup used by the frontend NodeInspector.
+    # Returns a permissive empty-object schema when unknown.
+    try:
+        from ..node_schemas import get_node_json_schema
+    except Exception:
+        def get_node_json_schema(label: str):
+            return {"type": "object"}
+
+    if _FASTAPI_HEADERS:
+        @app.get('/api/node_schema/{label}')
+        def node_schema(label: str, authorization: str = Header(None)):
+            try:
+                logger.debug("node_schema called label=%r", label)
+            except Exception:
+                pass
+            try:
+                schema = get_node_json_schema(label)
+            except Exception:
+                schema = {"type": "object"}
+            return schema
+    else:
+        @app.get('/api/node_schema/{label}')
+        def node_schema(label: str, authorization: str = None):
+            try:
+                logger.debug("node_schema called label=%r", label)
+            except Exception:
+                pass
+            try:
+                schema = get_node_json_schema(label)
+            except Exception:
+                schema = {"type": "object"}
+            return schema
+
     if _FASTAPI_HEADERS:
         @app.get('/api/workflows/{wid}')
         def get_workflow(wid: int, authorization: str = Header(None)):
@@ -34,31 +105,75 @@ def register(app, ctx):
         def get_workflow(wid: int, authorization: str = None):
             return get_workflow_impl(wid, authorization)
 
-    def get_workflow_impl(wid: int, authorization: str = None):
-        user_id = ctx.get('_user_from_token')(authorization)
+    def _resolve_user_and_workspace(authorization: str):
+        user_id = ctx.get('_user_from_token')(authorization) if authorization is not None else None
         if not user_id:
-            raise HTTPException(status_code=401)
+            return (None, None)
         wsid = _workspace_for_user(user_id)
-        if not wsid:
-            raise HTTPException(status_code=400)
-        if _DB_AVAILABLE:
+        # preserve previous auto-create behavior: create workspace if missing
+        if not wsid and SessionLocal is not None and models is not None:
             try:
                 db = SessionLocal()
-                wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
-                if not wf or wf.workspace_id != wsid:
-                    raise HTTPException(status_code=404)
-                return {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name, 'description': wf.description, 'graph': getattr(wf, 'graph', None)}
-            finally:
                 try:
-                    db.close()
+                    user = db.query(models.User).filter(models.User.id == user_id).first()
+                    name = f"{getattr(user, 'email', None)}-workspace" if user and getattr(user, 'email', None) else f'user-{user_id}-workspace'
+                    new_ws = models.Workspace(name=name, owner_id=user_id)
+                    db.add(new_ws)
+                    db.commit()
+                    db.refresh(new_ws)
+                    wsid = new_ws.id
+                    try:
+                        logger.info("workflows: created workspace %s for user %s", wsid, user_id)
+                    except Exception:
+                        pass
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return (user_id, wsid)
+
+
+    def get_workflow_impl(wid: int, authorization: str = None):
+        user_id, wsid = _resolve_user_and_workspace(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401)
+        if not wsid:
+            raise HTTPException(status_code=400)
+        try:
+            logger.debug("get_workflow called wid=%r resolved_user=%r workspace=%r", wid, user_id, wsid)
+        except Exception:
+            pass
+        if SessionLocal is None or models is None:
+            raise HTTPException(status_code=500, detail='database unavailable')
+        db = None
+        try:
+            db = SessionLocal()
+            wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
+            if not wf or wf.workspace_id != wsid:
+                try:
+                    logger.debug("get_workflow: not found wid=%r workspace=%r", wid, wsid)
                 except Exception:
                     pass
-        wf = _workflows.get(wid)
-        if not wf or wf.get('workspace_id') != wsid:
-            raise HTTPException(status_code=404)
-        out = dict(wf)
-        out['id'] = wid
-        return out
+                raise HTTPException(status_code=404)
+            try:
+                logger.info("get_workflow: returning workflow id=%s workspace=%s name=%s", wf.id, wf.workspace_id, wf.name)
+            except Exception:
+                pass
+            return {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name, 'description': wf.description, 'graph': getattr(wf, 'graph', None)}
+        finally:
+            try:
+                if db:
+                    db.close()
+            except Exception:
+                pass
 
     def list_workflows_impl(authorization: str = None):
         user_id = ctx.get('_user_from_token')(authorization)
@@ -68,41 +183,37 @@ def register(app, ctx):
             pass
         if not user_id:
             return []
-        wsid = _workspace_for_user(user_id)
+        user_id, wsid = _resolve_user_and_workspace(authorization)
         try:
             logger.debug("list_workflows resolved workspace=%r", wsid)
         except Exception:
             pass
         if not wsid:
             return []
-        if _DB_AVAILABLE:
-            try:
-                db = SessionLocal()
-                rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
-                try:
-                    logger.debug("list_workflows DB rows=%d", len(rows))
-                except Exception:
-                    pass
-                out = []
-                for r in rows:
-                    out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'description': r.description})
-                return out
-            finally:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-        items = []
-        for wid, w in _workflows.items():
-            if w.get('workspace_id') == wsid:
-                obj = dict(w)
-                obj['id'] = wid
-                items.append(obj)
+        if SessionLocal is None or models is None:
+            raise HTTPException(status_code=500, detail='database unavailable')
+        db = None
         try:
-            logger.debug("list_workflows in-memory items=%d", len(items))
-        except Exception:
-            pass
-        return items
+            db = SessionLocal()
+            rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
+            try:
+                logger.debug("list_workflows DB rows=%d workspace=%s", len(rows), wsid)
+            except Exception:
+                pass
+            out = []
+            for r in rows:
+                out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'description': r.description})
+            try:
+                logger.info("list_workflows: returning %d workflows for workspace=%s", len(out), wsid)
+            except Exception:
+                pass
+            return out
+        finally:
+            try:
+                if db:
+                    db.close()
+            except Exception:
+                pass
 
     if _FASTAPI_HEADERS:
         @app.post('/api/workflows')
@@ -114,15 +225,21 @@ def register(app, ctx):
             return create_workflow_impl(body, authorization)
 
     def create_workflow_impl(body: dict, authorization: str = None):
-        user_id = ctx.get('_user_from_token')(authorization)
+        user_id, wsid = _resolve_user_and_workspace(authorization)
+        try:
+            logger.debug("create_workflow called body_keys=%r resolved_user=%r workspace=%r", list(body.keys()) if isinstance(body, dict) else None, user_id, wsid)
+        except Exception:
+            pass
         if not user_id:
+            # try to fall back to any configured test users in ctx (keeps tests working that set ctx._users)
             if ctx.get('_users'):
                 user_id = list(ctx.get('_users').keys())[0]
             else:
                 raise HTTPException(status_code=401)
-        wsid = _workspace_for_user(user_id)
         if not wsid:
             raise HTTPException(status_code=400, detail='workspace not found')
+        if SessionLocal is None or models is None:
+            return JSONResponse(status_code=500, content={'detail': 'database unavailable'})
 
         def _validate_graph(graph):
             if graph is None:
@@ -271,35 +388,32 @@ def register(app, ctx):
             warnings = _soft_validate_graph(body.get('graph'))
         except Exception:
             warnings = []
-        if _DB_AVAILABLE:
+        try:
+            db = SessionLocal()
+            wf = models.Workflow(workspace_id=wsid, name=wf_name, description=body.get('description'), graph=body.get('graph'))
+            db.add(wf)
+            db.commit()
+            db.refresh(wf)
+            out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+            if warnings:
+                out['validation_warnings'] = warnings
             try:
-                db = SessionLocal()
-                wf = models.Workflow(workspace_id=wsid, name=wf_name, description=body.get('description'), graph=body.get('graph'))
-                db.add(wf)
-                db.commit()
-                db.refresh(wf)
-                out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
-                if warnings:
-                    out['validation_warnings'] = warnings
-                return out
+                logger.info("create_workflow: created workflow id=%s workspace=%s name=%s", wf.id, wf.workspace_id, wf.name)
             except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-                return JSONResponse(status_code=500, content={'detail': 'failed to create workflow'})
-            finally:
-                try:
+                pass
+            return out
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return JSONResponse(status_code=500, content={'detail': 'failed to create workflow'})
+        finally:
+            try:
+                if db:
                     db.close()
-                except Exception:
-                    pass
-        wid = _next.get('workflow', 1)
-        _next['workflow'] = wid + 1
-        _workflows[wid] = {'workspace_id': wsid, 'name': wf_name, 'description': body.get('description'), 'graph': body.get('graph')}
-        out = {'id': wid, 'workspace_id': wsid, 'name': wf_name}
-        if warnings:
-            out['validation_warnings'] = warnings
-        return out
+            except Exception:
+                pass
 
     if _FASTAPI_HEADERS:
         @app.put('/api/workflows/{wid}')
@@ -311,10 +425,13 @@ def register(app, ctx):
             return update_workflow_impl(wid, body, authorization)
 
     def update_workflow_impl(wid: int, body: dict, authorization: str = None):
-        user_id = ctx.get('_user_from_token')(authorization)
+        user_id, wsid = _resolve_user_and_workspace(authorization)
+        try:
+            logger.debug("update_workflow called wid=%r body_keys=%r resolved_user=%r workspace=%r", wid, list(body.keys()) if isinstance(body, dict) else None, user_id, wsid)
+        except Exception:
+            pass
         if not user_id:
             raise HTTPException(status_code=401)
-        wsid = _workspace_for_user(user_id)
         if not wsid:
             raise HTTPException(status_code=400)
         try:
@@ -328,47 +445,42 @@ def register(app, ctx):
             warnings = _soft_validate_graph(body.get('graph'))
         except Exception:
             warnings = []
-        if _DB_AVAILABLE:
+        if SessionLocal is None or models is None:
+            raise HTTPException(status_code=500, detail='database unavailable')
+        db = None
+        try:
+            db = SessionLocal()
+            wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
+            if not wf or wf.workspace_id != wsid:
+                raise HTTPException(status_code=404)
+            if 'name' in body:
+                wf.name = body.get('name')
+            if 'description' in body:
+                wf.description = body.get('description')
+            if 'graph' in body:
+                wf.graph = body.get('graph')
+            db.add(wf)
+            db.commit()
             try:
-                db = SessionLocal()
-                wf = db.query(models.Workflow).filter(models.Workflow.id == wid).first()
-                if not wf or wf.workspace_id != wsid:
-                    raise HTTPException(status_code=404)
-                if 'name' in body:
-                    wf.name = body.get('name')
-                if 'description' in body:
-                    wf.description = body.get('description')
-                if 'graph' in body:
-                    wf.graph = body.get('graph')
-                db.add(wf)
-                db.commit()
-                out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
-                if warnings:
-                    out['validation_warnings'] = warnings
-                return out
-            except HTTPException:
-                raise
+                logger.info("update_workflow: updated workflow id=%s workspace=%s name=%s", wf.id, wf.workspace_id, wf.name)
             except Exception:
-                try:
+                pass
+            out = {'id': wf.id, 'workspace_id': wf.workspace_id, 'name': wf.name}
+            if warnings:
+                out['validation_warnings'] = warnings
+            return out
+        except HTTPException:
+            raise
+        except Exception:
+            try:
+                if db:
                     db.rollback()
-                except Exception:
-                    pass
-                raise HTTPException(status_code=500)
-            finally:
-                try:
+            except Exception:
+                pass
+            raise HTTPException(status_code=500)
+        finally:
+            try:
+                if db:
                     db.close()
-                except Exception:
-                    pass
-        wf = _workflows.get(wid)
-        if not wf or wf.get('workspace_id') != wsid:
-            raise HTTPException(status_code=404)
-        if 'name' in body:
-            wf['name'] = body.get('name')
-        if 'description' in body:
-            wf['description'] = body.get('description')
-        if 'graph' in body:
-            wf['graph'] = body.get('graph')
-        out = {'id': wid, 'workspace_id': wf.get('workspace_id'), 'name': wf.get('name')}
-        if warnings:
-            out['validation_warnings'] = warnings
-        return out
+            except Exception:
+                pass

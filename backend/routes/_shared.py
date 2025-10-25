@@ -65,12 +65,35 @@ def _user_from_token(authorization: Optional[str]) -> Optional[int]:
 
 
 def _workspace_for_user(user_id: int) -> Optional[int]:
+    """Return the workspace id for the given user.
+
+    If the DB is available, prefer the DB-backed workspace. If no workspace
+    exists for the user in the DB, create one automatically (convenient for
+    development and for users created before the workspace migration was added).
+
+    Falls back to the in-memory store when the DB is not available.
+    """
     if _DB_AVAILABLE:
         try:
             db = SessionLocal()
             ws = db.query(models.Workspace).filter(models.Workspace.owner_id == user_id).first()
             if ws:
                 return ws.id
+            # No workspace found for this user; create one so older users aren't left without a workspace.
+            try:
+                user = db.query(models.User).filter(models.User.id == user_id).first()
+                name = f"{getattr(user, 'email', None)}-workspace" if user and getattr(user, 'email', None) else f'user-{user_id}-workspace'
+                new_ws = models.Workspace(name=name, owner_id=user_id)
+                db.add(new_ws)
+                db.commit()
+                db.refresh(new_ws)
+                return new_ws.id
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                return None
         except Exception:
             pass
         finally:
@@ -78,6 +101,7 @@ def _workspace_for_user(user_id: int) -> Optional[int]:
                 db.close()
             except Exception:
                 pass
+    # fallback to in-memory store
     for wid, w in _workspaces.items():
         if w.get('owner_id') == user_id:
             return wid
@@ -333,61 +357,3 @@ def node_test_impl(body: dict, authorization: Optional[str] = None):
         return {'result': {'text': 'LIVE_SMTP enabled - (live email not executed in this environment)'}}
 
     return {'error': 'unsupported node type'}
-
-
-def _soft_validate_graph(graph: Any):
-    """Soft validation: validate nodes against known JSON schemas and
-    return a list of warnings (not hard errors). This keeps the API
-    permissive by default but surfaces helpful guidance to clients.
-    """
-    warnings = []
-    try:
-        if graph is None:
-            return warnings
-        nodes = None
-        if isinstance(graph, dict):
-            nodes = graph.get('nodes')
-        elif isinstance(graph, list):
-            nodes = graph
-        else:
-            return warnings
-
-        if not nodes:
-            return warnings
-
-        try:
-            import jsonschema
-        except Exception:
-            return warnings
-
-        for idx, el in enumerate(nodes):
-            try:
-                label = None
-                cfg = None
-                node_id = None
-                if isinstance(el, dict) and 'data' in el:
-                    data = el.get('data') or {}
-                    label = data.get('label')
-                    cfg = data.get('config') or {}
-                    node_id = el.get('id')
-                elif isinstance(el, dict) and el.get('type'):
-                    label = el.get('type')
-                    cfg = el
-                    node_id = el.get('id')
-                else:
-                    continue
-
-                if not label or not isinstance(cfg, dict):
-                    continue
-                try:
-                    schema = get_node_json_schema(label)
-                    jsonschema.validate(instance=cfg, schema=schema)
-                except Exception as e:
-                    # collect friendly warning with node id when possible
-                    msg = str(e)
-                    warnings.append({'message': f'node {node_id or idx} may be invalid: {msg}', 'node_id': node_id, 'index': idx})
-            except Exception:
-                continue
-    except Exception:
-        return warnings
-    return warnings

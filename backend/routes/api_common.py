@@ -50,33 +50,97 @@ def init_ctx(ctx):
         decrypt_value = None
 
     # ensure fallbacks for token/workspace/audit
-    if not callable(ctx.get('_user_from_token')):
-        try:
-            from ..app_stub import _user_from_token as _stub_user_from_token
+    # Prefer DB-backed implementations using ctx's SessionLocal and models when
+    # available. This ensures workspace creation on first-use and audit logging
+    # work even when the top-level ctx wasn't fully populated by app_impl.
+    try:
+        from ..app_stub import _user_from_token as _stub_user_from_token
+        if not callable(ctx.get('_user_from_token')):
             ctx['_user_from_token'] = _stub_user_from_token
-        except Exception:
+    except Exception:
+        if not callable(ctx.get('_user_from_token')):
             ctx['_user_from_token'] = (lambda authorization=None: None)
 
     if not callable(ctx.get('_workspace_for_user')):
-        def _default_workspace_for_user(user_id):
+        def _workspace_for_user_db(user_id):
+            SessionLocal_local = ctx.get('SessionLocal')
+            models_local = ctx.get('models')
+            # Prefer DB-backed workspace lookup/creation when possible
+            if SessionLocal_local and models_local:
+                try:
+                    db = SessionLocal_local()
+                    try:
+                        ws = db.query(models_local.Workspace).filter(models_local.Workspace.owner_id == user_id).first()
+                        if ws:
+                            return ws.id
+                        # No workspace found; create one for older users
+                        try:
+                            user = db.query(models_local.User).filter(models_local.User.id == user_id).first()
+                            name = f"{getattr(user, 'email', None)}-workspace" if user and getattr(user, 'email', None) else f'user-{user_id}-workspace'
+                            new_ws = models_local.Workspace(name=name, owner_id=user_id)
+                            db.add(new_ws)
+                            db.commit()
+                            db.refresh(new_ws)
+                            return new_ws.id
+                        except Exception:
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                            return None
+                    except Exception:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        return None
+                    finally:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # Fallback to in-memory workspace store
             try:
                 wstore = ctx.get('_workspaces') or {}
                 for wid, w in (wstore or {}).items():
                     if w.get('owner_id') == user_id:
                         return wid
-            except Exception:
-                pass
-            try:
-                wstore = ctx.get('_workspaces') or {}
                 if wstore:
                     return list(wstore.keys())[0]
             except Exception:
                 pass
             return None
-        ctx['_workspace_for_user'] = _default_workspace_for_user
+        ctx['_workspace_for_user'] = _workspace_for_user_db
 
     if not callable(ctx.get('_add_audit')):
-        ctx['_add_audit'] = (lambda workspace_id, user_id, action, **kwargs: None)
+        def _add_audit_db(workspace_id, user_id, action, **kwargs):
+            SessionLocal_local = ctx.get('SessionLocal')
+            models_local = ctx.get('models')
+            if SessionLocal_local and models_local:
+                try:
+                    db = SessionLocal_local()
+                    try:
+                        al = models_local.AuditLog(workspace_id=workspace_id, user_id=user_id, action=action, object_type=kwargs.get('object_type'), object_id=kwargs.get('object_id'), detail=kwargs.get('detail'))
+                        db.add(al)
+                        db.commit()
+                    except Exception:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                    finally:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            # otherwise no-op
+            return None
+        ctx['_add_audit'] = _add_audit_db
 
     # refresh locals
     _workspace_for_user = ctx.get('_workspace_for_user')
