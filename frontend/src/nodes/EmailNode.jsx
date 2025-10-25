@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function EmailNode({ register, providers, selectedNode }) {
+export default function EmailNode({ register, providers, selectedNode, handleProviderSelect }) {
   const cfg = (selectedNode.data && selectedNode.data.config) || {}
   return (
     <div>
@@ -13,7 +13,7 @@ export default function EmailNode({ register, providers, selectedNode }) {
       <label>Body</label>
       <textarea {...register('body')} defaultValue={cfg.body || ''} style={{ width: '100%', height: 120 }} />
       <label>Provider</label>
-      <select {...register('provider_id')} defaultValue={cfg.provider_id || ''} style={{ width: '100%', marginTop: 8 }}>
+      <select {...register('provider_id')} defaultValue={cfg.provider_id || ''} onChange={(e)=>{ register && register.onChange ? register.onChange(e) : null; handleProviderSelect && handleProviderSelect(e) }} style={{ width: '100%', marginTop: 8 }}>
         <option value=''>-- Select provider --</option>
         {providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
       </select>

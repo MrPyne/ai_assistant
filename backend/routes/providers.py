@@ -502,6 +502,78 @@ def register(app, ctx):
             pass
         return schema
 
+    # provider models endpoint - lightweight list of known model identifiers per provider type
+    if _FASTAPI_HEADERS:
+        @app.get('/api/provider_models/{ptype}')
+        def provider_models(ptype: str, authorization: str = Header(None)):
+            return provider_models_impl(ptype, authorization)
+    else:
+        @app.get('/api/provider_models/{ptype}')
+        def provider_models(ptype: str, authorization: str = None):
+            return provider_models_impl(ptype, authorization)
+
+    def provider_models_impl(ptype: str, authorization: str = None):
+        # Return a conservative list of model identifiers for supported provider types.
+        # Unknown types return 404 so the frontend can fallback gracefully.
+        if not ptype:
+            raise HTTPException(status_code=400)
+        # Conservative, easy-to-maintain static mapping of provider types ->
+        # example model identifiers to surface as useful defaults in the UI.
+        # Note: many providers (Azure, self-hosted adapters, Hugging Face) use
+        # workspace- or customer-specific deployment names. These lists are
+        # intentionally generic and informational; they can be replaced with a
+        # dynamic, workspace-aware service later if desired.
+        MODEL_MAP = {
+            'openai': [
+                'gpt-4',
+                'gpt-4o',
+                'gpt-4o-mini',
+                'gpt-4o-realtime-preview',
+                'gpt-3.5-turbo',
+                'gpt-3.5-turbo-16k'
+            ],
+            'anthropic': [
+                'claude-3',
+                'claude-2'
+            ],
+            'cohere': [
+                'command',
+                'command-nightly',
+                'xlarge'
+            ],
+            'huggingface-inference': [
+                'hf-infer-embed',
+                'huggingface-generic'
+            ],
+            'ollama': [
+                'ollama-default',
+                'ollama-llama2'
+            ],
+            # Generic self-hosted / Llama2 identifiers (names vary by deploy).
+            'llama2': [
+                'llama2-chat',
+                'llama2-13b'
+            ],
+            # Other types don't have canonical model names here. Azure often
+            # uses per-workspace deployments so return an empty list.
+            's3': [],
+            'smtp': [],
+            'gcp': [],
+            'azure': []
+        }
+        models = MODEL_MAP.get(ptype)
+        if models is None:
+            try:
+                logger.debug("provider_models: unknown type=%s", ptype)
+            except Exception:
+                pass
+            raise HTTPException(status_code=404)
+        try:
+            logger.debug("provider_models: returning %d models for type=%s", len(models), ptype)
+        except Exception:
+            pass
+        return models
+
     # provider test endpoint - lightweight validation that required creds/secret exists
     if _FASTAPI_HEADERS:
         @app.post('/api/providers/test')
