@@ -25,7 +25,7 @@ services:
       DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}"
       CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
       CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
-      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
+      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-1}"
     ports:
       - "8000:8000"
     depends_on:
@@ -44,7 +44,7 @@ services:
       DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}"
       CELERY_BROKER_URL: "${CELERY_BROKER_URL}"
       CELERY_RESULT_BACKEND: "${CELERY_RESULT_BACKEND}"
-      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-0}"
+      ENABLE_LIVE_LLM: "${ENABLE_LIVE_LLM:-1}"
     depends_on:
       - db
       - redis
