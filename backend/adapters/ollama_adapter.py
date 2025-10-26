@@ -7,6 +7,14 @@ from ..llm_utils import is_live_llm_enabled
 import requests
 
 
+logger = logging.getLogger(__name__)
+
+# Import-time sentinel so we can verify the running worker loaded this module
+try:
+    logger.warning("OllamaAdapter MODULE LOADED marker=LLMLOG_v1 pid=%s", os.getpid())
+except Exception:
+    logger.warning("OllamaAdapter MODULE LOADED marker=LLMLOG_v1")
+
 class OllamaAdapter:
     """Ollama adapter.
 

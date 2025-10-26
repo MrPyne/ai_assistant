@@ -14,6 +14,15 @@ try:
 except Exception:
     logger.warning("OpenAIAdapter MODULE LOADED marker=LLMLOG_v1")
 
+# Additional debug: log evaluated env flags relevant to enabling live LLM
+try:
+    flags = {k: os.getenv(k) for k in ('ENABLE_LIVE_LLM', 'LIVE_LLM', 'ENABLE_OPENAI', 'OPENAI_API_KEY')}
+    # avoid printing API key value; only indicate presence
+    flags['OPENAI_API_KEY'] = bool(flags.get('OPENAI_API_KEY'))
+    logger.debug("OpenAIAdapter env flags: %s", flags)
+except Exception:
+    pass
+
 
 class OpenAIAdapter:
     """OpenAI adapter.

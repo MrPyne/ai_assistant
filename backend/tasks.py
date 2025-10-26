@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 from .utils import redact_secrets
 
+# Import-time sentinel so we can detect whether the worker loaded this module
+try:
+    logger.warning("tasks MODULE LOADED marker=LLMLOG_v1 pid=%s", os.getpid())
+except Exception:
+    logger.warning("tasks MODULE LOADED marker=LLMLOG_v1")
+
 
 def _publish_redis_event(event):
     """
