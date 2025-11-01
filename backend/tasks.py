@@ -8,6 +8,7 @@ import hashlib
 logger = logging.getLogger(__name__)
 
 from .utils import redact_secrets
+from .llm_utils import is_live_llm_enabled
 
 # Import-time sentinel so we can detect whether the worker loaded this module
 try:
@@ -296,6 +297,29 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
     except Exception:
         pass
 
+    # New: inspect nodes for llm-type presence and log a summary so we can
+    # determine whether the workflow actually contains any LLM nodes.
+    try:
+        llm_nodes = []
+        for nid, ndef in nodes.items():
+            try:
+                dtype = ndef.get('type') or (isinstance(ndef.get('data'), dict) and ndef.get('data', {}).get('label'))
+            except Exception:
+                dtype = None
+            if isinstance(dtype, str) and dtype.lower() == 'llm':
+                llm_nodes.append(nid)
+            else:
+                # also consider labels starting with 'llm'
+                try:
+                    lab = (ndef.get('data') or {}).get('label') if isinstance(ndef.get('data'), dict) else None
+                    if isinstance(lab, str) and lab.lower().startswith('llm'):
+                        llm_nodes.append(nid)
+                except Exception:
+                    pass
+        logger.info("LLM NODE SUMMARY run=%s llm_node_count=%s llm_node_ids=%s", run_db_id, len(llm_nodes), llm_nodes)
+    except Exception:
+        logger.exception("process_run failed to compute llm node summary for run %s", run_db_id)
+
     # adjacency list for outgoing edges
     outgoing = {}
     incoming = {}
@@ -387,6 +411,17 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
             })
         except Exception:
             logger.exception("process_run failed to publish node started for run %s node %s", run_db_id, current)
+
+        # New: log node metadata to help diagnose missing LLM behavior
+        try:
+            lab = None
+            try:
+                lab = (node.get('data') or {}).get('label') if isinstance(node.get('data'), dict) else None
+            except Exception:
+                lab = None
+            logger.info("NODE EXEC run=%s node=%s detected_type=%s label=%s outgoing_targets=%s", run_db_id, current, ntype, lab, outgoing.get(current))
+        except Exception:
+            pass
 
         try:
             # HTTP node
@@ -525,23 +560,57 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
                 # choose adapter based on provider type
                 adapter = None
                 try:
+                    # Debug: log how we resolved the provider and global live-llm flag
+                    try:
+                        live_enabled = is_live_llm_enabled()
+                    except Exception:
+                        live_enabled = None
+                    try:
+                        prov_id = getattr(provider_obj, 'id', None) if provider_obj is not None else None
+                        prov_type = getattr(provider_obj, 'type', None) or (getattr(provider_obj, 'config', {}) or {}).get('type') if provider_obj is not None else None
+                        prov_secret = getattr(provider_obj, 'secret_id', None) if provider_obj is not None else None
+                        prov_workspace = getattr(provider_obj, 'workspace_id', None) if provider_obj is not None else None
+                        prov_config_keys = None
+                        try:
+                            cfg = getattr(provider_obj, 'config', None)
+                            if isinstance(cfg, dict):
+                                prov_config_keys = list(cfg.keys())
+                        except Exception:
+                            prov_config_keys = None
+                        logger.info("LLM NODE provider resolution run=%s node=%s provider_id=%s provider_type=%s provider_secret_id=%s workspace_id=%s config_keys=%s live_enabled=%s", run_db_id, current, prov_id, prov_type, prov_secret, prov_workspace, prov_config_keys, live_enabled)
+                    except Exception:
+                        logger.exception("LLM NODE provider resolution logging failed for run %s node %s", run_db_id, current)
+
                     if provider_obj is not None:
                         ptype = getattr(provider_obj, 'type', None) or (getattr(provider_obj, 'config', {}) or {}).get('type')
                         if ptype and ptype.lower() == 'openai':
                             from .adapters.openai_adapter import OpenAIAdapter
+                            # Log presence of common env keys (do NOT log values)
+                            try:
+                                openai_key_present = bool(os.environ.get('OPENAI_API_KEY'))
+                            except Exception:
+                                openai_key_present = None
+                            logger.info("LLM NODE selecting OpenAIAdapter provider_type=%s openai_key_present=%s", ptype, openai_key_present)
                             adapter = OpenAIAdapter(provider_obj, db_for_adapter)
                         elif ptype and ptype.lower() == 'ollama':
                             from .adapters.ollama_adapter import OllamaAdapter
+                            try:
+                                ollama_host_present = bool(os.environ.get('OLLAMA_HOST') or os.environ.get('OLLAMA_URL'))
+                            except Exception:
+                                ollama_host_present = None
+                            logger.info("LLM NODE selecting OllamaAdapter provider_type=%s ollama_host_present=%s", ptype, ollama_host_present)
                             adapter = OllamaAdapter(provider_obj, db_for_adapter)
                         else:
                             # unknown provider: attempt openai adapter as default
                             from .adapters.openai_adapter import OpenAIAdapter
+                            logger.info("LLM NODE provider type unknown (%s) falling back to OpenAIAdapter", ptype)
                             adapter = OpenAIAdapter(provider_obj, db_for_adapter)
                     else:
                         # no provider object found: create a minimal provider wrapper
                         from types import SimpleNamespace
                         dummy = SimpleNamespace(id=None, type='openai', workspace_id=None, secret_id=None, config={})
                         from .adapters.openai_adapter import OpenAIAdapter
+                        logger.info("LLM NODE no provider object; using dummy OpenAIAdapter (mock/static) live_enabled=%s", live_enabled)
                         adapter = OpenAIAdapter(dummy, None)
                 except Exception as e:
                     logger.exception("process_run failed to instantiate adapter for llm node %s: %s", current, e)
@@ -556,14 +625,30 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
                             node_model = (cfg.get('config') or {}).get('model') if isinstance(cfg.get('config'), dict) else None
                         except Exception:
                             node_model = None
+                        # Debug: log adapter and prompt summary before generation
+                        try:
+                            adapter_name = adapter.__class__.__name__ if adapter is not None else None
+                        except Exception:
+                            adapter_name = None
+                        try:
+                            prompt_preview = (prompt[:200] + '...') if isinstance(prompt, str) and len(prompt) > 200 else prompt
+                        except Exception:
+                            prompt_preview = None
+                        logger.info("LLM NODE invoking adapter=%s run=%s node=%s prompt_len=%s model=%s prompt_preview=%s", adapter_name, run_db_id, current, (len(prompt) if isinstance(prompt, str) else None), node_model, (prompt_preview[:100] + '...') if isinstance(prompt_preview, str) and len(prompt_preview) > 100 else prompt_preview)
                         gen = adapter.generate(prompt or '', node_model=node_model)
+                        logger.info("LLM NODE adapter=%s generation returned type=%s", adapter_name, type(gen))
                         # adapter should return dict with either text or error
                         if isinstance(gen, dict) and 'error' in gen:
+                            logger.warning("LLM NODE adapter returned error for run=%s node=%s error=%s", run_db_id, current, gen.get('error'))
                             result = {'error': gen.get('error')}
                         else:
                             # normalize to include 'text' and optional 'meta'
                             text = gen.get('text') if isinstance(gen, dict) else str(gen)
                             meta = gen.get('meta') if isinstance(gen, dict) else None
+                            try:
+                                logger.info("LLM NODE generation success run=%s node=%s text_len=%s", run_db_id, current, (len(text) if isinstance(text, str) else None))
+                            except Exception:
+                                pass
                             result = {'text': text, 'meta': meta}
                     except Exception as e:
                         logger.exception("process_run llm adapter.generate failed for node %s: %s", current, e)
@@ -841,6 +926,7 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
 
             else:
                 # Unsupported node: mark as executed with a simple ok result
+                logger.debug("process_run encountered unsupported node type run=%s node=%s type=%s", run_db_id, current, ntype)
                 result = {'status': 'ok'}
 
         except Exception as exc:

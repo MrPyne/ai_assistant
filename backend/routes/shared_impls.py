@@ -105,16 +105,28 @@ def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, 
 # Implementations
 
 def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
+    """Create and enqueue a manual run for workflow wf_id.
+
+    This refactored implementation keeps the original behavior but extracts
+    and simplifies the node selection and enqueue logic to reduce nesting
+    and make the flow easier to follow. It remains best-effort about
+    enqueueing via Celery and will fall back to inline processing when
+    Celery/send_task is unavailable.
+    """
     user_id = _user_from_token(authorization)
     if not user_id:
         from fastapi import HTTPException
         raise HTTPException(status_code=401)
+
+    # ensure the in-memory counter exists
     global _run_counter
     try:
         _run_counter
     except NameError:
         _run_counter = 0
     _run_counter += 1
+
+    # prepare in-memory run record (used when DB not available or for quick response)
     run_id = _run_counter
     _runs[run_id] = {
         'id': run_id,
@@ -123,184 +135,183 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
         'created_by': user_id,
         'created_at': datetime.utcnow().isoformat(),
     }
+
+    # DB-backed path: persist run and attempt to enqueue execution via Celery
     if _DB_AVAILABLE:
+        db = None
         try:
             db = SessionLocal()
             r = models.Run(workflow_id=wf_id, status='queued')
             db.add(r)
             db.commit()
             db.refresh(r)
-            # store mapping to DB id for in-memory view
+
+            # store mapping so in-memory view can reference the DB id
             _runs[run_id]['db_id'] = r.id
+
             try:
                 _add_audit(_workspace_for_user(user_id), user_id, 'create_run', object_type='run', object_id=r.id, detail='manual')
             except Exception:
                 pass
 
-            # Try to enqueue execution via Celery, but schedule slightly
-            # delayed start in a background thread so clients have a short
-            # window to open an SSE connection and subscribe to the run
-            # channel. This reduces the race where the worker publishes
-            # terminal status before the browser subscribes.
+            # Attempt to enqueue asynchronously after a small grace period so
+            # clients can subscribe to the SSE stream.
             try:
-                # Import lazily to avoid adding heavy imports at module load time.
                 from .. import tasks as _tasks
-                import logging as _logging
-                logger = _logging.getLogger(__name__)
+            except Exception:
+                _tasks = None
 
+            try:
+                grace = float(os.environ.get('RUN_START_GRACE', '0.5'))
+            except Exception:
+                grace = 0.5
+
+            def _determine_start_node_for_run(run_db_id: int):
+                """Return a node id to associate with the run when possible.
+
+                Heuristics: prefer explicit cron/timer-like nodes; otherwise pick
+                a node with no incoming edges; finally fall back to the first
+                declared node.
+                """
                 try:
-                    grace = float(os.environ.get('RUN_START_GRACE', '0.5'))
+                    db_local = SessionLocal()
                 except Exception:
-                    grace = 0.5
+                    return None
+                try:
+                    run_obj = db_local.query(models.Run).filter(models.Run.id == run_db_id).first()
+                    if not run_obj or not getattr(run_obj, 'workflow_id', None):
+                        return None
+                    wf = db_local.query(models.Workflow).filter(models.Workflow.id == run_obj.workflow_id).first()
+                    if not wf or not getattr(wf, 'graph', None):
+                        return None
+                    graph = wf.graph
 
-                def _delayed_enqueue(run_db_id):
-                    # small grace period to allow clients to subscribe
-                    import time as _time
+                    # normalize nodes
+                    raw_nodes = graph.get('nodes') if isinstance(graph, dict) else graph
+                    nodes_map = {}
+                    if isinstance(raw_nodes, dict):
+                        nodes_map = raw_nodes
+                    else:
+                        for n in (raw_nodes or []):
+                            if isinstance(n, dict) and 'id' in n:
+                                nodes_map[n['id']] = n
+
+                    # build incoming map
+                    incoming = {}
+                    raw_edges = graph.get('edges') or [] if isinstance(graph, dict) else []
+                    for e in (raw_edges or []):
+                        try:
+                            src = e.get('source')
+                            tgt = e.get('target')
+                            if src and tgt:
+                                incoming.setdefault(tgt, []).append(src)
+                        except Exception:
+                            pass
+
+                    # prefer cron/timer nodes
+                    for nid, nd in nodes_map.items():
+                        try:
+                            label = (nd.get('data') or {}).get('label') or nd.get('label') or ''
+                            ntype = nd.get('type') or (nd.get('data') or {}).get('label')
+                            if (isinstance(label, str) and 'cron' in label.lower()) or (isinstance(ntype, str) and ntype.lower() in ('timer', 'cron', 'cron trigger')):
+                                return nid
+                        except Exception:
+                            continue
+
+                    # nodes with no incoming edges
+                    starters = [nid for nid in nodes_map.keys() if nid not in incoming]
+                    if starters:
+                        return starters[0]
+
+                    # fallback to first declared node
+                    if nodes_map:
+                        return next(iter(nodes_map.keys()))
+
+                except Exception:
                     try:
-                        grace = float(os.environ.get('RUN_START_GRACE', '0.5'))
-                    except Exception:
-                        grace = 0.5
-                    try:
-                        _time.sleep(grace)
+                        logger.exception('error while determining start node for run %s', run_db_id)
                     except Exception:
                         pass
+                finally:
                     try:
-                        # Determine a workflow node id to associate with this run
-                        # so persisted RunLog entries always reference a real
-                        # workflow node. Enforce that callers provide the node.id
-                        # string. We will attempt to look up the workflow graph
-                        # here and pick the first node only to ease calling
-                        # sites, but the node_id must be derived from the node's
-                        # id field. If we cannot determine a node_id we will fail
-                        # fast by enqueuing with no node_id which will cause the
-                        # worker to raise and the enqueue to be logged.
-                        node_id = None
-                        try:
-                            if _DB_AVAILABLE:
-                                db = SessionLocal()
-                                try:
-                                    run_obj = db.query(models.Run).filter(models.Run.id == run_db_id).first()
-                                    if run_obj and getattr(run_obj, 'workflow_id', None):
-                                        wf = db.query(models.Workflow).filter(models.Workflow.id == run_obj.workflow_id).first()
-                                        if wf and getattr(wf, 'graph', None):
-                                            graph = wf.graph
-                                            # normalize nodes into dict keyed by id
-                                            raw_nodes = graph.get('nodes') if isinstance(graph, dict) else graph
-                                            nodes_map = {}
-                                            if isinstance(raw_nodes, dict):
-                                                nodes_map = raw_nodes
-                                            else:
-                                                for n in (raw_nodes or []):
-                                                    if isinstance(n, dict) and 'id' in n:
-                                                        nodes_map[n['id']] = n
-
-                                            # build incoming edges map
-                                            incoming = {}
-                                            raw_edges = graph.get('edges') or [] if isinstance(graph, dict) else []
-                                            for e in (raw_edges or []):
-                                                try:
-                                                    src = e.get('source')
-                                                    tgt = e.get('target')
-                                                    if src and tgt:
-                                                        incoming.setdefault(tgt, []).append(src)
-                                                except Exception:
-                                                    pass
-
-                                            # prefer explicit Cron/Timer nodes, then nodes with no incoming edges
-                                            preferred = None
-                                            for nid, nd in nodes_map.items():
-                                                try:
-                                                    label = (nd.get('data') or {}).get('label') or nd.get('label') or ''
-                                                    ntype = nd.get('type') or (nd.get('data') or {}).get('label')
-                                                    if (isinstance(label, str) and 'cron' in label.lower()) or (isinstance(ntype, str) and ntype.lower() in ('timer', 'cron', 'cron trigger')):
-                                                        preferred = nid
-                                                        break
-                                                except Exception:
-                                                    continue
-
-                                            if preferred is not None:
-                                                node_id = preferred
-                                            else:
-                                                # choose node(s) with no incoming edges
-                                                starters = [nid for nid in nodes_map.keys() if nid not in incoming]
-                                                if starters:
-                                                    node_id = starters[0]
-                                                elif len(nodes_map) > 0:
-                                                    # fallback to first declared node
-                                                    node_id = next(iter(nodes_map.keys()))
-                                finally:
-                                    try:
-                                        db.close()
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            try:
-                                logger.exception('failed to determine node_id for run %s; will enqueue without explicit node_id', run_db_id)
-                            except Exception:
-                                pass
-
-                        try:
-                            logger.info('manual_run enqueue determined node_id=%s for db_run_id=%s', node_id, run_db_id)
-                        except Exception:
-                            pass
-
-                        # Publish a node-scoped 'started' event so the UI/SSE sees the
-                        # trigger node before downstream work begins. This is best-effort
-                        # and will be persisted only when node_id is present (per
-                        # _publish_redis_event invariant).
-                        try:
-                            if node_id is not None:
-                                try:
-                                    _tasks._publish_redis_event({
-                                        'type': 'node',
-                                        'run_id': run_db_id,
-                                        'node_id': node_id,
-                                        'status': 'started',
-                                        'timestamp': datetime.utcnow().isoformat(),
-                                    })
-                                    logger.info('published node.started event for run=%s node=%s', run_db_id, node_id)
-                                except Exception:
-                                    logger.exception('failed to publish node.started event for run %s node %s', run_db_id, node_id)
-                        except Exception:
-                            try:
-                                logger.exception('unexpected error while publishing start event for run %s', run_db_id)
-                            except Exception:
-                                pass
-
-                        try:
-                            if node_id is not None:
-                                # Always pass node_id as the second arg and prefer
-                                # to include a serialized node_graph snapshot when
-                                # available in callers. For now we only pass node_id.
-                                _tasks.celery_app.send_task('execute_workflow', args=(run_db_id, node_id))
-                                logger.info('scheduled execute_workflow for db_run_id=%s node_id=%s', run_db_id, node_id)
-                            else:
-                                # No node_id could be determined: enqueue without
-                                # explicit node id so the worker will fail fast
-                                # (execute_workflow requires node_id). This makes
-                                # the problem visible instead of silently using
-                                # worker hostnames.
-                                _tasks.celery_app.send_task('execute_workflow', args=(run_db_id,))
-                                logger.info('scheduled execute_workflow for db_run_id=%s without node_id (will fail on worker)', run_db_id)
-                        except Exception:
-                            # If Celery isn't configured or send_task fails, process inline
-                            try:
-                                if node_id is not None:
-                                    _tasks.process_run(run_db_id, node_id)
-                                    logger.info('processed execute_workflow inline for db_run_id=%s node_id=%s', run_db_id, node_id)
-                                else:
-                                    # Inline processing without node_id will raise
-                                    _tasks.process_run(run_db_id)
-                                    logger.info('processed execute_workflow inline for db_run_id=%s', run_db_id)
-                            except Exception:
-                                logger.exception('inline process_run failed for db_run_id=%s', run_db_id)
+                        db_local.close()
                     except Exception:
-                        # swallow all errors; this is best-effort
+                        pass
+                return None
+
+            def _delayed_enqueue(db_run_id: int):
+                # Small grace to allow SSE subscriptions
+                try:
+                    import time as _time
+                    _time.sleep(grace)
+                except Exception:
+                    pass
+
+                node_id = None
+                try:
+                    node_id = _determine_start_node_for_run(db_run_id)
+                except Exception:
+                    node_id = None
+
+                try:
+                    logger.info('manual_run enqueue determined node_id=%s for db_run_id=%s', node_id, db_run_id)
+                except Exception:
+                    pass
+
+                # Best-effort publish of a node.started event scoped to node_id
+                if node_id and _tasks is not None:
+                    try:
+                        _tasks._publish_redis_event({
+                            'type': 'node',
+                            'run_id': db_run_id,
+                            'node_id': node_id,
+                            'status': 'started',
+                            'timestamp': datetime.utcnow().isoformat(),
+                        })
+                        logger.info('published node.started event for run=%s node=%s', db_run_id, node_id)
+                    except Exception:
                         try:
-                            logger.exception('failed to enqueue run %s', run_db_id)
+                            logger.exception('failed to publish node.started event for run %s node %s', db_run_id, node_id)
                         except Exception:
                             pass
 
+                # Try to enqueue via Celery; fall back to inline processing
+                if _tasks is not None:
+                    try:
+                        _tasks.celery_app.send_task('execute_workflow', args=(db_run_id, node_id) if node_id else (db_run_id,))
+                        logger.info('scheduled execute_workflow for db_run_id=%s node_id=%s', db_run_id, node_id)
+                        return
+                    except Exception:
+                        try:
+                            logger.exception('celery send_task failed for run %s; falling back to inline', db_run_id)
+                        except Exception:
+                            pass
+
+                # Inline fallback
+                try:
+                    if node_id:
+                        if _tasks is not None:
+                            _tasks.process_run(db_run_id, node_id)
+                        else:
+                            # if tasks not importable, call local process_run if present
+                            from ..tasks import process_run as _proc
+                            _proc(db_run_id, node_id)
+                        logger.info('processed execute_workflow inline for db_run_id=%s node_id=%s', db_run_id, node_id)
+                    else:
+                        if _tasks is not None:
+                            _tasks.process_run(db_run_id)
+                        else:
+                            from ..tasks import process_run as _proc
+                            _proc(db_run_id)
+                        logger.info('processed execute_workflow inline for db_run_id=%s', db_run_id)
+                except Exception:
+                    try:
+                        logger.exception('inline process_run failed for db_run_id=%s', db_run_id)
+                    except Exception:
+                        pass
+
+            # Start background thread for enqueueing (daemon so it doesn't block shutdown)
+            try:
                 import threading as _threading
                 t = _threading.Thread(target=_delayed_enqueue, args=(r.id,), daemon=True)
                 t.start()
@@ -309,21 +320,28 @@ def manual_run_impl(wf_id: int, request, authorization: Optional[str]):
                 except Exception:
                     pass
             except Exception:
-                # best-effort only: ignore enqueue errors
-                pass
+                try:
+                    logger.exception('failed to start enqueue thread for run %s', r.id)
+                except Exception:
+                    pass
 
-            # Return the DB run id so clients subscribe to the correct stream/channel
+            # Return DB run id for clients
             return {'run_id': r.id, 'status': 'queued'}
+
         except Exception:
             try:
-                db.rollback()
+                if db is not None:
+                    db.rollback()
             except Exception:
                 pass
         finally:
             try:
-                db.close()
+                if db is not None:
+                    db.close()
             except Exception:
                 pass
+
+    # DB not available path: return in-memory run id
     return {'run_id': run_id, 'status': 'queued'}
 
 

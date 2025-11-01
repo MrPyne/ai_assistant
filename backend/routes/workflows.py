@@ -10,6 +10,11 @@ def register(app, ctx):
     logger = common['logger']
     _FASTAPI_HEADERS = common['_FASTAPI_HEADERS']
 
+    try:
+        logger.info("workflows: registering routes")
+    except Exception:
+        pass
+
     # Ensure console logging is available for easier debugging in development
     try:
         import logging, sys
@@ -26,7 +31,7 @@ def register(app, ctx):
                 try:
                     if not getattr(log, '_console_handler_added', False):
                         ch = logging.StreamHandler()
-                        ch.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
+                        ch.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
                         ch.setLevel(logging.DEBUG)
                         log.addHandler(ch)
                         setattr(log, '_console_handler_added', True)
@@ -48,20 +53,62 @@ def register(app, ctx):
     except Exception:
         pass
 
+    # FastAPI imports: we always run under FastAPI in this project.
     try:
         from fastapi import HTTPException, Header
         from fastapi.responses import JSONResponse
     except Exception:
         from backend.routes.api_common import HTTPException, Header, JSONResponse  # type: ignore
 
-    if _FASTAPI_HEADERS:
-        @app.get('/api/workflows')
-        def list_workflows(authorization: str = Header(None)):
-            return list_workflows_impl(authorization)
-    else:
-        @app.get('/api/workflows')
-        def list_workflows(authorization: str = None):
-            return list_workflows_impl(authorization)
+    @app.get('/api/workflows')
+    def list_workflows(authorization: str = Header(None)):
+        try:
+            logger.debug("list_workflows entry authorization=%r", authorization)
+        except Exception:
+            pass
+        return list_workflows_impl(authorization)
+
+    def list_workflows_impl(authorization: str = None):
+        """Return list of workflows visible to the authenticated user's workspace.
+
+        Mirrors the pattern used in providers.list_providers_impl: returns an
+        empty list when workspace is missing (allowing unauthenticated/fallback
+        behavior in some tests), raises HTTP 401 when no user, and 500 when
+        DB is unavailable.
+        """
+        user_id, wsid = _resolve_user_and_workspace(authorization)
+        try:
+            logger.debug("list_workflows called authorization=%r resolved_user=%r workspace=%r", authorization, user_id, wsid)
+        except Exception:
+            pass
+        if not user_id:
+            raise HTTPException(status_code=401)
+        if not wsid:
+            return []
+        if SessionLocal is None or models is None:
+            raise HTTPException(status_code=500, detail='database unavailable')
+        db = None
+        try:
+            db = SessionLocal()
+            rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
+            try:
+                logger.debug("list_workflows DB rows=%d workspace=%s", len(rows), wsid)
+            except Exception:
+                pass
+            out = []
+            for r in rows:
+                out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'description': r.description, 'graph': getattr(r, 'graph', None)})
+            try:
+                logger.info("list_workflows: returning %d workflows for workspace=%s (DB)", len(out), wsid)
+            except Exception:
+                pass
+            return out
+        finally:
+            try:
+                if db:
+                    db.close()
+            except Exception:
+                pass
 
     # Expose node schema lookup used by the frontend NodeInspector.
     # Returns a permissive empty-object schema when unknown.
@@ -71,39 +118,25 @@ def register(app, ctx):
         def get_node_json_schema(label: str):
             return {"type": "object"}
 
-    if _FASTAPI_HEADERS:
-        @app.get('/api/node_schema/{label}')
-        def node_schema(label: str, authorization: str = Header(None)):
-            try:
-                logger.debug("node_schema called label=%r", label)
-            except Exception:
-                pass
-            try:
-                schema = get_node_json_schema(label)
-            except Exception:
-                schema = {"type": "object"}
-            return schema
-    else:
-        @app.get('/api/node_schema/{label}')
-        def node_schema(label: str, authorization: str = None):
-            try:
-                logger.debug("node_schema called label=%r", label)
-            except Exception:
-                pass
-            try:
-                schema = get_node_json_schema(label)
-            except Exception:
-                schema = {"type": "object"}
-            return schema
+    @app.get('/api/node_schema/{label}')
+    def node_schema(label: str, authorization: str = Header(None)):
+        try:
+            logger.debug("node_schema called label=%r", label)
+        except Exception:
+            pass
+        try:
+            schema = get_node_json_schema(label)
+        except Exception:
+            schema = {"type": "object"}
+        try:
+            logger.info("node_schema returning for label=%s schema_type=%s", label, type(schema))
+        except Exception:
+            pass
+        return schema
 
-    if _FASTAPI_HEADERS:
-        @app.get('/api/workflows/{wid}')
-        def get_workflow(wid: int, authorization: str = Header(None)):
-            return get_workflow_impl(wid, authorization)
-    else:
-        @app.get('/api/workflows/{wid}')
-        def get_workflow(wid: int, authorization: str = None):
-            return get_workflow_impl(wid, authorization)
+    @app.get('/api/workflows/{wid}')
+    def get_workflow(wid: int, authorization: str = Header(None)):
+        return get_workflow_impl(wid, authorization)
 
     def _resolve_user_and_workspace(authorization: str):
         user_id = ctx.get('_user_from_token')(authorization) if authorization is not None else None
@@ -175,54 +208,9 @@ def register(app, ctx):
             except Exception:
                 pass
 
-    def list_workflows_impl(authorization: str = None):
-        user_id = ctx.get('_user_from_token')(authorization)
-        try:
-            logger.debug("list_workflows called authorization=%r resolved_user=%r", authorization, user_id)
-        except Exception:
-            pass
-        if not user_id:
-            return []
-        user_id, wsid = _resolve_user_and_workspace(authorization)
-        try:
-            logger.debug("list_workflows resolved workspace=%r", wsid)
-        except Exception:
-            pass
-        if not wsid:
-            return []
-        if SessionLocal is None or models is None:
-            raise HTTPException(status_code=500, detail='database unavailable')
-        db = None
-        try:
-            db = SessionLocal()
-            rows = db.query(models.Workflow).filter(models.Workflow.workspace_id == wsid).all()
-            try:
-                logger.debug("list_workflows DB rows=%d workspace=%s", len(rows), wsid)
-            except Exception:
-                pass
-            out = []
-            for r in rows:
-                out.append({'id': r.id, 'workspace_id': r.workspace_id, 'name': r.name, 'description': r.description})
-            try:
-                logger.info("list_workflows: returning %d workflows for workspace=%s", len(out), wsid)
-            except Exception:
-                pass
-            return out
-        finally:
-            try:
-                if db:
-                    db.close()
-            except Exception:
-                pass
-
-    if _FASTAPI_HEADERS:
-        @app.post('/api/workflows')
-        def create_workflow(body: dict, authorization: str = Header(None)):
-            return create_workflow_impl(body, authorization)
-    else:
-        @app.post('/api/workflows')
-        def create_workflow(body: dict, authorization: str = None):
-            return create_workflow_impl(body, authorization)
+    @app.post('/api/workflows')
+    def create_workflow(body: dict, authorization: str = Header(None)):
+        return create_workflow_impl(body, authorization)
 
     def create_workflow_impl(body: dict, authorization: str = None):
         user_id, wsid = _resolve_user_and_workspace(authorization)
@@ -415,14 +403,9 @@ def register(app, ctx):
             except Exception:
                 pass
 
-    if _FASTAPI_HEADERS:
-        @app.put('/api/workflows/{wid}')
-        def update_workflow(wid: int, body: dict, authorization: str = Header(None)):
-            return update_workflow_impl(wid, body, authorization)
-    else:
-        @app.put('/api/workflows/{wid}')
-        def update_workflow(wid: int, body: dict, authorization: str = None):
-            return update_workflow_impl(wid, body, authorization)
+    @app.put('/api/workflows/{wid}')
+    def update_workflow(wid: int, body: dict, authorization: str = Header(None)):
+        return update_workflow_impl(wid, body, authorization)
 
     def update_workflow_impl(wid: int, body: dict, authorization: str = None):
         user_id, wsid = _resolve_user_and_workspace(authorization)
