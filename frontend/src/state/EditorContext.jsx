@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer } from 'react'
+import { normalizeSelectedRunLogs, appendSelectedRunLog } from './editorUtils'
 
 const EditorStateContext = createContext(null)
 const EditorDispatchContext = createContext(null)
@@ -79,68 +80,12 @@ function reducer(state, action) {
     case 'SET_RUNS':
       return { ...state, runs: action.payload || [] }
     case 'SET_SELECTED_RUN_LOGS':
-      try {
-        const incoming = Array.isArray(action.payload) ? action.payload : []
-        // normalize/dedupe incoming logs: prefer stable numeric/string id when present,
-        // otherwise dedupe by a composite key of type/run_id/node_id/timestamp/level/message
-        const keyOf = (obj) => {
-          try {
-            return `${obj && obj.type ? obj.type : ''}|${obj && obj.run_id ? String(obj.run_id) : ''}|${obj && obj.node_id ? String(obj.node_id) : ''}|${obj && obj.timestamp ? String(obj.timestamp) : ''}|${obj && obj.level ? String(obj.level) : ''}|${obj && obj.message ? String(obj.message) : ''}`
-          } catch (e) {
-            try { return JSON.stringify(obj) } catch (e2) { return String(obj) }
-          }
-        }
-        const seenIds = new Set()
-        const seenKeys = new Set()
-        const out = []
-        for (const it of incoming) {
-          if (it && (it.id !== undefined && it.id !== null)) {
-            const sid = String(it.id)
-            if (seenIds.has(sid)) continue
-            seenIds.add(sid)
-            out.push(it)
-          } else {
-            const k = keyOf(it)
-            if (seenKeys.has(k)) continue
-            seenKeys.add(k)
-            out.push(it)
-          }
-        }
-        return { ...state, selectedRunLogs: out }
-      } catch (e) {
-        return { ...state, selectedRunLogs: action.payload || [] }
-      }
+      return { ...state, selectedRunLogs: normalizeSelectedRunLogs(action.payload) }
     case 'APPEND_SELECTED_RUN_LOG':
       try {
-        const existing = state.selectedRunLogs || []
-        const incoming = action.payload
-        // If the incoming log has an id, avoid duplicating entries we've already
-        // loaded via the logs GET endpoint (or a previous SSE replay). For
-        // events without an id (structured lifecycle messages) dedupe by a
-        // composite key to avoid SSE replay + GET creating duplicates.
-        const keyOf = (obj) => {
-          try {
-            return `${obj && obj.type ? obj.type : ''}|${obj && obj.run_id ? String(obj.run_id) : ''}|${obj && obj.node_id ? String(obj.node_id) : ''}|${obj && obj.timestamp ? String(obj.timestamp) : ''}|${obj && obj.level ? String(obj.level) : ''}|${obj && obj.message ? String(obj.message) : ''}`
-          } catch (e) {
-            try { return JSON.stringify(obj) } catch (e2) { return String(obj) }
-          }
-        }
-
-        if (incoming && (incoming.id !== undefined && incoming.id !== null)) {
-          const found = existing.find((l) => (l && l.id !== undefined && l.id !== null) && String(l.id) === String(incoming.id))
-          if (found) return state
-          return { ...state, selectedRunLogs: existing.concat([incoming]) }
-        }
-
-        // No numeric id: dedupe by composite key
-        const incomingKey = keyOf(incoming)
-        const dup = existing.find((l) => {
-          try {
-            return keyOf(l) === incomingKey
-          } catch (e) { return false }
-        })
-        if (dup) return state
-        return { ...state, selectedRunLogs: existing.concat([incoming]) }
+        const appended = appendSelectedRunLog(state.selectedRunLogs, action.payload)
+        if (appended === null) return state
+        return { ...state, selectedRunLogs: appended }
       } catch (e) {
         return { ...state, selectedRunLogs: (state.selectedRunLogs || []).concat([action.payload]) }
       }
