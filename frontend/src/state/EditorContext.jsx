@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer } from 'react'
 import { normalizeSelectedRunLogs, appendSelectedRunLog } from './editorUtils'
+import { setSelectedNodeId, setSelectedEdgeId, setSelection, toggleSelection, clearSelection } from './selectionUtils'
 
 const EditorStateContext = createContext(null)
 const EditorDispatchContext = createContext(null)
@@ -44,23 +45,17 @@ function reducer(state, action) {
     case 'SET_LAST_SAVED_AT':
       return { ...state, lastSavedAt: action.payload }
     case 'SET_SELECTED_NODE_ID':
-      return { ...state, selectedNodeId: action.payload, selectedEdgeId: null, selectedIds: action.payload ? [String(action.payload)] : [] }
+      return setSelectedNodeId(state, action.payload)
     case 'SET_SELECTED_EDGE_ID':
-      return { ...state, selectedEdgeId: action.payload, selectedNodeId: null, selectedIds: action.payload ? [String(action.payload)] : [] }
+      return setSelectedEdgeId(state, action.payload)
     case 'SET_SELECTION':
       // payload expected to be array of ids
-      return { ...state, selectedIds: Array.isArray(action.payload) ? action.payload.map(String) : [], selectedNodeId: (Array.isArray(action.payload) && action.payload.length === 1) ? String(action.payload[0]) : null, selectedEdgeId: null }
+      return setSelection(state, action.payload)
     case 'TOGGLE_SELECTION':
       // payload: id to toggle
-      const id = String(action.payload)
-      const exists = (state.selectedIds || []).includes(id)
-      if (exists) {
-        const next = (state.selectedIds || []).filter(i => i !== id)
-        return { ...state, selectedIds: next, selectedNodeId: next.length === 1 ? next[0] : null }
-      }
-      return { ...state, selectedIds: [...(state.selectedIds || []), id], selectedNodeId: id }
+      return toggleSelection(state, action.payload)
     case 'CLEAR_SELECTION':
-      return { ...state, selectedIds: [], selectedNodeId: null, selectedEdgeId: null }
+      return clearSelection(state)
     case 'SET_SHOW_NODE_TEST':
       return { ...state, showNodeTest: !!action.payload }
     case 'SET_NODE_TEST_TOKEN':
