@@ -43,7 +43,16 @@ def process_run(run_db_id, node_id=None, node_graph=None, run_input=None):
     """
     try:
         from .executor import execute_process_run  # type: ignore
-        return execute_process_run(run_db_id, node_id=node_id, node_graph=node_graph, run_input=run_input)
+        result = execute_process_run(run_db_id, node_id=node_id, node_graph=node_graph, run_input=run_input)
+        # Legacy implementation returns a mapping of node_id -> output.
+        # Wrap into the new envelope expected by callers/tests when a
+        # status field is not present.
+        try:
+            if isinstance(result, dict) and 'status' not in result:
+                return {'status': 'success', 'output': result}
+        except Exception:
+            pass
+        return result
     except Exception:
         # Fallback: raise a clear error so callers can detect missing executor
         logger.exception("process_run compatibility wrapper failed to import executor")

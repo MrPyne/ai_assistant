@@ -66,9 +66,92 @@ except Exception:
                     return data.decode('latin-1', errors='ignore')
 
         responses_mod.StreamingResponse = StreamingResponse
+
+        # Minimal FastAPI class to satisfy imports in backend.app when real
+        # FastAPI isn't installed. It supports route decorators and stores
+        # registered handlers in a simple mapping used by the Dummy TestClient
+        class FastAPI:
+            def __init__(self):
+                # mapping (METHOD, path) -> handler
+                self._routes = {}
+
+            def _register(self, method, path, func):
+                self._routes[(method.upper(), path)] = func
+                return func
+
+            def get(self, path):
+                def _dec(f):
+                    return self._register('GET', path, f)
+                return _dec
+
+            def post(self, path):
+                def _dec(f):
+                    return self._register('POST', path, f)
+                return _dec
+
+            def put(self, path):
+                def _dec(f):
+                    return self._register('PUT', path, f)
+                return _dec
+
+            def delete(self, path):
+                def _dec(f):
+                    return self._register('DELETE', path, f)
+                return _dec
+
+            def middleware(self, kind):
+                def _dec(f):
+                    # store middleware by kind name so tests can inspect
+                    # but do not alter behavior; return original function
+                    setattr(self, f'_middleware_{kind}', f)
+                    return f
+                return _dec
+
+            def on_event(self, name):
+                def _dec(f):
+                    setattr(self, f'_event_{name}', f)
+                    return f
+                return _dec
+
+            @property
+            def routes(self):
+                out = []
+                for (m, p), fn in list(self._routes.items()):
+                    class R:
+                        pass
+                    r = R()
+                    r.path = p
+                    r.methods = {m}
+                    r.name = getattr(fn, '__name__', None)
+                    r.endpoint = fn
+                    out.append(r)
+                return out
+
+        class Request:
+            def __init__(self, scope=None):
+                self.scope = scope or {}
+
+        fastapi_mod.FastAPI = FastAPI
+        fastapi_mod.Request = Request
+        # provide JSONResponse used by backend.app
+        class JSONResponse:
+            def __init__(self, content=None, status_code=200):
+                self.content = content
+                self.status_code = status_code
+
+            def __str__(self):
+                import json
+                try:
+                    return json.dumps(self.content)
+                except Exception:
+                    return str(self.content)
+
+        responses_mod.JSONResponse = JSONResponse
         fastapi_mod.responses = responses_mod
         sys.modules['fastapi'] = fastapi_mod
         sys.modules['fastapi.responses'] = responses_mod
+        # also provide starlette.responses compatibility used by backend.app
+        sys.modules['starlette.responses'] = responses_mod
 
     class TestClient:
         __test__ = False  # prevent pytest from collecting this class as a test

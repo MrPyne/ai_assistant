@@ -30,6 +30,9 @@ _secrets: Dict[int, Dict[str, Any]] = {}
 _workflows: Dict[int, Dict[str, Any]] = {}
 _webhooks: Dict[int, Dict[str, Any]] = {}
 
+# simple run counter used by new impls during migration
+_run_counter = 0
+
 import hashlib as _hashlib
 
 def hash_password(password) -> str:
@@ -103,7 +106,6 @@ def _add_audit(workspace_id, user_id, action, object_type=None, object_id=None, 
     return
 
 # Implementations
-
 # The manual_run_impl implementation has been moved into backend.routes.impls
 # to allow incremental refactoring without breaking imports. Import it lazily
 # so tests and callers that still import shared_impls get the same object.
@@ -116,142 +118,34 @@ except Exception:
         raise RuntimeError('manual_run_impl implementation not available')
 
 
-def retry_run_impl(run_id: int, authorization: Optional[str]):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401)
-    wsid = _workspace_for_user(user_id)
-    if not wsid:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400)
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            orig = db.query(models.Run).filter(models.Run.id == run_id).first()
-            if not orig:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail='run not found')
-            wf = db.query(models.Workflow).filter(models.Workflow.id == orig.workflow_id).first()
-            if not wf or wf.workspace_id != wsid:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=403, detail='not allowed')
-            new = models.Run(workflow_id=orig.workflow_id, status='queued', input_payload=getattr(orig, 'input_payload', None))
-            db.add(new)
-            db.commit()
-            try:
-                _add_audit(wsid, user_id, 'retry_run', object_type='run', object_id=new.id, detail=f'retry_of:{run_id}')
-            except Exception:
-                pass
-            return {'run_id': new.id, 'status': 'queued'}
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-            from fastapi import HTTPException
-            raise HTTPException(status_code=500)
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+try:
+    from .impls.run_impl import retry_run_impl as _retry_run_impl  # type: ignore
 
-    orig = _runs.get(run_id)
-    if not orig:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail='run not found')
-    if orig.get('workflow_id') is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400)
-    _next['run'] += 1
-    nid = _next['run']
-    _runs[nid] = {'workflow_id': orig.get('workflow_id'), 'status': 'queued', 'created_by': user_id, 'created_at': datetime.utcnow().isoformat(), 'retries_of': run_id}
-    try:
-        _add_audit(wsid, user_id, 'retry_run', object_type='run', object_id=nid, detail=f'retry_of:{run_id}')
-    except Exception:
-        pass
-    return {'run_id': nid, 'status': 'queued'}
+    def retry_run_impl(run_id: int, authorization: Optional[str]):
+        return _retry_run_impl(run_id, authorization)
+except Exception:
+    def retry_run_impl(*args, **kwargs):
+        raise RuntimeError('retry_run_impl implementation not available')
 
 
-def list_runs_impl(workflow_id, limit, offset, authorization):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401)
-    try:
-        if _DB_AVAILABLE:
-            db = SessionLocal()
-            q = db.query(models.Run)
-            if workflow_id is not None:
-                q = q.filter(models.Run.workflow_id == workflow_id)
-            total = q.count()
-            rows = q.order_by(models.Run.id.desc()).offset(offset).limit(limit).all()
-            items = []
-            for r in rows:
-                items.append({'id': r.id, 'workflow_id': r.workflow_id, 'status': r.status, 'started_at': r.started_at, 'finished_at': r.finished_at, 'attempts': getattr(r, 'attempts', None)})
-            return {'items': items, 'total': total, 'limit': limit, 'offset': offset}
-    except Exception:
-        pass
-    runs_list = []
-    for rid, r in _runs.items():
-        if workflow_id is None or r.get('workflow_id') == workflow_id:
-            runs_list.append({'id': rid, 'workflow_id': r.get('workflow_id'), 'status': r.get('status'), 'created_at': r.get('created_at')})
-    runs_list = sorted(runs_list, key=lambda x: x['id'], reverse=True)
-    total = len(runs_list)
-    paged = runs_list[offset: offset + limit]
-    return {'items': paged, 'total': total, 'limit': limit, 'offset': offset}
+try:
+    from .impls.run_impl import list_runs_impl as _list_runs_impl  # type: ignore
+
+    def list_runs_impl(workflow_id, limit, offset, authorization):
+        return _list_runs_impl(workflow_id, limit, offset, authorization)
+except Exception:
+    def list_runs_impl(*args, **kwargs):
+        raise RuntimeError('list_runs_impl implementation not available')
 
 
-def get_run_detail_impl(run_id: int, authorization: Optional[str]):
-    user_id = _user_from_token(authorization)
-    if not user_id:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401)
-    if _DB_AVAILABLE:
-        try:
-            db = SessionLocal()
-            r = db.query(models.Run).filter(models.Run.id == run_id).first()
-            if not r:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail='run not found')
-            out = {
-                'id': r.id,
-                'workflow_id': r.workflow_id,
-                'status': r.status,
-                'input_payload': getattr(r, 'input_payload', None),
-                'output_payload': getattr(r, 'output_payload', None),
-                'started_at': getattr(r, 'started_at', None),
-                'finished_at': getattr(r, 'finished_at', None),
-                'attempts': getattr(r, 'attempts', None),
-            }
-            try:
-                rows = db.query(models.RunLog).filter(models.RunLog.run_id == run_id).order_by(models.RunLog.timestamp.asc()).all()
-                out_logs = []
-                for rr in rows:
-                    out_logs.append({'id': rr.id, 'run_id': rr.run_id, 'node_id': rr.node_id, 'timestamp': rr.timestamp.isoformat() if rr.timestamp is not None else None, 'level': rr.level, 'message': rr.message})
-                out['logs'] = out_logs
-            except Exception:
-                out['logs'] = []
-            return out
-        except Exception:
-            pass
-    r = _runs.get(run_id)
-    if not r:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail='run not found')
-    out = {
-        'id': run_id,
-        'workflow_id': r.get('workflow_id'),
-        'status': r.get('status'),
-        'input_payload': r.get('input_payload'),
-        'output_payload': r.get('output_payload'),
-        'started_at': r.get('created_at'),
-        'finished_at': r.get('finished_at'),
-        'attempts': r.get('attempts'),
-        'logs': []
-    }
-    return out
+try:
+    from .impls.run_impl import get_run_detail_impl as _get_run_detail_impl  # type: ignore
+
+    def get_run_detail_impl(run_id: int, authorization: Optional[str]):
+        return _get_run_detail_impl(run_id, authorization)
+except Exception:
+    def get_run_detail_impl(*args, **kwargs):
+        raise RuntimeError('get_run_detail_impl implementation not available')
 
 # Scheduler impls
 

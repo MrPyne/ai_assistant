@@ -4,112 +4,8 @@ import { Handle, Position } from 'react-flow-renderer'
 import SlackNode from './nodes/SlackNode'
 import EmailNode from './nodes/EmailNode'
 import { useEditorDispatch } from './state/EditorContext'
-
-function Icon({ type, size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  if (type === 'webhook') {
-    return (
-      <svg {...common} stroke="currentColor">
-        <path d="M12 2v6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M19 7l-7 7-7-7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-  if (type === 'http') {
-    return (
-      <svg {...common} stroke="currentColor">
-        <path d="M3 12h18" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M12 3v18" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-  if (type === 'llm') {
-    return (
-      <svg {...common} stroke="currentColor">
-        <path d="M12 3C9.238 3 7 5.238 7 8c0 1.657.895 3.105 2.29 3.932L9 17l3.245-1.073A5.002 5.002 0 0017 8c0-2.762-2.238-5-5-5z" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-  // default / generic
-  return (
-    <svg {...common} stroke="currentColor">
-      <circle cx="12" cy="12" r="9" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-// extra icons
-Icon.Email = function EmailIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <rect x="3" y="5" width="18" height="14" rx="2" strokeWidth="1.2" />
-      <path d="M3 7l9 6 9-6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-Icon.Cron = function CronIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <circle cx="12" cy="12" r="9" strokeWidth="1.2" />
-      <path d="M12 7v5l3 3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-Icon.Slack = function SlackIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <path d="M14 3h2a2 2 0 012 2v2" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M10 21H8a2 2 0 01-2-2v-2" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M21 14v2a2 2 0 01-2 2h-2" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M3 10V8a2 2 0 012-2h2" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-Icon.DB = function DbIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <ellipse cx="12" cy="6" rx="8" ry="3" strokeWidth="1.2" />
-      <path d="M4 6v6c0 1.657 3.582 3 8 3s8-1.343 8-3V6" strokeWidth="1.2" />
-    </svg>
-  )
-}
-
-Icon.S3 = function S3Icon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <rect x="3" y="7" width="18" height="10" rx="2" strokeWidth="1.2" />
-      <path d="M7 11h10" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-Icon.Transform = function TransformIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <path d="M4 7h6l2 3 6-3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 17h16" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-Icon.Wait = function WaitIcon({ size = 18 }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' }
-  return (
-    <svg {...common} stroke="currentColor">
-      <path d="M12 7v5l3 3" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="9" strokeWidth="1.2" />
-    </svg>
-  )
-}
+import Icon from './NodeIcon'
+import { inferKindFromLabel, resultPreviewFromRuntime, truncated as _truncated } from './nodeHelpers'
 
 export default function NodeRenderer(props) {
   // Be defensive: react-flow may pass different shapes depending on version.
@@ -117,46 +13,17 @@ export default function NodeRenderer(props) {
   const config = data && data.config && typeof data.config === 'object' ? data.config : {}
   const isInvalid = data && (data.validation_error || data.__validation_error)
 
-  // Compute a human-friendly label with several fallbacks so nodes never render empty
-  const rawLabel = (typeof data.label === 'string' && data.label.trim()) ? data.label.trim() : null
-  const label = rawLabel || (nodeType === 'input' ? 'Webhook Trigger' : null) || nodeType || id || 'Node'
+  const { rawLabel, label, kind, isIf, isSwitch } = inferKindFromLabel(data && data.label, nodeType, id)
 
-  // infer icon type from label OR node type
-  let kind = 'generic'
-  const l = (label || '').toLowerCase()
-  if (l.includes('webhook')) kind = 'webhook'
-  else if (l.includes('http') || l.includes('request')) kind = 'http'
-  else if (l.includes('llm') || l.includes('ai') || l.includes('model')) kind = 'llm'
-
-  // additional kinds
-  else if (l.includes('email') || l.includes('send email') || l.includes('send-email')) kind = 'email'
-  else if (l.includes('cron') || l.includes('timer')) kind = 'cron'
-  else if (l.includes('slack')) kind = 'slack'
-  else if (l.includes('db') || l.includes('query')) kind = 'db'
-  else if (l.includes('s3') || l.includes('upload')) kind = 's3'
-  else if (l.includes('transform') || l.includes('jinja') || l.includes('template')) kind = 'transform'
-  else if (l.includes('wait') || l.includes('delay')) kind = 'wait'
-
-  const isIf = l === 'if' || l === 'condition'
-  const isSwitch = l === 'switch'
   const editorDispatch = useEditorDispatch()
 
   // runtime information (populated by SSE / run replay). Do not mutate config.
   const runtime = data && data.runtime ? data.runtime : null
   const status = runtime && runtime.status ? String(runtime.status).toLowerCase() : null
   const progress = runtime && (typeof runtime.progress === 'number' || typeof runtime.progress === 'string') ? Number(runtime.progress) : null
-  const resultPreview = (() => {
-    if (!runtime) return null
-    if (runtime.result) {
-      if (typeof runtime.result === 'string') return runtime.result
-      try { return JSON.stringify(runtime.result) } catch (e) { return String(runtime.result) }
-    }
-    if (runtime.error) return runtime.error.message || (typeof runtime.error === 'string' ? runtime.error : JSON.stringify(runtime.error))
-    if (runtime.message) return runtime.message
-    return null
-  })()
+  const resultPreview = resultPreviewFromRuntime(runtime)
 
-  const truncated = (s, n = 100) => (typeof s === 'string' && s.length > n) ? s.slice(0, n - 1) + '...' : s
+  const truncated = (s, n = 100) => _truncated(s, n)
 
   const openInspector = (e) => {
     e && e.stopPropagation()
@@ -235,14 +102,14 @@ export default function NodeRenderer(props) {
       {/* small footer to show truncated result / error summary (if present) */}
       {resultPreview ? (
         <div className="node-footer" onClick={openInspector} title={resultPreview} style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}>
-          {truncated(resultPreview, 120)}
+          {_truncated(resultPreview, 120)}
         </div>
       ) : null}
 
       {/* Render specialized small inspector fragments for certain node types */}
       <div style={{ padding: '6px 10px', width: '100%' }}>
-        {kind === 'slack' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Slack target · {config.channel || '#channel'}</div>}
-        {kind === 'email' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Email · {config.to || 'recipient'}</div>}
+        {kind === 'slack' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Slack target - {config.channel || '#channel'}</div>}
+        {kind === 'email' && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Email - {config.to || 'recipient'}</div>}
       </div>
 
       {/* Outputs */}

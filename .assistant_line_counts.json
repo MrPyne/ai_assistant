@@ -1,0 +1,26 @@
+[
+  {
+    "lines": 969,
+    "path": "./backend/tests/conftest.py"
+  },
+  {
+    "lines": 826,
+    "path": "./frontend/src/editor.jsx"
+  },
+  {
+    "lines": 630,
+    "path": "./backend/routes/providers.py"
+  },
+  {
+    "lines": 603,
+    "path": "./backend/routes/runs.py"
+  },
+  {
+    "lines": 568,
+    "path": "./backend/app.py"
+  },
+  {
+    "lines": 510,
+    "path": "./frontend/src/components/NodeInspector.jsx"
+  }
+]

@@ -145,12 +145,50 @@ except ImportError:
         def __init__(self, content=None, status_code: int = 200):
             self.content = content
             self.status_code = status_code
+        def __str__(self):
+            try:
+                import json as _json
+                return _json.dumps(self.content)
+            except Exception:
+                return str(self.content)
 
-    _FASTAPI_HEADERS = False
+        def json(self):
+            return self.content
+
+_FASTAPI_HEADERS = False
 
 
 def auth_register_db(body: dict, db):
     try:
+        # coerce Request-like bodies into dict when tests call endpoints via
+        # TestClient or other runtimes that pass a Request object instead of
+        # a plain dict
+        try:
+            import asyncio
+
+            def _coerce(b):
+                if isinstance(b, dict):
+                    return b
+                j = None
+                try:
+                    if hasattr(b, 'json') and callable(b.json):
+                        maybe = b.json()
+                        if asyncio.iscoroutine(maybe):
+                            j = asyncio.get_event_loop().run_until_complete(maybe)
+                        else:
+                            j = maybe
+                except Exception:
+                    try:
+                        j = asyncio.run(b.json()) if hasattr(b, 'json') and callable(b.json) else None
+                    except Exception:
+                        j = None
+                return j if isinstance(j, dict) else None
+
+            coerced = _coerce(body)
+            if coerced is not None:
+                body = coerced
+        except Exception:
+            pass
         email = body.get('email') if isinstance(body, dict) else None
         password = body.get('password') if isinstance(body, dict) else None
         role = body.get('role') if isinstance(body, dict) else 'user'
@@ -194,6 +232,28 @@ def auth_register_db(body: dict, db):
 
 
 def auth_register_fallback(body: dict):
+    # accept Request-like objects too
+    if not isinstance(body, dict):
+        try:
+            import asyncio
+            if hasattr(body, 'json') and callable(body.json):
+                maybe = body.json()
+                if asyncio.iscoroutine(maybe):
+                    try:
+                        body = asyncio.get_event_loop().run_until_complete(maybe)
+                    except Exception:
+                        try:
+                            body = asyncio.run(maybe)
+                        except Exception:
+                            body = None
+                else:
+                    body = maybe
+        except Exception:
+            try:
+                body = body.json() if hasattr(body, 'json') and callable(body.json) else None
+            except Exception:
+                body = None
+
     email = body.get('email') if isinstance(body, dict) else None
     password = body.get('password') if isinstance(body, dict) else None
     role = body.get('role') if isinstance(body, dict) else 'user'
@@ -210,6 +270,28 @@ def auth_register_fallback(body: dict):
 
 
 def auth_login(body: dict):
+    # coerce Request-like bodies
+    if not isinstance(body, dict):
+        try:
+            import asyncio
+            if hasattr(body, 'json') and callable(body.json):
+                maybe = body.json()
+                if asyncio.iscoroutine(maybe):
+                    try:
+                        body = asyncio.get_event_loop().run_until_complete(maybe)
+                    except Exception:
+                        try:
+                            body = asyncio.run(maybe)
+                        except Exception:
+                            body = None
+                else:
+                    body = maybe
+        except Exception:
+            try:
+                body = body.json() if hasattr(body, 'json') and callable(body.json) else None
+            except Exception:
+                body = None
+
     email = body.get('email') if isinstance(body, dict) else None
     password = body.get('password') if isinstance(body, dict) else None
     if not email or not password:
@@ -244,6 +326,28 @@ def auth_login(body: dict):
 
 
 def auth_resend(body: dict):
+    # coerce Request-like bodies into dicts when necessary
+    if not isinstance(body, dict):
+        try:
+            import asyncio
+            if hasattr(body, 'json') and callable(body.json):
+                maybe = body.json()
+                if asyncio.iscoroutine(maybe):
+                    try:
+                        body = asyncio.get_event_loop().run_until_complete(maybe)
+                    except Exception:
+                        try:
+                            body = asyncio.run(maybe)
+                        except Exception:
+                            body = None
+                else:
+                    body = maybe
+        except Exception:
+            try:
+                body = body.json() if hasattr(body, 'json') and callable(body.json) else None
+            except Exception:
+                body = None
+
     email = body.get('email') if isinstance(body, dict) else None
     if not email:
         return JSONResponse(status_code=400, content={'detail': 'email required'})

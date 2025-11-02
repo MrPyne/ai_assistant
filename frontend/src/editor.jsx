@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import useRuns from './hooks/useRuns'
 import { EditorProvider, useEditorDispatch, useEditorState } from './state/EditorContext'
 import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
@@ -43,9 +44,8 @@ function EditorInner({ initialToken = '' }) {
     setToken(initialToken || '')
   }, [initialToken])
 
-  // runs & eventsource handling
-  const esRef = useRef(null)
-  const runIdRef = useRef(null)
+  // Runs & eventsource handling will be initialized after saveWorkflow is
+  // defined so the hook receives the saveWorkflow callback.
 
   // keep refs up-to-date for event handlers
   useEffect(() => { nodesRef.current = nodes }, [nodes])
@@ -127,6 +127,9 @@ function EditorInner({ initialToken = '' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, editorState.selectedNodeId, token, editorDispatch])
 
+  // runs & eventsource handling (extracted to hook)
+  const { loadRuns, openRunEventSource, runWorkflow, viewRunLogs } = useRuns({ workflowId, token, setNodes, editorDispatch, saveWorkflow })
+
   // Load workflows: GET /api/workflows
   const loadWorkflows = useCallback(async () => {
     try {
@@ -194,192 +197,7 @@ function EditorInner({ initialToken = '' }) {
   }, [token, editorDispatch])
 
   // Runs / logs helpers
-  const loadRuns = useCallback(async () => {
-    try {
-      const url = workflowId ? `/api/runs?workflow_id=${workflowId}` : '/api/runs'
-      const headers = {}
-      if (token) headers.Authorization = `Bearer ${token}`
-      const resp = await fetch(url, { headers })
-      if (!resp.ok) return
-      const data = await resp.json()
-      // some endpoints return { items: [...] }
-      const items = data && Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []))
-      editorDispatch({ type: 'SET_RUNS', payload: items })
-    } catch (e) {
-      // ignore
-    }
-  }, [workflowId, token, editorDispatch])
 
-  // helper to fetch logs for a run and open EventSource streaming
-  // Note: EventSource (native) cannot send custom headers. When a token
-  // is present we prefer to use EventSourcePolyfill which supports headers
-  // so the Authorization header can be included like other API calls.
-  const openRunEventSource = useCallback(async (runId) => {
-    try {
-      // close existing
-      if (esRef.current && typeof esRef.current.close === 'function') {
-        try { esRef.current.close() } catch (e) {}
-      }
-
-      // Determine EventSource implementation. Prefer the event-source-polyfill
-      // when we have a bearer token so we can send Authorization headers.
-      let ESImpl = window.EventSource
-      if (token) {
-        try {
-          const mod = await import('event-source-polyfill')
-          ESImpl = mod && (mod.EventSourcePolyfill || mod.default || mod)
-        } catch (e) {
-          // dynamic import failed; fall back to native EventSource
-          ESImpl = window.EventSource
-        }
-      }
-
-      const es = (ESImpl === window.EventSource)
-        ? new ESImpl(`/api/runs/${runId}/stream`)
-        : new ESImpl(`/api/runs/${runId}/stream`, { headers: { Authorization: `Bearer ${token}` } })
-
-      // remember which run this EventSource is for so other handlers can
-      // inspect it (used to auto-open logs when lifecycle events arrive)
-      try { runIdRef.current = runId } catch (e) {}
-
-      // Generic log events (emitted as SSE event 'log')
-      es.addEventListener('log', (ev) => {
-        try {
-          const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
-          editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload: msg })
-        } catch (e) {}
-      })
-
-      // Node-level structured events (emitted as SSE event 'node')
-      es.addEventListener('node', (ev) => {
-        try {
-          const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
-          // append to run logs view so users still see structured node events
-          editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload })
-          // Auto-open the right panel and switch to the Runs tab when this
-          // run emits lifecycle events (started/completed) so users see
-          // live updates without clicking "View logs".
-          try {
-            // payload.run_id may be number or string depending on source
-            const currentRun = runIdRef.current
-            if (payload && currentRun && String(payload.run_id) === String(currentRun) && (payload.status === 'started' || payload.status === 'success' || payload.status === 'failed')) {
-              editorDispatch({ type: 'SET_RIGHT_PANEL_OPEN', payload: true })
-              editorDispatch({ type: 'SET_ACTIVE_RIGHT_TAB', payload: 'runs' })
-            }
-          } catch (e) {}
-          // update node visual state in the editor canvas
-          try {
-            const nid = payload && payload.node_id ? String(payload.node_id) : null
-            if (nid) {
-              setNodes((prev) => {
-                return prev.map((n) => {
-                  if (String(n.id) !== String(nid)) return n
-                  // attach runtime info under data.runtime so existing tests
-                  // that inspect node.data.config are unaffected.
-                  const existingData = n.data || {}
-                  return { ...n, data: { ...existingData, runtime: payload } }
-                })
-              })
-            }
-          } catch (e) {
-            // ignore node update errors
-          }
-        } catch (e) {}
-      })
-
-      // Terminal status events (emitted as SSE event 'status')
-      es.addEventListener('status', (ev) => {
-        try {
-          const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
-          editorDispatch({ type: 'APPEND_SELECTED_RUN_LOG', payload })
-          // refresh runs list so run state in left panel updates
-          try { loadRuns() } catch (e) {}
-        } catch (e) {}
-        try { es.close() } catch (e) {}
-      })
-
-      es.onerror = () => {
-        // ignore for tests; real UI might show reconnect/backoff here
-      }
-      esRef.current = es
-      // attach a cleanup hook so when the EventSource is closed we clear the
-      // runIdRef to avoid stale associations
-      const origClose = es.close && es.close.bind(es)
-      es.close = () => {
-        try { runIdRef.current = null } catch (e) {}
-        try { if (origClose) origClose() } catch (e) {}
-      }
-      return es
-    } catch (e) {
-      return null
-    }
-  }, [editorDispatch])
-
-  const runWorkflow = useCallback(async () => {
-    try {
-      // ensure saved workflow exists
-      let wid = workflowId
-      if (!wid) {
-        const saved = await saveWorkflow({ silent: true })
-        wid = saved && saved.id
-        if (!wid) return
-      }
-      const headers = { 'Content-Type': 'application/json' }
-      if (token) headers.Authorization = `Bearer ${token}`
-      // send an explicit JSON body (empty object) so FastAPI receives a valid
-      // application/json payload. Some endpoints expect a JSON body and will
-      // return 422 if none is provided.
-      const resp = await fetch(`/api/workflows/${wid}/run`, { method: 'POST', headers, body: JSON.stringify({}) })
-      if (!resp.ok) return
-      const data = await resp.json()
-      const runId = data && data.run_id
-      // refresh runs for the workflow
-      await loadRuns()
-      // load existing logs and then open stream
-      if (runId) {
-        // clear logs while we fetch the new run's logs so UI doesn't show
-        // a mix of entries from the previous run.
-        try { editorDispatch({ type: 'CLEAR_SELECTED_RUN_LOGS' }) } catch (e) {}
-        const headers2 = {}
-        if (token) headers2.Authorization = `Bearer ${token}`
-        const rresp = await fetch(`/api/runs/${runId}/logs`, { headers: headers2 })
-        if (rresp && rresp.ok) {
-          const rd = await rresp.json()
-          const logs = rd && Array.isArray(rd.logs) ? rd.logs : []
-          editorDispatch({ type: 'SET_SELECTED_RUN_LOGS', payload: logs })
-        }
-        openRunEventSource(runId)
-      }
-      alert('Run queued')
-    } catch (e) {
-      // ignore
-    }
-  }, [workflowId, token, saveWorkflow, loadRuns, editorDispatch, openRunEventSource])
-
-  const viewRunLogs = useCallback(async (runId) => {
-    try {
-      if (!runId) return
-      // close any existing EventSource and open a new one for this run
-      if (esRef.current && typeof esRef.current.close === 'function') {
-        try { esRef.current.close() } catch (e) {}
-      }
-      // clear currently-displayed logs immediately so switching between
-      // runs doesn't accumulate entries from the previously-viewed run while
-      // we fetch the new run's logs / open the EventSource stream.
-      try { editorDispatch({ type: 'CLEAR_SELECTED_RUN_LOGS' }) } catch (e) {}
-      const headers = {}
-      if (token) headers.Authorization = `Bearer ${token}`
-      const rresp = await fetch(`/api/runs/${runId}/logs`, { headers })
-      if (rresp && rresp.ok) {
-        const rd = await rresp.json()
-        const logs = rd && Array.isArray(rd.logs) ? rd.logs : []
-        editorDispatch({ type: 'SET_SELECTED_RUN_LOGS', payload: logs })
-      }
-      openRunEventSource(runId)
-    } catch (e) {
-      // ignore
-    }
-  }, [token, editorDispatch, openRunEventSource])
 
   // Node/selection helpers used by NodeRenderer/RightPanel
   const setNodesSafe = useCallback((next) => {
