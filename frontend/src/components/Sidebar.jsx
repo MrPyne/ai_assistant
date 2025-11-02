@@ -1,6 +1,7 @@
 import ProviderForm from './ProviderForm'
 import React, { useEffect, useState } from 'react'
 import ProviderEditModal from './ProviderEditModal'
+import ProvidersSection from './ProvidersSection'
 import { useForm, FormProvider, useWatch } from 'react-hook-form'
 import { useEditorState, useEditorDispatch } from '../state/EditorContext'
 
@@ -251,35 +252,7 @@ export default function Sidebar({
 
               <hr />
               <h4>Providers</h4>
-              <div style={{ marginBottom: 8 }}>
-                {/* New provider form */}
-                <ProviderForm
-                  token={token}
-                  secrets={secrets}
-                  loadProviders={async () => { try { if (token) await loadProviders(); else await loadProviders() } catch (e) {} }}
-                  loadSecrets={loadSecrets}
-                  onCreated={(p) => { try { loadProviders(); loadSecrets(); alert('Provider created') } catch (e) {} }}
-                />
-              </div>
-
-              {/* Providers list converted to a dropdown for compactness */}
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ display: 'block', marginBottom: 4 }}>Existing providers</label>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <select value={selectedProviderId} onChange={(e) => setSelectedProviderId(e.target.value)} style={{ flex: 1 }}>
-                  {providers.length === 0 ? <option value=''>No providers</option> : providers.map(p => <option key={p.id} value={p.id}>{p.type} (id:{p.id})</option>)}
-                </select>
-                  <button onClick={() => { const p = providers.find(x => String(x.id) === selectedProviderId); if (p) alert(`Provider: ${p.type} (id:${p.id})`)}} className="secondary">Info</button>
-                  <button onClick={() => { if (!selectedProviderId) return alert('Select a provider'); testProvider && testProvider(Number(selectedProviderId)) }} className="secondary">Test</button>
-                  <button onClick={() => {
-                    if (!selectedProviderId) return alert('Select a provider')
-                    const p = providers.find(x => String(x.id) === selectedProviderId)
-                    if (!p) return alert('Provider not found')
-                    setEditingProvider(p)
-                    setEditModalOpen(true)
-                  }} className="secondary">Edit</button>
-                </div>
-              </div>
+              <ProvidersSection providers={providers} token={token} loadProviders={loadProviders} loadSecrets={loadSecrets} testProvider={testProvider} />
 
               <hr />
               <h4>Secrets</h4>

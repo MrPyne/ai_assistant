@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import useRuns from './hooks/useRuns'
+import useNodes from './hooks/useNodes'
 import { EditorProvider, useEditorDispatch, useEditorState } from './state/EditorContext'
 import Sidebar from './components/Sidebar'
 import RightPanel from './components/RightPanel'
@@ -27,9 +28,7 @@ function EditorInner({ initialToken = '' }) {
   const editorDispatch = useEditorDispatch()
   const editorState = useEditorState()
 
-  const [nodes, setNodes] = useState([])
-  const [edges, setEdges] = useState([])
-  const nodesRef = useRef(nodes)
+  const { nodes, edges, setNodes, setEdges, nodesRef, setNodesSafe, addNode, onNodesChange, onEdgesChange, onConnect, updateNodeConfig, nodeOptions, deleteSelected } = useNodes({ editorDispatch })
   const selectedNodeId = editorState.selectedNodeId
 
   // workflow/workflows state used by the Sidebar tests
@@ -53,33 +52,12 @@ function EditorInner({ initialToken = '' }) {
   // expose a simple deleteSelected helper on window for RightPanel to call
   useEffect(() => {
     window.__editor_deleteSelected = () => {
-      const sel = editorState.selectedIds || []
-      // debug
-      // eslint-disable-next-line no-console
-      console.debug('__editor_deleteSelected called, sel=', sel)
-      if (!sel.length) return
-      // remove nodes with ids in sel
-      const next = nodesRef.current.filter(n => !sel.includes(String(n.id)))
-      setNodes(next)
-      // remove edges that reference deleted nodes OR that are individually selected
-      setEdges((prev) => prev.filter(e => !sel.includes(String(e.source)) && !sel.includes(String(e.target)) && !sel.includes(String(e.id))))
-      editorDispatch({ type: 'CLEAR_SELECTION' })
-      editorDispatch({ type: 'MARK_DIRTY' })
+      try { deleteSelected(editorState.selectedIds || [], editorDispatch) } catch (e) {}
     }
     return () => { try { delete window.__editor_deleteSelected } catch (e) {} }
-  }, [editorState.selectedIds, editorDispatch])
+  }, [editorState.selectedIds, editorDispatch, deleteSelected])
 
   // helpers to add nodes; they set selection so tests can assert selected node
-  const addNode = useCallback((label, type = 'default', config = {}) => {
-    const id = makeId('n')
-    const node = { id: String(id), type, data: { label, config }, position: { x: 0, y: 0 } }
-    setNodes((s) => { const next = s.concat([node]); return next })
-    // update editor selection to newly added node
-    setTimeout(() => {
-      editorDispatch({ type: 'SET_SELECTED_NODE_ID', payload: String(id) })
-    }, 0)
-  }, [editorDispatch])
-
   const addHttpNode = useCallback(() => addNode('HTTP Request', 'http', { method: 'GET', headers: {} }), [addNode])
   const addLlmNode = useCallback(() => addNode('LLM', 'llm', { model: 'gpt' }), [addNode])
   const addWebhookTrigger = useCallback(() => addNode('Webhook Trigger', 'input', {}), [addNode])
@@ -199,46 +177,10 @@ function EditorInner({ initialToken = '' }) {
   // Runs / logs helpers
 
 
-  // Node/selection helpers used by NodeRenderer/RightPanel
-  const setNodesSafe = useCallback((next) => {
-    setNodes(next)
-  }, [])
 
-  // update node config (NodeInspector uses updateNodeConfig in tests)
-  const updateNodeConfig = useCallback((id, cb) => {
-    setNodes((prev) => {
-      const copy = prev.map(n => {
-        if (n.id !== id) return n
-        const existing = (n.data && n.data.config) || {}
-        let delta = {}
-        try {
-          if (typeof cb === 'function') {
-            delta = cb(existing) || {}
-          } else if (cb && typeof cb === 'object') {
-            delta = cb
-          } else {
-            delta = {}
-          }
-        } catch (e) {
-          delta = {}
-        }
-        return { ...n, data: { ...n.data, config: { ...existing, ...delta } } }
-      })
-      return copy
-    })
-    editorDispatch({ type: 'MARK_DIRTY' })
-  }, [editorDispatch])
 
   // react-flow change handlers so nodes/edges are interactive
-  const onNodesChange = useCallback((changes) => {
-    setNodes((nds) => applyNodeChanges(changes, nds))
-    editorDispatch({ type: 'MARK_DIRTY' })
-  }, [editorDispatch])
 
-  const onEdgesChange = useCallback((changes) => {
-    setEdges((eds) => applyEdgeChanges(changes, eds))
-    editorDispatch({ type: 'MARK_DIRTY' })
-  }, [editorDispatch])
 
   // keep React Flow selection in sync with our EditorContext selection model
   const onSelectionChange = useCallback((sel) => {
@@ -257,10 +199,7 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [editorDispatch])
 
-  const onConnect = useCallback((connection) => {
-    setEdges((eds) => addEdge(connection, eds))
-    editorDispatch({ type: 'MARK_DIRTY' })
-  }, [editorDispatch])
+  // onConnect handled by useNodes
 
   // select workflow from dropdown
   const selectWorkflow = useCallback((wid) => {
@@ -469,15 +408,7 @@ function EditorInner({ initialToken = '' }) {
   // selectable node targets for wiring. Provide a stable callback that
   // excludes the currently-selected node (so you can't wire a node to
   // itself) and returns { id, label } objects.
-  const nodeOptions = useCallback((excludeId) => {
-    try {
-      return nodes
-        .filter(n => String(n.id) !== String(excludeId))
-        .map(n => ({ id: String(n.id), label: (n.data && n.data.label) || String(n.id) }))
-    } catch (e) {
-      return []
-    }
-  }, [nodes])
+  // nodeOptions provided by useNodes
 
   // whenever nodes or edges change, center/fit the view so the graph is visible.
   // Support React Flow variations that expose onInit or onLoad by capturing
@@ -584,7 +515,7 @@ function EditorInner({ initialToken = '' }) {
           {/* Use 100% height so it fills the canvas card; minHeight keeps it usable on small screens */}
           <div className="reactflow-wrapper" style={{ height: '100%', minHeight: 600 }}>
             <ReactFlowProvider>
-              <ReactFlow
+          <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={NODE_TYPES}
