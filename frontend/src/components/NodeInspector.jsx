@@ -6,28 +6,23 @@ import useNodeInspector from '../hooks/useNodeInspector'
 
 export default function NodeInspector(props) {
   const {
-    // form helpers
     register,
     handleSubmit,
     reset,
     watch,
     setValue,
-    // state
     modelOptions,
     nodeSchema,
     uiSchema,
     schemaLoading,
     providerSelected,
     setProviderSelected,
-    // handlers
     handleProviderSelect,
     onRawChange,
     onRjsfChange,
-    // context
     editorState,
     editorDispatch,
     selectedNodeId,
-    // derived
     label,
     nodeUi,
   } = useNodeInspector(props)
@@ -121,15 +116,12 @@ export default function NodeInspector(props) {
         </div>
       )}
 
-      {/* Render friendly component if registry provides one */}
       {nodeUi && nodeUi.kind === 'friendly' && (
         <div>
           {nodeUi.component({ register, providers, selectedNode, handleProviderSelect })}
         </div>
       )}
 
-      {/* If no friendly component and the registry doesn't mark this label as "dedicated",
-          attempt server schema rendering. This ensures exactly one editor is shown. */}
       {!nodeUi && (
         <div style={{ marginTop: 8 }}>
           <div style={{ marginBottom: 6, fontWeight: 600 }}>Node data (editable)</div>
@@ -157,7 +149,6 @@ export default function NodeInspector(props) {
         </div>
       )}
 
-      {/* Dedicated inline UIs still live here in NodeInspector but are now gated by registry 'dedicated' kind */}
       {nodeUi && nodeUi.kind === 'dedicated' && (
         <>
           {label === 'DB Query' && (
@@ -243,8 +234,6 @@ export default function NodeInspector(props) {
               <input type="checkbox" {...register('enabled')} />
             </div>
           )}
-
-          {/* Raw JSON editor is still available for nodes not explicitly marked 'dedicated' */}
         </>
       )}
 
