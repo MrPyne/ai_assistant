@@ -35,6 +35,7 @@ _webhooks: Dict[int, Dict[str, Any]] = {}
 # Password helpers
 import hashlib as _hashlib
 
+
 def hash_password(password) -> str:
     if isinstance(password, bytes):
         try:
@@ -47,10 +48,12 @@ def hash_password(password) -> str:
     dk = _hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
     return dk.hex()
 
+
 def verify_password(password, hashed: str) -> bool:
     return hash_password(password) == hashed
 
 # minimal token helpers
+
 def _user_from_token(authorization: Optional[str]) -> Optional[int]:
     if not authorization:
         return None
@@ -158,33 +161,16 @@ except ImportError:
 _FASTAPI_HEADERS = False
 
 
+from .request_utils import coerce_body_to_dict
+
+
 def auth_register_db(body: dict, db):
     try:
         # coerce Request-like bodies into dict when tests call endpoints via
         # TestClient or other runtimes that pass a Request object instead of
         # a plain dict
         try:
-            import asyncio
-
-            def _coerce(b):
-                if isinstance(b, dict):
-                    return b
-                j = None
-                try:
-                    if hasattr(b, 'json') and callable(b.json):
-                        maybe = b.json()
-                        if asyncio.iscoroutine(maybe):
-                            j = asyncio.get_event_loop().run_until_complete(maybe)
-                        else:
-                            j = maybe
-                except Exception:
-                    try:
-                        j = asyncio.run(b.json()) if hasattr(b, 'json') and callable(b.json) else None
-                    except Exception:
-                        j = None
-                return j if isinstance(j, dict) else None
-
-            coerced = _coerce(body)
+            coerced = coerce_body_to_dict(body)
             if coerced is not None:
                 body = coerced
         except Exception:
@@ -235,19 +221,9 @@ def auth_register_fallback(body: dict):
     # accept Request-like objects too
     if not isinstance(body, dict):
         try:
-            import asyncio
-            if hasattr(body, 'json') and callable(body.json):
-                maybe = body.json()
-                if asyncio.iscoroutine(maybe):
-                    try:
-                        body = asyncio.get_event_loop().run_until_complete(maybe)
-                    except Exception:
-                        try:
-                            body = asyncio.run(maybe)
-                        except Exception:
-                            body = None
-                else:
-                    body = maybe
+            coerced = coerce_body_to_dict(body)
+            if coerced is not None:
+                body = coerced
         except Exception:
             try:
                 body = body.json() if hasattr(body, 'json') and callable(body.json) else None
@@ -273,19 +249,9 @@ def auth_login(body: dict):
     # coerce Request-like bodies
     if not isinstance(body, dict):
         try:
-            import asyncio
-            if hasattr(body, 'json') and callable(body.json):
-                maybe = body.json()
-                if asyncio.iscoroutine(maybe):
-                    try:
-                        body = asyncio.get_event_loop().run_until_complete(maybe)
-                    except Exception:
-                        try:
-                            body = asyncio.run(maybe)
-                        except Exception:
-                            body = None
-                else:
-                    body = maybe
+            coerced = coerce_body_to_dict(body)
+            if coerced is not None:
+                body = coerced
         except Exception:
             try:
                 body = body.json() if hasattr(body, 'json') and callable(body.json) else None
@@ -329,19 +295,9 @@ def auth_resend(body: dict):
     # coerce Request-like bodies into dicts when necessary
     if not isinstance(body, dict):
         try:
-            import asyncio
-            if hasattr(body, 'json') and callable(body.json):
-                maybe = body.json()
-                if asyncio.iscoroutine(maybe):
-                    try:
-                        body = asyncio.get_event_loop().run_until_complete(maybe)
-                    except Exception:
-                        try:
-                            body = asyncio.run(maybe)
-                        except Exception:
-                            body = None
-                else:
-                    body = maybe
+            coerced = coerce_body_to_dict(body)
+            if coerced is not None:
+                body = coerced
         except Exception:
             try:
                 body = body.json() if hasattr(body, 'json') and callable(body.json) else None
@@ -385,6 +341,7 @@ def auth_resend(body: dict):
     except Exception:
         pass
     return JSONResponse(status_code=200, content={'status': 'ok'})
+
 
 def node_test_impl(body: dict, authorization: Optional[str] = None):
     """Simple node test handler used by the compatibility layer and tests.
