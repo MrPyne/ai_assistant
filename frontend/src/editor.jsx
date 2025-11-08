@@ -132,7 +132,10 @@ function EditorInner({ initialToken = '' }) {
     }
   }, [token, editorDispatch])
 
-  useEffect(() => { if (token) { loadProviders(); loadSecrets() } }, [token])
+  // Attempt to load providers/secrets whenever token changes (including on mount).
+  // The backend will return 401 when no auth is present; loadProviders now handles that
+  // case gracefully so we avoid noisy alerts when unauthenticated.
+  useEffect(() => { try { loadProviders(); loadSecrets() } catch (e) {} }, [token])
 
   useEffect(() => { try { loadWorkflows() } catch (e) {} }, [loadWorkflows, token])
 
@@ -205,6 +208,12 @@ function EditorInner({ initialToken = '' }) {
       const r = await fetch('/api/providers', { headers })
       if (!r.ok) {
         const txt = await r.text().catch(() => '')
+        // If unauthenticated simply treat as no providers rather than noisy alert.
+        if (r.status === 401) {
+          console.debug('loadProviders: unauthenticated (401), not loading providers')
+          setProviders([])
+          return
+        }
         alert(`Failed to load providers: ${txt}`)
         return
       }

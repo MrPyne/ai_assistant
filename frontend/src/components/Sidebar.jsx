@@ -34,6 +34,8 @@ export default function Sidebar({
   newWorkflow,
   runWorkflow,
   loadRuns,
+  // loadProviders was missing and caused a ReferenceError when used in callbacks
+  loadProviders,
   providers,
   newProviderType,
   setNewProviderType,
@@ -225,7 +227,16 @@ export default function Sidebar({
               <hr />
               <div>
                 <strong>Auth Token (dev):</strong>
-                <input value={token} onChange={(e) => setToken(e.target.value)} placeholder='Paste bearer token here' />
+                {/* Normalize pasted token so users can paste either 'token-1' or 'Bearer token-1' */}
+                <input value={token} onChange={(e) => {
+                  try {
+                    const v = (e && e.target && e.target.value) || ''
+                    const normalized = String(v).replace(/^Bearer\s+/i, '').trim()
+                    setToken(normalized)
+                  } catch (err) {
+                    setToken(e.target.value)
+                  }
+                }} placeholder='Paste bearer token here (you can include or omit "Bearer")' />
               </div>
 
               <hr />
